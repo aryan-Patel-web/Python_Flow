@@ -1,19 +1,20 @@
-// frontend/src/components/common/LoadingSpinner.jsx
 import React from 'react';
 
-const LoadingSpinner = ({ size = 'md', className = '' }) => {
+const LoadingSpinner = ({ size = 'medium', text = 'Loading...' }) => {
   const sizeClasses = {
-    sm: 'h-4 w-4',
-    md: 'h-8 w-8', 
-    lg: 'h-12 w-12',
-    xl: 'h-16 w-16'
+    small: 'w-4 h-4',
+    medium: 'w-8 h-8',
+    large: 'w-12 h-12'
   };
 
   return (
-    <div className={`flex justify-center items-center ${className}`}>
-      <div
-        className={`animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 ${sizeClasses[size]}`}
-      ></div>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
+      <div className={`${sizeClasses[size]} animate-spin`}>
+        <div className="w-full h-full border-4 border-gray-200 border-t-blue-600 rounded-full"></div>
+      </div>
+      {text && (
+        <p className="mt-4 text-gray-600 text-sm font-medium">{text}</p>
+      )}
     </div>
   );
 };

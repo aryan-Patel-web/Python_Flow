@@ -1,4 +1,4 @@
-// frontend/src/components/common/Toast.jsx (UPDATED)
+// frontend/src/components/common/Toast.jsx (FIXED - EXPORT useToast)
 import { useState, useEffect } from 'react'
 import { CheckCircle, XCircle, AlertCircle, Info, X } from 'lucide-react'
 
@@ -125,6 +125,61 @@ export const ToastContainer = ({ toasts = [], removeToast = () => {} }) => {
       ))}
     </div>
   )
+}
+
+// useToast Hook - THIS WAS MISSING!
+export const useToast = () => {
+  const [toasts, setToasts] = useState([])
+
+  const addToast = (type, message, title = '', duration = 4000) => {
+    const id = Date.now() + Math.random()
+    const newToast = { id, type, title, message, duration }
+    
+    setToasts(prev => [...prev, newToast])
+    
+    if (duration > 0) {
+      setTimeout(() => {
+        removeToast(id)
+      }, duration)
+    }
+    
+    return id
+  }
+
+  const removeToast = (id) => {
+    setToasts(prev => prev.filter(toast => toast.id !== id))
+  }
+
+  const success = (message, title = 'Success') => {
+    return addToast('success', message, title)
+  }
+
+  const error = (message, title = 'Error') => {
+    return addToast('error', message, title, 5000)
+  }
+
+  const warning = (message, title = 'Warning') => {
+    return addToast('warning', message, title)
+  }
+
+  const info = (message, title = 'Info') => {
+    return addToast('info', message, title)
+  }
+
+  const clearAll = () => {
+    setToasts([])
+  }
+
+  return {
+    toasts,
+    success,
+    error,
+    warning,
+    info,
+    addToast,
+    removeToast,
+    clearAll
+  }
 }
 
 export default Toast

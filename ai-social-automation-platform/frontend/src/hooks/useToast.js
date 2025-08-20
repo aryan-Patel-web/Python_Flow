@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react'
 const useToast = () => {
   const [toasts, setToasts] = useState([])
 
-  const addToast = useCallback((type, title, message, duration = 4000) => {
+  const addToast = useCallback((type, message, title = '', duration = 4000) => {
     const id = Date.now() + Math.random()
     const newToast = { id, type, title, message, duration }
     
@@ -24,19 +24,19 @@ const useToast = () => {
   }, [])
 
   const success = useCallback((message, title = 'Success') => {
-    return addToast('success', title, message)
+    return addToast('success', message, title)
   }, [addToast])
 
   const error = useCallback((message, title = 'Error') => {
-    return addToast('error', title, message)
+    return addToast('error', message, title, 5000)
   }, [addToast])
 
   const warning = useCallback((message, title = 'Warning') => {
-    return addToast('warning', title, message)
+    return addToast('warning', message, title)
   }, [addToast])
 
   const info = useCallback((message, title = 'Info') => {
-    return addToast('info', title, message)
+    return addToast('info', message, title)
   }, [addToast])
 
   const clearAll = useCallback(() => {
@@ -55,4 +55,6 @@ const useToast = () => {
   }
 }
 
+// Export both default and named export
 export default useToast
+export { useToast }
