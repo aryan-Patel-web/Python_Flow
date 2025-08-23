@@ -1,10 +1,9 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Toaster } from 'react-hot-toast';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
-import ProtectedRoute from './components/ProtectedRoute';
-import PublicRoute from './components/PublicRoute';
+import ProtectedRoute from './components/auth/ProtectedRoute';
+import PublicRoute from './components/auth/PublicRoute';
+import Layout from './components/Layout/Layout';
 
 // Landing Page
 import LandingPage from './pages/LandingPage';
@@ -14,7 +13,10 @@ import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import ForgotPassword from './pages/auth/ForgotPassword';
 
-// Protected Pages
+// 🔥 NEW: OAuth Callback Handler for Auto-Posting Authentication
+import OAuthCallback from './components/auth/OAuthCallback';
+
+// Main App Pages
 import Dashboard from './pages/dashboard/Dashboard';
 import CredentialsPage from './pages/credentials/CredentialsPage';
 import DomainsPage from './pages/domains/DomainsPage';
@@ -24,167 +26,159 @@ import AutomationPage from './pages/automation/AutomationPage';
 import BillingPage from './pages/billing/BillingPage';
 import SettingsPage from './pages/settings/SettingsPage';
 
+// 🔥 NEW: Secure Platforms Page for OAuth Auto-Posting (Replaces insecure credential forms)
+import Platforms from './pages/platforms/Platforms';
+
+// 🔥 NEW: Auto-Posting Management Pages
+import AutoPostingCenter from './pages/autoposting/AutoPostingCenter';
+import PostingScheduler from './pages/autoposting/PostingScheduler';
+import ContentGenerator from './pages/autoposting/ContentGenerator';
+
 // Error Pages
 import NotFound from './pages/error/NotFound';
 
-// Create React Query client
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      staleTime: 5 * 60 * 1000, // 5 minutes
-      refetchOnWindowFocus: false,
-    },
-  },
-});
-
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <Router
-        future={{
-          v7_startTransition: true,
-          v7_relativeSplatPath: true,
-        }}
-      >
-        <AuthProvider>
-          <div className="min-h-screen bg-gray-50">
-            <Routes>
-              {/* Landing Page - Public Route */}
-              <Route
-                path="/"
-                element={
-                  <PublicRoute>
-                    <LandingPage />
-                  </PublicRoute>
-                }
-              />
+    <AuthProvider>
+      <div className="min-h-screen bg-gray-50">
+        <Routes>
+          {/* 🔥 NEW: Landing Page - Public Route */}
+          <Route path="/" element={
+            <PublicRoute>
+              <LandingPage />
+            </PublicRoute>
+          } />
 
-              {/* Public Auth Routes */}
-              <Route
-                path="/login"
-                element={
-                  <PublicRoute>
-                    <Login />
-                  </PublicRoute>
-                }
-              />
-              <Route
-                path="/register"
-                element={
-                  <PublicRoute>
-                    <Register />
-                  </PublicRoute>
-                }
-              />
-              <Route
-                path="/forgot-password"
-                element={
-                  <PublicRoute>
-                    <ForgotPassword />
-                  </PublicRoute>
-                }
-              />
+          {/* Public Routes (redirect to dashboard if authenticated) */}
+          <Route path="/login" element={
+            <PublicRoute>
+              <Login />
+            </PublicRoute>
+          } />
+          <Route path="/register" element={
+            <PublicRoute>
+              <Register />
+            </PublicRoute>
+          } />
+          <Route path="/forgot-password" element={
+            <PublicRoute>
+              <ForgotPassword />
+            </PublicRoute>
+          } />
 
-              {/* Protected Routes - require authentication */}
-              <Route
-                path="/dashboard"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/credentials"
-                element={
-                  <ProtectedRoute>
-                    <CredentialsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/domains"
-                element={
-                  <ProtectedRoute>
-                    <DomainsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/content"
-                element={
-                  <ProtectedRoute>
-                    <ContentLibrary />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/analytics"
-                element={
-                  <ProtectedRoute>
-                    <AnalyticsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/automation"
-                element={
-                  <ProtectedRoute>
-                    <AutomationPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/billing"
-                element={
-                  <ProtectedRoute>
-                    <BillingPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/settings"
-                element={
-                  <ProtectedRoute>
-                    <SettingsPage />
-                  </ProtectedRoute>
-                }
-              />
+          {/* 🔥 NEW: OAuth Callback Routes - Secure Social Media Authentication for Auto-Posting */}
+          <Route path="/auth/callback/facebook" element={<OAuthCallback platform="facebook" />} />
+          <Route path="/auth/callback/instagram" element={<OAuthCallback platform="instagram" />} />
+          <Route path="/auth/callback/twitter" element={<OAuthCallback platform="twitter" />} />
+          <Route path="/auth/callback/linkedin" element={<OAuthCallback platform="linkedin" />} />
+          <Route path="/auth/callback/youtube" element={<OAuthCallback platform="youtube" />} />
+          <Route path="/auth/callback/tiktok" element={<OAuthCallback platform="tiktok" />} />
+          <Route path="/auth/callback/pinterest" element={<OAuthCallback platform="pinterest" />} />
 
-              {/* 404 Route */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </div>
+          {/* Protected Routes (require authentication) */}
+          <Route path="/dashboard" element={
+            <ProtectedRoute>
+              <Layout>
+                <Dashboard />
+              </Layout>
+            </ProtectedRoute>
+          } />
           
-          {/* Toast notifications */}
-          <Toaster
-            position="top-right"
-            toastOptions={{
-              duration: 4000,
-              style: {
-                background: '#363636',
-                color: '#fff',
-              },
-              success: {
-                duration: 3000,
-                theme: {
-                  primary: '#4ade80',
-                  secondary: '#black',
-                },
-              },
-              error: {
-                duration: 4000,
-                theme: {
-                  primary: '#ef4444',
-                  secondary: '#black',
-                },
-              },
-            }}
-          />
-        </AuthProvider>
-      </Router>
-    </QueryClientProvider>
+          <Route path="/credentials" element={
+            <ProtectedRoute>
+              <Layout>
+                <CredentialsPage />
+              </Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/domains" element={
+            <ProtectedRoute>
+              <Layout>
+                <DomainsPage />
+              </Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/content" element={
+            <ProtectedRoute>
+              <Layout>
+                <ContentLibrary />
+              </Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/analytics" element={
+            <ProtectedRoute>
+              <Layout>
+                <AnalyticsPage />
+              </Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/automation" element={
+            <ProtectedRoute>
+              <Layout>
+                <AutomationPage />
+              </Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/billing" element={
+            <ProtectedRoute>
+              <Layout>
+                <BillingPage />
+              </Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/settings" element={
+            <ProtectedRoute>
+              <Layout>
+                <SettingsPage />
+              </Layout>
+            </ProtectedRoute>
+          } />
+
+          {/* 🔥 NEW: Secure Platforms Page - OAuth Only Authentication for Auto-Posting */}
+          <Route path="/platforms" element={
+            <ProtectedRoute>
+              <Layout>
+                <Platforms />
+              </Layout>
+            </ProtectedRoute>
+          } />
+
+          {/* 🔥 NEW: Auto-Posting Management Routes */}
+          <Route path="/auto-posting" element={
+            <ProtectedRoute>
+              <Layout>
+                <AutoPostingCenter />
+              </Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/posting-scheduler" element={
+            <ProtectedRoute>
+              <Layout>
+                <PostingScheduler />
+              </Layout>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/content-generator" element={
+            <ProtectedRoute>
+              <Layout>
+                <ContentGenerator />
+              </Layout>
+            </ProtectedRoute>
+          } />
+
+          {/* 404 Page */}
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </div>
+    </AuthProvider>
   );
 }
 

@@ -1,156 +1,285 @@
-# app/routes/auth.py
-from flask import Blueprint, request, jsonify, current_app
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-from app.models.user import User
-from bson import ObjectId
-from datetime import datetime
+"""
+Secure OAuth Authentication Routes for VelocityPost.ai
+Handles OAuth token exchange and platform connections
+"""
+
+from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+import requests
+import os
+from datetime import datetime, timedelta
 import logging
+from ..services.oauth_service import OAuthService
+from ..services.encryption_service import EncryptionService
+from ..models.platform_connection import PlatformConnection
+from ..models.user import User
 
-logger = logging.getLogger(__name__)
 auth_bp = Blueprint('auth', __name__)
+oauth_service = OAuthService()
+encryption_service = EncryptionService()
 
-@auth_bp.route('/register', methods=['POST'])
-def register():
-    try:
-        data = request.get_json()
-        email = data.get('email', '').strip().lower()
-        password = data.get('password', '')
-        name = data.get('name', '').strip()
-        
-        if not all([email, password, name]):
-            return jsonify({'error': 'Email, password, and name are required'}), 400
-        
-        if len(password) < 8:
-            return jsonify({'error': 'Password must be at least 8 characters long'}), 400
-        
-        user_model = User(current_app.db)
-        
-        # Check if user exists
-        if user_model.find_by_email(email):
-            return jsonify({'error': 'User already exists with this email'}), 400
-        
-        # Create user
-        user_id = user_model.create_user(email, password, name)
-        
-        # Create access token
-        access_token = create_access_token(identity=user_id)
-        
-        logger.info(f"New user registered: {email}")
-        
-        return jsonify({
-            'success': True,
-            'message': 'User registered successfully',
-            'access_token': access_token,
-            'user': {
-                'id': user_id,
-                'email': email,
-                'name': name,
-                'subscription_plan': 'starter'
-            }
-        }), 201
-        
-    except Exception as e:
-        logger.error(f"Registration error: {str(e)}")
-        return jsonify({'error': 'Registration failed. Please try again.'}), 500
-
-@auth_bp.route('/login', methods=['POST'])
-def login():
-    try:
-        data = request.get_json()
-        email = data.get('email', '').strip().lower()
-        password = data.get('password', '')
-        
-        if not all([email, password]):
-            return jsonify({'error': 'Email and password are required'}), 400
-        
-        user_model = User(current_app.db)
-        user = user_model.verify_password(email, password)
-        
-        if not user:
-            return jsonify({'error': 'Invalid email or password'}), 401
-        
-        if not user.get('is_active', True):
-            return jsonify({'error': 'Account is deactivated'}), 401
-        
-        access_token = create_access_token(identity=str(user['_id']))
-        
-        logger.info(f"User logged in: {email}")
-        
-        return jsonify({
-            'success': True,
-            'message': 'Login successful',
-            'access_token': access_token,
-            'user': {
-                'id': str(user['_id']),
-                'email': user['email'],
-                'name': user['name'],
-                'subscription_plan': user.get('subscription_plan', 'starter'),
-                'daily_post_count': user.get('daily_post_count', 0),
-                'settings': user.get('settings', {})
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Login error: {str(e)}")
-        return jsonify({'error': 'Login failed. Please try again.'}), 500
-
-@auth_bp.route('/profile', methods=['GET'])
+@auth_bp.route('/oauth/callback', methods=['POST'])
 @jwt_required()
-def get_profile():
-    try:
-        user_id = get_jwt_identity()
-        user_model = User(current_app.db)
-        user = user_model.find_by_id(user_id)
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        return jsonify({
-            'success': True,
-            'user': {
-                'id': str(user['_id']),
-                'email': user['email'],
-                'name': user['name'],
-                'subscription_plan': user.get('subscription_plan', 'starter'),
-                'daily_post_count': user.get('daily_post_count', 0),
-                'credits_used': user.get('credits_used', 0),
-                'settings': user.get('settings', {}),
-                'created_at': user['created_at'].isoformat()
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Profile fetch error: {str(e)}")
-        return jsonify({'error': 'Failed to fetch profile'}), 500
-
-@auth_bp.route('/profile', methods=['PUT'])
-@jwt_required()
-def update_profile():
+def oauth_callback():
+    """
+    Handle OAuth callback and exchange authorization code for access token
+    This is the secure server-side token exchange
+    """
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
         
-        user_model = User(current_app.db)
+        platform = data.get('platform')
+        code = data.get('code')
+        state = data.get('state')
+        code_verifier = data.get('code_verifier')  # For PKCE (Twitter)
         
-        # Update allowed fields
-        update_fields = {}
-        if 'name' in data:
-            update_fields['name'] = data['name'].strip()
-        if 'settings' in data:
-            update_fields['settings'] = data['settings']
+        if not platform or not code:
+            return jsonify({'error': 'Missing required parameters'}), 400
+            
+        # Validate platform
+        supported_platforms = ['facebook', 'instagram', 'twitter', 'linkedin', 'youtube', 'tiktok', 'pinterest']
+        if platform not in supported_platforms:
+            return jsonify({'error': 'Unsupported platform'}), 400
+            
+        # Exchange authorization code for access token
+        token_data = oauth_service.exchange_code_for_token(
+            platform=platform,
+            code=code,
+            state=state,
+            code_verifier=code_verifier
+        )
         
-        if update_fields:
-            update_fields['updated_at'] = datetime.utcnow()
-            user_model.collection.update_one(
-                {'_id': ObjectId(user_id)},
-                {'$set': update_fields}
+        if not token_data.get('access_token'):
+            return jsonify({'error': 'Failed to obtain access token'}), 400
+            
+        # Get platform user info
+        user_info = oauth_service.get_platform_user_info(platform, token_data['access_token'])
+        
+        # Encrypt and store tokens
+        encrypted_access_token = encryption_service.encrypt(token_data['access_token'])
+        encrypted_refresh_token = None
+        if token_data.get('refresh_token'):
+            encrypted_refresh_token = encryption_service.encrypt(token_data['refresh_token'])
+            
+        # Save or update platform connection
+        connection = PlatformConnection.query.filter_by(
+            user_id=user_id,
+            platform=platform
+        ).first()
+        
+        if connection:
+            # Update existing connection
+            connection.access_token = encrypted_access_token
+            connection.refresh_token = encrypted_refresh_token
+            connection.expires_at = datetime.utcnow() + timedelta(seconds=token_data.get('expires_in', 3600))
+            connection.platform_user_id = user_info.get('id')
+            connection.platform_username = user_info.get('username')
+            connection.is_active = True
+            connection.last_connected = datetime.utcnow()
+        else:
+            # Create new connection
+            connection = PlatformConnection(
+                user_id=user_id,
+                platform=platform,
+                access_token=encrypted_access_token,
+                refresh_token=encrypted_refresh_token,
+                expires_at=datetime.utcnow() + timedelta(seconds=token_data.get('expires_in', 3600)),
+                platform_user_id=user_info.get('id'),
+                platform_username=user_info.get('username'),
+                is_active=True,
+                scopes=token_data.get('scope', ''),
+                last_connected=datetime.utcnow()
             )
+            
+        connection.save()
+        
+        # Log successful connection
+        logging.info(f"User {user_id} successfully connected {platform}")
         
         return jsonify({
             'success': True,
-            'message': 'Profile updated successfully'
-        }), 200
+            'platform': platform,
+            'username': user_info.get('username'),
+            'connected_at': connection.last_connected.isoformat()
+        })
         
     except Exception as e:
-        logger.error(f"Profile update error: {str(e)}")
-        return jsonify({'error': 'Failed to update profile'}), 500
+        logging.error(f"OAuth callback error: {str(e)}")
+        return jsonify({'error': 'OAuth callback failed'}), 500
+
+@auth_bp.route('/platforms/connected', methods=['GET'])
+@jwt_required()
+def get_connected_platforms():
+    """Get list of connected platforms for the user"""
+    try:
+        user_id = get_jwt_identity()
+        
+        connections = PlatformConnection.query.filter_by(
+            user_id=user_id,
+            is_active=True
+        ).all()
+        
+        platforms = []
+        for conn in connections:
+            platforms.append({
+                'platform': conn.platform,
+                'username': conn.platform_username,
+                'connected_at': conn.last_connected.isoformat(),
+                'expires_at': conn.expires_at.isoformat() if conn.expires_at else None,
+                'is_token_valid': oauth_service.is_token_valid(conn)
+            })
+            
+        return jsonify({
+            'platforms': platforms,
+            'total': len(platforms)
+        })
+        
+    except Exception as e:
+        logging.error(f"Error fetching connected platforms: {str(e)}")
+        return jsonify({'error': 'Failed to fetch platforms'}), 500
+
+@auth_bp.route('/platforms/disconnect', methods=['POST'])
+@jwt_required()
+def disconnect_platform():
+    """Disconnect a platform"""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        platform = data.get('platform')
+        
+        if not platform:
+            return jsonify({'error': 'Platform is required'}), 400
+            
+        connection = PlatformConnection.query.filter_by(
+            user_id=user_id,
+            platform=platform
+        ).first()
+        
+        if not connection:
+            return jsonify({'error': 'Platform not connected'}), 404
+            
+        # Revoke token on platform (if supported)
+        try:
+            decrypted_token = encryption_service.decrypt(connection.access_token)
+            oauth_service.revoke_token(platform, decrypted_token)
+        except Exception as e:
+            logging.warning(f"Failed to revoke token for {platform}: {str(e)}")
+            
+        # Mark as inactive instead of deleting (for audit purposes)
+        connection.is_active = False
+        connection.disconnected_at = datetime.utcnow()
+        connection.save()
+        
+        logging.info(f"User {user_id} disconnected {platform}")
+        
+        return jsonify({
+            'success': True,
+            'platform': platform,
+            'disconnected_at': connection.disconnected_at.isoformat()
+        })
+        
+    except Exception as e:
+        logging.error(f"Error disconnecting platform: {str(e)}")
+        return jsonify({'error': 'Failed to disconnect platform'}), 500
+
+@auth_bp.route('/platforms/<platform>/test', methods=['POST'])
+@jwt_required()
+def test_platform_connection(platform):
+    """Test if platform connection is working"""
+    try:
+        user_id = get_jwt_identity()
+        
+        connection = PlatformConnection.query.filter_by(
+            user_id=user_id,
+            platform=platform,
+            is_active=True
+        ).first()
+        
+        if not connection:
+            return jsonify({'error': 'Platform not connected'}), 404
+            
+        # Decrypt token and test
+        decrypted_token = encryption_service.decrypt(connection.access_token)
+        is_valid = oauth_service.test_token(platform, decrypted_token)
+        
+        if is_valid:
+            return jsonify({
+                'success': True,
+                'platform': platform,
+                'status': 'Token is valid'
+            })
+        else:
+            # Try to refresh token if available
+            if connection.refresh_token:
+                try:
+                    new_tokens = oauth_service.refresh_access_token(platform, connection.refresh_token)
+                    if new_tokens:
+                        # Update with new tokens
+                        connection.access_token = encryption_service.encrypt(new_tokens['access_token'])
+                        if new_tokens.get('refresh_token'):
+                            connection.refresh_token = encryption_service.encrypt(new_tokens['refresh_token'])
+                        connection.expires_at = datetime.utcnow() + timedelta(seconds=new_tokens.get('expires_in', 3600))
+                        connection.save()
+                        
+                        return jsonify({
+                            'success': True,
+                            'platform': platform,
+                            'status': 'Token refreshed'
+                        })
+                except Exception:
+                    pass
+                    
+            return jsonify({
+                'success': False,
+                'platform': platform,
+                'status': 'Token expired or invalid'
+            }), 401
+            
+    except Exception as e:
+        logging.error(f"Error testing platform connection: {str(e)}")
+        return jsonify({'error': 'Failed to test connection'}), 500
+
+@auth_bp.route('/platforms/status', methods=['GET'])
+@jwt_required()
+def get_platforms_status():
+    """Get status of all supported platforms"""
+    try:
+        user_id = get_jwt_identity()
+        
+        supported_platforms = ['facebook', 'instagram', 'twitter', 'linkedin', 'youtube', 'tiktok', 'pinterest']
+        connections = PlatformConnection.query.filter_by(
+            user_id=user_id,
+            is_active=True
+        ).all()
+        
+        connected_platforms = {conn.platform: conn for conn in connections}
+        
+        status = []
+        for platform in supported_platforms:
+            platform_status = {
+                'platform': platform,
+                'connected': platform in connected_platforms,
+                'username': None,
+                'connected_at': None,
+                'token_valid': False
+            }
+            
+            if platform in connected_platforms:
+                conn = connected_platforms[platform]
+                platform_status.update({
+                    'username': conn.platform_username,
+                    'connected_at': conn.last_connected.isoformat(),
+                    'token_valid': oauth_service.is_token_valid(conn)
+                })
+                
+            status.append(platform_status)
+            
+        return jsonify({
+            'platforms': status,
+            'total_connected': len(connected_platforms)
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting platforms status: {str(e)}")
+        return jsonify({'error': 'Failed to get platforms status'}), 500
