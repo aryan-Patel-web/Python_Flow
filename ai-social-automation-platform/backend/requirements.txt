@@ -1,0 +1,154 @@
+# Flask Framework
+Flask==3.0.0
+Flask-CORS==4.0.0
+Flask-JWT-Extended==4.6.0
+
+# Database
+pymongo==4.6.1
+mongoengine==0.28.2
+
+# Background Tasks
+celery==5.3.4
+redis==5.0.1
+
+# HTTP Requests
+requests==2.31.0
+urllib3==2.1.0
+
+# Password Hashing
+Werkzeug==3.0.1
+bcrypt==4.1.2
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Date/Time Handling
+python-dateutil==2.8.2
+
+# Social Media APIs
+facebook-sdk==3.1.0
+tweepy==4.14.0
+python-linkedin-v2==2.0.1a1
+google-api-python-client==2.108.0
+google-auth==2.25.2
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.2.0
+
+# Image Processing
+Pillow==10.1.0
+opencv-python==4.8.1.78
+
+# AI Services
+openai==1.3.9
+anthropic==0.7.8
+
+# Payment Processing
+stripe==7.8.0
+razorpay==1.3.0
+
+# Data Validation
+marshmallow==3.21.0
+email-validator==2.1.0.post1
+
+# Web Scraping (for content research)
+beautifulsoup4==4.12.2
+scrapy==2.11.0
+
+# Text Processing
+textblob==0.17.1
+nltk==3.8.1
+
+# Scheduling
+APScheduler==3.10.4
+
+# Email
+Flask-Mail==0.9.1
+
+# File Handling
+python-magic==0.4.27
+
+# Encryption
+cryptography==41.0.8
+pycryptodome==3.19.0
+
+# Web Server (Production)
+gunicorn==21.2.0
+
+# Development
+flask-debugtoolbar==0.13.1
+
+# Testing
+pytest==7.4.3
+pytest-flask==1.3.0
+
+# Linting
+flake8==6.1.0
+
+# Type Hints
+typing-extensions==4.8.0
+
+# JSON Web Tokens
+PyJWT==2.8.0
+
+# URL Parsing
+validators==0.22.0
+
+# Browser Automation
+selenium==4.15.2
+playwright==1.40.0
+
+# Social Media Posting
+instabot==0.117.0
+tweepy==4.14.0
+
+# Content Generation
+langchain==0.0.350
+transformers==4.36.1
+
+# Rate Limiting
+Flask-Limiter==3.5.0
+
+# Monitoring
+sentry-sdk[flask]==1.38.0
+
+# Configuration
+pydantic==2.5.1
+
+# Async Support
+aiohttp==3.9.1
+asyncio==3.4.3
+
+# Image Generation
+stability-sdk==0.8.4
+
+# Content Optimization
+spacy==3.7.2
+
+# Analytics
+pandas==2.1.4
+numpy==1.24.4
+
+# Logging
+structlog==23.2.0
+
+# Health Checks
+psutil==5.9.6
+
+# API Documentation
+flask-restx==1.3.0
+apispec==6.3.0
+
+# Security
+flask-talisman==1.1.0
+
+# Session Management
+flask-session==0.5.0
+
+# Cache
+flask-caching==2.1.0
+
+# Rate Limiting
+slowapi==0.1.9
+
+# Environment Detection
+python-decouple==3.8

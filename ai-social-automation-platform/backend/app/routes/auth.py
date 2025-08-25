@@ -1,285 +1,459 @@
 """
-Secure OAuth Authentication Routes for VelocityPost.ai
-Handles OAuth token exchange and platform connections
+Authentication Routes for VelocityPost.ai
+Handles user registration, login, JWT tokens
 """
 
-from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
-import requests
-import os
+from flask import Blueprint, request, jsonify, current_app
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, create_refresh_token
 from datetime import datetime, timedelta
-import logging
-from ..services.oauth_service import OAuthService
-from ..services.encryption_service import EncryptionService
-from ..models.platform_connection import PlatformConnection
-from ..models.user import User
+import re
+from bson import ObjectId
+
+from app.utils.database import get_database
+from app.utils.validators import validate_email, validate_password
+from app.utils.helpers import generate_response
 
 auth_bp = Blueprint('auth', __name__)
-oauth_service = OAuthService()
-encryption_service = EncryptionService()
 
-@auth_bp.route('/oauth/callback', methods=['POST'])
-@jwt_required()
-def oauth_callback():
-    """
-    Handle OAuth callback and exchange authorization code for access token
-    This is the secure server-side token exchange
-    """
+@auth_bp.route('/register', methods=['POST'])
+def register():
+    """Register new user with free plan"""
     try:
-        user_id = get_jwt_identity()
         data = request.get_json()
         
-        platform = data.get('platform')
-        code = data.get('code')
-        state = data.get('state')
-        code_verifier = data.get('code_verifier')  # For PKCE (Twitter)
+        # Validate required fields
+        required_fields = ['name', 'email', 'password']
+        for field in required_fields:
+            if not data.get(field):
+                return generate_response(False, f'{field.title()} is required', status_code=400)
         
-        if not platform or not code:
-            return jsonify({'error': 'Missing required parameters'}), 400
-            
-        # Validate platform
-        supported_platforms = ['facebook', 'instagram', 'twitter', 'linkedin', 'youtube', 'tiktok', 'pinterest']
-        if platform not in supported_platforms:
-            return jsonify({'error': 'Unsupported platform'}), 400
-            
-        # Exchange authorization code for access token
-        token_data = oauth_service.exchange_code_for_token(
-            platform=platform,
-            code=code,
-            state=state,
-            code_verifier=code_verifier
+        name = data['name'].strip()
+        email = data['email'].strip().lower()
+        password = data['password']
+        
+        # Validate email format
+        if not validate_email(email):
+            return generate_response(False, 'Invalid email format', status_code=400)
+        
+        # Validate password strength
+        if not validate_password(password):
+            return generate_response(False, 'Password must be at least 8 characters with uppercase, lowercase, number and special character', status_code=400)
+        
+        # Check if user already exists
+        db = get_database()
+        existing_user = db.users.find_one({'email': email})
+        
+        if existing_user:
+            return generate_response(False, 'User already exists with this email', status_code=409)
+        
+        # Create user with free plan
+        hashed_password = generate_password_hash(password)
+        
+        user_data = {
+            'name': name,
+            'email': email,
+            'password_hash': hashed_password,
+            'subscription_plan': 'free',  # Start with free plan
+            'plan_limits': {
+                'max_platforms': 2,
+                'max_posts_per_day': 2,
+                'max_domains': 3
+            },
+            'connected_platforms': [],
+            'selected_domains': [],
+            'auto_posting_active': False,
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+            'email_verified': False,
+            'is_active': True
+        }
+        
+        result = db.users.insert_one(user_data)
+        user_id = str(result.inserted_id)
+        
+        # Create JWT tokens
+        access_token = create_access_token(
+            identity=user_id,
+            expires_delta=timedelta(hours=24)
+        )
+        refresh_token = create_refresh_token(
+            identity=user_id,
+            expires_delta=timedelta(days=30)
         )
         
-        if not token_data.get('access_token'):
-            return jsonify({'error': 'Failed to obtain access token'}), 400
-            
-        # Get platform user info
-        user_info = oauth_service.get_platform_user_info(platform, token_data['access_token'])
+        # Return user data (without password)
+        user_response = {
+            'id': user_id,
+            'name': name,
+            'email': email,
+            'subscription_plan': 'free',
+            'plan_limits': user_data['plan_limits'],
+            'connected_platforms': [],
+            'auto_posting_active': False
+        }
         
-        # Encrypt and store tokens
-        encrypted_access_token = encryption_service.encrypt(token_data['access_token'])
-        encrypted_refresh_token = None
-        if token_data.get('refresh_token'):
-            encrypted_refresh_token = encryption_service.encrypt(token_data['refresh_token'])
-            
-        # Save or update platform connection
-        connection = PlatformConnection.query.filter_by(
-            user_id=user_id,
-            platform=platform
-        ).first()
-        
-        if connection:
-            # Update existing connection
-            connection.access_token = encrypted_access_token
-            connection.refresh_token = encrypted_refresh_token
-            connection.expires_at = datetime.utcnow() + timedelta(seconds=token_data.get('expires_in', 3600))
-            connection.platform_user_id = user_info.get('id')
-            connection.platform_username = user_info.get('username')
-            connection.is_active = True
-            connection.last_connected = datetime.utcnow()
-        else:
-            # Create new connection
-            connection = PlatformConnection(
-                user_id=user_id,
-                platform=platform,
-                access_token=encrypted_access_token,
-                refresh_token=encrypted_refresh_token,
-                expires_at=datetime.utcnow() + timedelta(seconds=token_data.get('expires_in', 3600)),
-                platform_user_id=user_info.get('id'),
-                platform_username=user_info.get('username'),
-                is_active=True,
-                scopes=token_data.get('scope', ''),
-                last_connected=datetime.utcnow()
-            )
-            
-        connection.save()
-        
-        # Log successful connection
-        logging.info(f"User {user_id} successfully connected {platform}")
-        
-        return jsonify({
-            'success': True,
-            'platform': platform,
-            'username': user_info.get('username'),
-            'connected_at': connection.last_connected.isoformat()
-        })
+        return generate_response(
+            True, 
+            'Registration successful', 
+            data={
+                'user': user_response,
+                'access_token': access_token,
+                'refresh_token': refresh_token
+            }
+        )
         
     except Exception as e:
-        logging.error(f"OAuth callback error: {str(e)}")
-        return jsonify({'error': 'OAuth callback failed'}), 500
+        current_app.logger.error(f'Registration error: {str(e)}')
+        return generate_response(False, 'Registration failed', status_code=500)
 
-@auth_bp.route('/platforms/connected', methods=['GET'])
+@auth_bp.route('/login', methods=['POST'])
+def login():
+    """User login with email and password"""
+    try:
+        data = request.get_json()
+        
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
+        
+        if not email or not password:
+            return generate_response(False, 'Email and password are required', status_code=400)
+        
+        # Find user
+        db = get_database()
+        user = db.users.find_one({'email': email})
+        
+        if not user:
+            return generate_response(False, 'Invalid email or password', status_code=401)
+        
+        # Check password
+        if not check_password_hash(user['password_hash'], password):
+            return generate_response(False, 'Invalid email or password', status_code=401)
+        
+        # Check if user is active
+        if not user.get('is_active', True):
+            return generate_response(False, 'Account is deactivated', status_code=403)
+        
+        # Update last login
+        db.users.update_one(
+            {'_id': user['_id']},
+            {'$set': {'last_login': datetime.utcnow()}}
+        )
+        
+        # Create JWT tokens
+        user_id = str(user['_id'])
+        access_token = create_access_token(
+            identity=user_id,
+            expires_delta=timedelta(hours=24)
+        )
+        refresh_token = create_refresh_token(
+            identity=user_id,
+            expires_delta=timedelta(days=30)
+        )
+        
+        # Get connected platforms count
+        connected_platforms = db.platform_connections.find({
+            'user_id': ObjectId(user_id),
+            'is_active': True
+        }).count()
+        
+        # Return user data (without password)
+        user_response = {
+            'id': user_id,
+            'name': user['name'],
+            'email': user['email'],
+            'subscription_plan': user.get('subscription_plan', 'free'),
+            'plan_limits': user.get('plan_limits', {}),
+            'connected_platforms_count': connected_platforms,
+            'auto_posting_active': user.get('auto_posting_active', False),
+            'selected_domains': user.get('selected_domains', [])
+        }
+        
+        return generate_response(
+            True,
+            'Login successful',
+            data={
+                'user': user_response,
+                'access_token': access_token,
+                'refresh_token': refresh_token
+            }
+        )
+        
+    except Exception as e:
+        current_app.logger.error(f'Login error: {str(e)}')
+        return generate_response(False, 'Login failed', status_code=500)
+
+@auth_bp.route('/refresh', methods=['POST'])
+@jwt_required(refresh=True)
+def refresh():
+    """Refresh access token"""
+    try:
+        current_user_id = get_jwt_identity()
+        
+        # Create new access token
+        new_access_token = create_access_token(
+            identity=current_user_id,
+            expires_delta=timedelta(hours=24)
+        )
+        
+        return generate_response(
+            True,
+            'Token refreshed successfully',
+            data={'access_token': new_access_token}
+        )
+        
+    except Exception as e:
+        current_app.logger.error(f'Token refresh error: {str(e)}')
+        return generate_response(False, 'Token refresh failed', status_code=500)
+
+@auth_bp.route('/me', methods=['GET'])
 @jwt_required()
-def get_connected_platforms():
-    """Get list of connected platforms for the user"""
+def get_current_user():
+    """Get current user profile"""
     try:
         user_id = get_jwt_identity()
         
-        connections = PlatformConnection.query.filter_by(
-            user_id=user_id,
-            is_active=True
-        ).all()
+        db = get_database()
+        user = db.users.find_one({'_id': ObjectId(user_id)})
         
-        platforms = []
-        for conn in connections:
-            platforms.append({
-                'platform': conn.platform,
-                'username': conn.platform_username,
-                'connected_at': conn.last_connected.isoformat(),
-                'expires_at': conn.expires_at.isoformat() if conn.expires_at else None,
-                'is_token_valid': oauth_service.is_token_valid(conn)
+        if not user:
+            return generate_response(False, 'User not found', status_code=404)
+        
+        # Get connected platforms
+        connected_platforms = list(db.platform_connections.find({
+            'user_id': ObjectId(user_id),
+            'is_active': True
+        }))
+        
+        platforms_data = []
+        for platform in connected_platforms:
+            platforms_data.append({
+                'platform': platform['platform'],
+                'username': platform['username'],
+                'connected_at': platform['created_at'].isoformat(),
+                'is_active': platform['is_active']
             })
-            
-        return jsonify({
-            'platforms': platforms,
-            'total': len(platforms)
-        })
+        
+        # Get usage stats for today
+        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        posts_today = db.posts.find({
+            'user_id': ObjectId(user_id),
+            'created_at': {'$gte': today}
+        }).count()
+        
+        user_response = {
+            'id': str(user['_id']),
+            'name': user['name'],
+            'email': user['email'],
+            'subscription_plan': user.get('subscription_plan', 'free'),
+            'plan_limits': user.get('plan_limits', {}),
+            'connected_platforms': platforms_data,
+            'selected_domains': user.get('selected_domains', []),
+            'auto_posting_active': user.get('auto_posting_active', False),
+            'posts_today': posts_today,
+            'created_at': user['created_at'].isoformat(),
+            'email_verified': user.get('email_verified', False)
+        }
+        
+        return generate_response(True, 'User profile retrieved', data={'user': user_response})
         
     except Exception as e:
-        logging.error(f"Error fetching connected platforms: {str(e)}")
-        return jsonify({'error': 'Failed to fetch platforms'}), 500
+        current_app.logger.error(f'Get current user error: {str(e)}')
+        return generate_response(False, 'Failed to get user profile', status_code=500)
 
-@auth_bp.route('/platforms/disconnect', methods=['POST'])
+@auth_bp.route('/logout', methods=['POST'])
 @jwt_required()
-def disconnect_platform():
-    """Disconnect a platform"""
+def logout():
+    """Logout user (client-side token removal)"""
+    try:
+        # In a more complex setup, you might want to blacklist the token
+        # For now, we'll just return success and let client remove token
+        return generate_response(True, 'Logout successful')
+        
+    except Exception as e:
+        current_app.logger.error(f'Logout error: {str(e)}')
+        return generate_response(False, 'Logout failed', status_code=500)
+
+@auth_bp.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    """Request password reset"""
+    try:
+        data = request.get_json()
+        email = data.get('email', '').strip().lower()
+        
+        if not email:
+            return generate_response(False, 'Email is required', status_code=400)
+        
+        db = get_database()
+        user = db.users.find_one({'email': email})
+        
+        if not user:
+            # Don't reveal if email exists or not for security
+            return generate_response(True, 'If email exists, reset instructions have been sent')
+        
+        # Generate reset token (in production, use proper token generation)
+        reset_token = create_access_token(
+            identity=str(user['_id']),
+            expires_delta=timedelta(hours=1)
+        )
+        
+        # Store reset token (in production, store hash of token)
+        db.users.update_one(
+            {'_id': user['_id']},
+            {
+                '$set': {
+                    'reset_token': reset_token,
+                    'reset_token_expires': datetime.utcnow() + timedelta(hours=1)
+                }
+            }
+        )
+        
+        # TODO: Send email with reset link
+        # send_password_reset_email(email, reset_token)
+        
+        return generate_response(True, 'Password reset instructions sent to your email')
+        
+    except Exception as e:
+        current_app.logger.error(f'Forgot password error: {str(e)}')
+        return generate_response(False, 'Failed to process password reset request', status_code=500)
+
+@auth_bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    """Reset password with token"""
+    try:
+        data = request.get_json()
+        token = data.get('token')
+        new_password = data.get('password')
+        
+        if not token or not new_password:
+            return generate_response(False, 'Token and new password are required', status_code=400)
+        
+        if not validate_password(new_password):
+            return generate_response(False, 'Password must be at least 8 characters with uppercase, lowercase, number and special character', status_code=400)
+        
+        db = get_database()
+        
+        # Find user with valid reset token
+        user = db.users.find_one({
+            'reset_token': token,
+            'reset_token_expires': {'$gt': datetime.utcnow()}
+        })
+        
+        if not user:
+            return generate_response(False, 'Invalid or expired reset token', status_code=400)
+        
+        # Update password and remove reset token
+        hashed_password = generate_password_hash(new_password)
+        
+        db.users.update_one(
+            {'_id': user['_id']},
+            {
+                '$set': {
+                    'password_hash': hashed_password,
+                    'updated_at': datetime.utcnow()
+                },
+                '$unset': {
+                    'reset_token': '',
+                    'reset_token_expires': ''
+                }
+            }
+        )
+        
+        return generate_response(True, 'Password reset successful')
+        
+    except Exception as e:
+        current_app.logger.error(f'Reset password error: {str(e)}')
+        return generate_response(False, 'Failed to reset password', status_code=500)
+
+@auth_bp.route('/change-password', methods=['POST'])
+@jwt_required()
+def change_password():
+    """Change password for authenticated user"""
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
-        platform = data.get('platform')
         
-        if not platform:
-            return jsonify({'error': 'Platform is required'}), 400
-            
-        connection = PlatformConnection.query.filter_by(
-            user_id=user_id,
-            platform=platform
-        ).first()
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
         
-        if not connection:
-            return jsonify({'error': 'Platform not connected'}), 404
-            
-        # Revoke token on platform (if supported)
-        try:
-            decrypted_token = encryption_service.decrypt(connection.access_token)
-            oauth_service.revoke_token(platform, decrypted_token)
-        except Exception as e:
-            logging.warning(f"Failed to revoke token for {platform}: {str(e)}")
-            
-        # Mark as inactive instead of deleting (for audit purposes)
-        connection.is_active = False
-        connection.disconnected_at = datetime.utcnow()
-        connection.save()
+        if not current_password or not new_password:
+            return generate_response(False, 'Current and new password are required', status_code=400)
         
-        logging.info(f"User {user_id} disconnected {platform}")
+        if not validate_password(new_password):
+            return generate_response(False, 'New password must be at least 8 characters with uppercase, lowercase, number and special character', status_code=400)
         
-        return jsonify({
-            'success': True,
-            'platform': platform,
-            'disconnected_at': connection.disconnected_at.isoformat()
-        })
+        db = get_database()
+        user = db.users.find_one({'_id': ObjectId(user_id)})
         
-    except Exception as e:
-        logging.error(f"Error disconnecting platform: {str(e)}")
-        return jsonify({'error': 'Failed to disconnect platform'}), 500
-
-@auth_bp.route('/platforms/<platform>/test', methods=['POST'])
-@jwt_required()
-def test_platform_connection(platform):
-    """Test if platform connection is working"""
-    try:
-        user_id = get_jwt_identity()
+        if not user:
+            return generate_response(False, 'User not found', status_code=404)
         
-        connection = PlatformConnection.query.filter_by(
-            user_id=user_id,
-            platform=platform,
-            is_active=True
-        ).first()
+        # Verify current password
+        if not check_password_hash(user['password_hash'], current_password):
+            return generate_response(False, 'Current password is incorrect', status_code=400)
         
-        if not connection:
-            return jsonify({'error': 'Platform not connected'}), 404
-            
-        # Decrypt token and test
-        decrypted_token = encryption_service.decrypt(connection.access_token)
-        is_valid = oauth_service.test_token(platform, decrypted_token)
+        # Update to new password
+        hashed_password = generate_password_hash(new_password)
         
-        if is_valid:
-            return jsonify({
-                'success': True,
-                'platform': platform,
-                'status': 'Token is valid'
-            })
-        else:
-            # Try to refresh token if available
-            if connection.refresh_token:
-                try:
-                    new_tokens = oauth_service.refresh_access_token(platform, connection.refresh_token)
-                    if new_tokens:
-                        # Update with new tokens
-                        connection.access_token = encryption_service.encrypt(new_tokens['access_token'])
-                        if new_tokens.get('refresh_token'):
-                            connection.refresh_token = encryption_service.encrypt(new_tokens['refresh_token'])
-                        connection.expires_at = datetime.utcnow() + timedelta(seconds=new_tokens.get('expires_in', 3600))
-                        connection.save()
-                        
-                        return jsonify({
-                            'success': True,
-                            'platform': platform,
-                            'status': 'Token refreshed'
-                        })
-                except Exception:
-                    pass
-                    
-            return jsonify({
-                'success': False,
-                'platform': platform,
-                'status': 'Token expired or invalid'
-            }), 401
-            
-    except Exception as e:
-        logging.error(f"Error testing platform connection: {str(e)}")
-        return jsonify({'error': 'Failed to test connection'}), 500
-
-@auth_bp.route('/platforms/status', methods=['GET'])
-@jwt_required()
-def get_platforms_status():
-    """Get status of all supported platforms"""
-    try:
-        user_id = get_jwt_identity()
-        
-        supported_platforms = ['facebook', 'instagram', 'twitter', 'linkedin', 'youtube', 'tiktok', 'pinterest']
-        connections = PlatformConnection.query.filter_by(
-            user_id=user_id,
-            is_active=True
-        ).all()
-        
-        connected_platforms = {conn.platform: conn for conn in connections}
-        
-        status = []
-        for platform in supported_platforms:
-            platform_status = {
-                'platform': platform,
-                'connected': platform in connected_platforms,
-                'username': None,
-                'connected_at': None,
-                'token_valid': False
+        db.users.update_one(
+            {'_id': ObjectId(user_id)},
+            {
+                '$set': {
+                    'password_hash': hashed_password,
+                    'updated_at': datetime.utcnow()
+                }
             }
-            
-            if platform in connected_platforms:
-                conn = connected_platforms[platform]
-                platform_status.update({
-                    'username': conn.platform_username,
-                    'connected_at': conn.last_connected.isoformat(),
-                    'token_valid': oauth_service.is_token_valid(conn)
-                })
-                
-            status.append(platform_status)
-            
-        return jsonify({
-            'platforms': status,
-            'total_connected': len(connected_platforms)
-        })
+        )
+        
+        return generate_response(True, 'Password changed successfully')
         
     except Exception as e:
-        logging.error(f"Error getting platforms status: {str(e)}")
-        return jsonify({'error': 'Failed to get platforms status'}), 500
+        current_app.logger.error(f'Change password error: {str(e)}')
+        return generate_response(False, 'Failed to change password', status_code=500)
+
+@auth_bp.route('/update-profile', methods=['PUT'])
+@jwt_required()
+def update_profile():
+    """Update user profile"""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        # Fields that can be updated
+        allowed_fields = ['name']
+        update_data = {}
+        
+        for field in allowed_fields:
+            if field in data:
+                update_data[field] = data[field].strip() if isinstance(data[field], str) else data[field]
+        
+        if not update_data:
+            return generate_response(False, 'No valid fields to update', status_code=400)
+        
+        # Add update timestamp
+        update_data['updated_at'] = datetime.utcnow()
+        
+        db = get_database()
+        result = db.users.update_one(
+            {'_id': ObjectId(user_id)},
+            {'$set': update_data}
+        )
+        
+        if result.matched_count == 0:
+            return generate_response(False, 'User not found', status_code=404)
+        
+        # Get updated user
+        updated_user = db.users.find_one({'_id': ObjectId(user_id)})
+        
+        user_response = {
+            'id': str(updated_user['_id']),
+            'name': updated_user['name'],
+            'email': updated_user['email'],
+            'updated_at': updated_user['updated_at'].isoformat()
+        }
+        
+        return generate_response(True, 'Profile updated successfully', data={'user': user_response})
+        
+    except Exception as e:
+        current_app.logger.error(f'Update profile error: {str(e)}')
+        return generate_response(False, 'Failed to update profile', status_code=500)

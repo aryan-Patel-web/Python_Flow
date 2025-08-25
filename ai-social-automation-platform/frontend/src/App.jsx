@@ -5,18 +5,26 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import PublicRoute from './components/auth/PublicRoute';
 import Layout from './components/Layout/Layout';
 
-// Landing Page
+// ===============================================
+// 🏠 LANDING PAGE - Public Route (/)
+// ===============================================
 import LandingPage from './pages/LandingPage';
 
-// Auth Pages
+// ===============================================
+// 🔐 AUTH PAGES - Public Routes
+// ===============================================
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import ForgotPassword from './pages/auth/ForgotPassword';
 
+// ===============================================
 // 🔥 NEW: OAuth Callback Handler for Auto-Posting Authentication
+// ===============================================
 import OAuthCallback from './components/auth/OAuthCallback';
 
-// Main App Pages
+// ===============================================
+// 📊 MAIN APP PAGES - Protected Routes
+// ===============================================
 import Dashboard from './pages/dashboard/Dashboard';
 import CredentialsPage from './pages/credentials/CredentialsPage';
 import DomainsPage from './pages/domains/DomainsPage';
@@ -26,15 +34,21 @@ import AutomationPage from './pages/automation/AutomationPage';
 import BillingPage from './pages/billing/BillingPage';
 import SettingsPage from './pages/settings/SettingsPage';
 
-// 🔥 NEW: Secure Platforms Page for OAuth Auto-Posting (Replaces insecure credential forms)
+// ===============================================
+// 🔥 NEW: Secure Platforms Page for OAuth Auto-Posting
+// ===============================================
 import Platforms from './pages/platforms/Platforms';
 
+// ===============================================
 // 🔥 NEW: Auto-Posting Management Pages
+// ===============================================
 import AutoPostingCenter from './pages/autoposting/AutoPostingCenter';
 import PostingScheduler from './pages/autoposting/PostingScheduler';
 import ContentGenerator from './pages/autoposting/ContentGenerator';
 
-// Error Pages
+// ===============================================
+// ❌ ERROR PAGES
+// ===============================================
 import NotFound from './pages/error/NotFound';
 
 function App() {
@@ -42,14 +56,19 @@ function App() {
     <AuthProvider>
       <div className="min-h-screen bg-gray-50">
         <Routes>
-          {/* 🔥 NEW: Landing Page - Public Route */}
+          {/* =============================================== */}
+          {/* 🏠 LANDING PAGE - Public Route */}
+          {/* URL: http://localhost:3000/ */}
+          {/* =============================================== */}
           <Route path="/" element={
             <PublicRoute>
               <LandingPage />
             </PublicRoute>
           } />
 
-          {/* Public Routes (redirect to dashboard if authenticated) */}
+          {/* =============================================== */}
+          {/* 🔐 PUBLIC ROUTES (redirect to dashboard if authenticated) */}
+          {/* =============================================== */}
           <Route path="/login" element={
             <PublicRoute>
               <Login />
@@ -66,7 +85,9 @@ function App() {
             </PublicRoute>
           } />
 
-          {/* 🔥 NEW: OAuth Callback Routes - Secure Social Media Authentication for Auto-Posting */}
+          {/* =============================================== */}
+          {/* 🔥 NEW: OAuth Callback Routes - Secure Social Media Authentication */}
+          {/* =============================================== */}
           <Route path="/auth/callback/facebook" element={<OAuthCallback platform="facebook" />} />
           <Route path="/auth/callback/instagram" element={<OAuthCallback platform="instagram" />} />
           <Route path="/auth/callback/twitter" element={<OAuthCallback platform="twitter" />} />
@@ -75,7 +96,10 @@ function App() {
           <Route path="/auth/callback/tiktok" element={<OAuthCallback platform="tiktok" />} />
           <Route path="/auth/callback/pinterest" element={<OAuthCallback platform="pinterest" />} />
 
-          {/* Protected Routes (require authentication) */}
+          {/* =============================================== */}
+          {/* 📊 PROTECTED ROUTES - Require Authentication */}
+          {/* URL: http://localhost:3000/dashboard */}
+          {/* =============================================== */}
           <Route path="/dashboard" element={
             <ProtectedRoute>
               <Layout>
@@ -140,7 +164,10 @@ function App() {
             </ProtectedRoute>
           } />
 
-          {/* 🔥 NEW: Secure Platforms Page - OAuth Only Authentication for Auto-Posting */}
+          {/* =============================================== */}
+          {/* 🔥 NEW: Secure Platforms Page - OAuth Only Authentication */}
+          {/* URL: http://localhost:3000/platforms */}
+          {/* =============================================== */}
           <Route path="/platforms" element={
             <ProtectedRoute>
               <Layout>
@@ -149,7 +176,12 @@ function App() {
             </ProtectedRoute>
           } />
 
+          {/* =============================================== */}
           {/* 🔥 NEW: Auto-Posting Management Routes */}
+          {/* URL: http://localhost:3000/auto-posting */}
+          {/* URL: http://localhost:3000/posting-scheduler */}
+          {/* URL: http://localhost:3000/content-generator */}
+          {/* =============================================== */}
           <Route path="/auto-posting" element={
             <ProtectedRoute>
               <Layout>
@@ -174,7 +206,9 @@ function App() {
             </ProtectedRoute>
           } />
 
-          {/* 404 Page */}
+          {/* =============================================== */}
+          {/* ❌ 404 PAGE */}
+          {/* =============================================== */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
