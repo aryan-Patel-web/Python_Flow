@@ -1,574 +1,352 @@
-import uuid
-import datetime
-
-def generate_uuid() -> str:
-    """Generate a unique identifier."""
-    return str(uuid.uuid4())
-
-def current_timestamp() -> str:
-    """Return current UTC timestamp as string."""
-    return datetime.datetime.utcnow().isoformat()
-
-def paginate_query(query, page: int, per_page: int):
-    """Paginate a SQLAlchemy query."""
-    return query.limit(per_page).offset((page - 1) * per_page)
 """
-Helper utilities for common operations
+Utility helper functions for VelocityPost.ai
 """
-import uuid
+
+import json
 import re
 import hashlib
 import secrets
-import string
-from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any, Union
-import json
-import base64
-from urllib.parse import urlparse
-import bleach
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Any
+from flask import jsonify, request
+import logging
 
-def generate_uuid() -> str:
-    """Generate a UUID4 string"""
-    return str(uuid.uuid4())
+logger = logging.getLogger(__name__)
 
-def generate_short_id(length: int = 8) -> str:
-    """Generate a short random ID"""
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
-
-def generate_api_key(prefix: str = 'ai_social', length: int = 32) -> str:
-    """Generate an API key with prefix"""
-    key = secrets.token_urlsafe(length)
-    return f"{prefix}_{key}"
-
-def hash_password(password: str, salt: str = None) -> tuple:
-    """Hash a password with salt"""
-    if salt is None:
-        salt = secrets.token_hex(16)
-    
-    # Use PBKDF2 for password hashing
-    from hashlib import pbkdf2_hmac
-    hashed = pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
-    return base64.b64encode(hashed).decode(), salt
-
-def verify_password(password: str, hashed: str, salt: str) -> bool:
-    """Verify a password against its hash"""
-    test_hash, _ = hash_password(password, salt)
-    return secrets.compare_digest(test_hash, hashed)
-
-def format_datetime(dt: datetime, format_type: str = 'iso') -> str:
-    """Format datetime for different use cases"""
-    if dt is None:
-        return None
-    
-    if format_type == 'iso':
-        return dt.isoformat()
-    elif format_type == 'human':
-        return dt.strftime('%Y-%m-%d %H:%M:%S')
-    elif format_type == 'date':
-        return dt.strftime('%Y-%m-%d')
-    elif format_type == 'time':
-        return dt.strftime('%H:%M:%S')
-    elif format_type == 'relative':
-        return format_relative_time(dt)
-    else:
-        return dt.isoformat()
-
-def format_relative_time(dt: datetime) -> str:
-    """Format time relative to now (e.g., '2 hours ago')"""
-    now = datetime.utcnow()
-    diff = now - dt
-    
-    if diff.days > 0:
-        if diff.days == 1:
-            return "1 day ago"
-        return f"{diff.days} days ago"
-    
-    hours = diff.seconds // 3600
-    if hours > 0:
-        if hours == 1:
-            return "1 hour ago"
-        return f"{hours} hours ago"
-    
-    minutes = diff.seconds // 60
-    if minutes > 0:
-        if minutes == 1:
-            return "1 minute ago"
-        return f"{minutes} minutes ago"
-    
-    return "Just now"
-
-def parse_datetime(date_string: str) -> Optional[datetime]:
-    """Parse various datetime formats"""
-    if not date_string:
-        return None
-    
-    formats = [
-        '%Y-%m-%dT%H:%M:%S.%fZ',
-        '%Y-%m-%dT%H:%M:%SZ',
-        '%Y-%m-%dT%H:%M:%S',
-        '%Y-%m-%d %H:%M:%S',
-        '%Y-%m-%d',
-        '%d/%m/%Y',
-        '%m/%d/%Y'
-    ]
-    
-    for fmt in formats:
-        try:
-            return datetime.strptime(date_string, fmt)
-        except ValueError:
-            continue
-    
-    return None
-
-def sanitize_text(text: str, max_length: Optional[int] = None, 
-                 allow_html: bool = False) -> str:
-    """Sanitize text input"""
-    if not isinstance(text, str):
-        return ""
-    
-    # Remove or escape HTML if not allowed
-    if not allow_html:
-        text = bleach.clean(text, strip=True)
-    else:
-        # Allow basic HTML tags
-        allowed_tags = ['b', 'i', 'u', 'em', 'strong', 'a', 'br', 'p']
-        text = bleach.clean(text, tags=allowed_tags, strip=True)
-    
-    # Normalize whitespace
-    text = ' '.join(text.split())
-    
-    # Truncate if necessary
-    if max_length and len(text) > max_length:
-        text = text[:max_length].strip()
-        if not text.endswith('...'):
-            text += '...'
-    
-    return text
-
-def extract_hashtags(text: str) -> List[str]:
-    """Extract hashtags from text"""
-    hashtag_pattern = r'#[a-zA-Z0-9_]+'
-    hashtags = re.findall(hashtag_pattern, text)
-    return [tag.lower() for tag in hashtags]
-
-def extract_mentions(text: str) -> List[str]:
-    """Extract @mentions from text"""
-    mention_pattern = r'@[a-zA-Z0-9_.]+'
-    mentions = re.findall(mention_pattern, text)
-    return [mention.lower() for mention in mentions]
-
-def extract_urls(text: str) -> List[str]:
-    """Extract URLs from text"""
-    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
-    urls = re.findall(url_pattern, text)
-    return urls
-
-def shorten_url(url: str, max_length: int = 30) -> str:
-    """Shorten URL for display"""
-    if len(url) <= max_length:
-        return url
-    
-    parsed = urlparse(url)
-    domain = parsed.netloc
-    
-    if len(domain) > max_length - 3:
-        return domain[:max_length-3] + "..."
-    
-    return domain + "..."
-
-def format_file_size(size_bytes: int) -> str:
-    """Format file size in human readable format"""
-    if size_bytes == 0:
-        return "0 B"
-    
-    size_names = ["B", "KB", "MB", "GB", "TB"]
-    i = 0
-    while size_bytes >= 1024 and i < len(size_names) - 1:
-        size_bytes /= 1024.0
-        i += 1
-    
-    return f"{size_bytes:.1f} {size_names[i]}"
-
-def format_number(number: Union[int, float], compact: bool = False) -> str:
-    """Format number for display"""
-    if compact:
-        if number >= 1000000:
-            return f"{number/1000000:.1f}M"
-        elif number >= 1000:
-            return f"{number/1000:.1f}K"
-    
-    return f"{number:,}"
-
-def slugify(text: str) -> str:
-    """Convert text to URL-friendly slug"""
-    # Convert to lowercase and replace spaces with hyphens
-    slug = re.sub(r'[^\w\s-]', '', text.lower())
-    slug = re.sub(r'[-\s]+', '-', slug)
-    return slug.strip('-')
-
-def chunk_list(lst: List, chunk_size: int) -> List[List]:
-    """Split list into chunks of specified size"""
-    return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
-
-def deep_merge_dicts(dict1: Dict, dict2: Dict) -> Dict:
-    """Deep merge two dictionaries"""
-    result = dict1.copy()
-    
-    for key, value in dict2.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = deep_merge_dicts(result[key], value)
-        else:
-            result[key] = value
-    
-    return result
-
-def safe_json_loads(json_string: str, default: Any = None) -> Any:
-    """Safely parse JSON string"""
-    try:
-        return json.loads(json_string)
-    except (json.JSONDecodeError, TypeError):
-        return default
-
-def safe_json_dumps(obj: Any, default: str = "{}") -> str:
-    """Safely serialize object to JSON"""
-    try:
-        return json.dumps(obj, default=str)
-    except (TypeError, ValueError):
-        return default
-
-def mask_sensitive_data(data: str, mask_char: str = '*', visible_chars: int = 4) -> str:
-    """Mask sensitive data (passwords, tokens, etc.)"""
-    if not data or len(data) <= visible_chars:
-        return mask_char * len(data) if data else ""
-    
-    visible_part = data[:visible_chars]
-    masked_part = mask_char * (len(data) - visible_chars)
-    return visible_part + masked_part
-
-def validate_and_normalize_email(email: str) -> Optional[str]:
-    """Validate and normalize email address"""
-    if not email:
-        return None
-    
-    # Basic email validation
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    if not re.match(email_pattern, email):
-        return None
-    
-    # Normalize: lowercase and strip whitespace
-    return email.lower().strip()
-
-def generate_filename(original_filename: str, user_id: str = None, 
-                     timestamp: bool = True) -> str:
-    """Generate a safe filename for uploads"""
-    # Extract extension
-    name, ext = os.path.splitext(original_filename)
-    
-    # Sanitize filename
-    safe_name = re.sub(r'[^\w\-_.]', '_', name)
-    safe_name = safe_name[:50]  # Limit length
-    
-    # Add components
-    components = []
-    
-    if user_id:
-        components.append(user_id[:8])  # First 8 chars of user ID
-    
-    if timestamp:
-        components.append(datetime.utcnow().strftime('%Y%m%d_%H%M%S'))
-    
-    components.append(safe_name)
-    
-    # Add random suffix to avoid collisions
-    components.append(generate_short_id(6))
-    
-    return '_'.join(components) + ext
-
-def calculate_content_hash(content: str) -> str:
-    """Calculate hash of content for deduplication"""
-    return hashlib.sha256(content.encode()).hexdigest()
-
-def is_business_hours(timezone_str: str = 'UTC') -> bool:
-    """Check if current time is within business hours"""
-    try:
-        from zoneinfo import ZoneInfo
-        tz = ZoneInfo(timezone_str)
-    except:
-        tz = timezone.utc
-    
-    now = datetime.now(tz)
-    return 9 <= now.hour < 17 and now.weekday() < 5  # 9 AM - 5 PM, Mon-Fri
-
-def get_optimal_posting_time(platform: str, timezone_str: str = 'UTC') -> datetime:
-    """Get optimal posting time for platform"""
-    # Platform-specific optimal times (in 24-hour format)
-    optimal_times = {
-        'instagram': [9, 11, 13, 15, 17, 19],  # Multiple good times
-        'facebook': [9, 13, 15],
-        'twitter': [8, 12, 17, 19],
-        'linkedin': [8, 10, 12, 14, 17],
-        'youtube': [14, 15, 16, 17, 18, 19, 20]
+def generate_response(success=True, message="", data=None, status_code=200):
+    """Generate standardized API response"""
+    response = {
+        'success': success,
+        'message': message,
+        'timestamp': datetime.now(timezone.utc).isoformat()
     }
     
-    try:
-        from zoneinfo import ZoneInfo
-        tz = ZoneInfo(timezone_str)
-    except:
-        tz = timezone.utc
-    
-    now = datetime.now(tz)
-    times = optimal_times.get(platform, [12])  # Default to noon
-    
-    # Find next optimal time
-    for hour in times:
-        optimal_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-        if optimal_time > now:
-            return optimal_time
-    
-    # If no time today, use first time tomorrow
-    tomorrow = now + timedelta(days=1)
-    return tomorrow.replace(hour=times[0], minute=0, second=0, microsecond=0)
+    if data is not None:
+        response['data'] = data
+        
+    return jsonify(response), status_code
 
-def calculate_engagement_rate(likes: int, comments: int, shares: int, 
-                            followers: int) -> float:
+def generate_error_response(message="An error occurred", status_code=400, error_code=None):
+    """Generate standardized error response"""
+    response = {
+        'success': False,
+        'message': message,
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    }
+    
+    if error_code:
+        response['error_code'] = error_code
+        
+    return jsonify(response), status_code
+
+def validate_email(email):
+    """Validate email format"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
+
+def validate_password(password):
+    """Validate password strength"""
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+    
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter"
+    
+    if not re.search(r'\d', password):
+        return False, "Password must contain at least one digit"
+    
+    return True, "Password is valid"
+
+def sanitize_input(text, max_length=255):
+    """Sanitize user input"""
+    if not text:
+        return ""
+    
+    # Remove potentially dangerous characters
+    sanitized = re.sub(r'[<>"\']', '', str(text))
+    
+    # Truncate to max length
+    return sanitized[:max_length].strip()
+
+def generate_unique_id(length=16):
+    """Generate a unique ID"""
+    return secrets.token_hex(length)
+
+def hash_password(password):
+    """Hash password using bcrypt-like method"""
+    import hashlib
+    salt = secrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+    return f"{salt}${hashed.hex()}"
+
+def verify_password(password, hashed_password):
+    """Verify password against hash"""
+    try:
+        salt, hash_hex = hashed_password.split('$')
+        hashed = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+        return hash_hex == hashed.hex()
+    except:
+        return False
+
+def get_client_ip():
+    """Get client IP address"""
+    if request.headers.get('X-Forwarded-For'):
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    elif request.headers.get('X-Real-IP'):
+        return request.headers.get('X-Real-IP')
+    else:
+        return request.remote_addr
+
+def log_api_request(endpoint, method, user_id=None, additional_data=None):
+    """Log API request for monitoring"""
+    log_data = {
+        'endpoint': endpoint,
+        'method': method,
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'ip_address': get_client_ip(),
+        'user_agent': request.headers.get('User-Agent', 'Unknown')
+    }
+    
+    if user_id:
+        log_data['user_id'] = user_id
+    
+    if additional_data:
+        log_data.update(additional_data)
+    
+    logger.info(f"API Request: {json.dumps(log_data)}")
+
+def format_currency(amount, currency='USD'):
+    """Format currency amount"""
+    currency_symbols = {
+        'USD': '$',
+        'INR': '₹',
+        'EUR': '€',
+        'GBP': '£'
+    }
+    
+    symbol = currency_symbols.get(currency, currency)
+    return f"{symbol}{amount:,.2f}"
+
+def calculate_engagement_rate(likes, comments, shares, followers):
     """Calculate engagement rate"""
     if followers == 0:
-        return 0.0
+        return 0
     
     total_engagement = likes + comments + (shares * 2)  # Weight shares more
     return (total_engagement / followers) * 100
 
-def calculate_growth_rate(current: int, previous: int) -> float:
-    """Calculate growth rate percentage"""
-    if previous == 0:
-        return 100.0 if current > 0 else 0.0
-    
-    return ((current - previous) / previous) * 100
-
-def format_currency(amount: float, currency: str = 'USD') -> str:
-    """Format currency amount"""
-    currency_symbols = {
-        'USD': ',
-        'EUR': '€',
-        'GBP': '£',
-        'JPY': '¥'
+def get_optimal_posting_times(timezone='UTC', platform='instagram'):
+    """Get optimal posting times for platform"""
+    # Default optimal times based on platform
+    optimal_times = {
+        'instagram': ['09:00', '11:00', '14:00', '17:00', '20:00'],
+        'facebook': ['09:00', '13:00', '15:00', '19:00'],
+        'twitter': ['08:00', '12:00', '17:00', '19:00'],
+        'linkedin': ['08:00', '10:00', '12:00', '14:00', '17:00'],
+        'youtube': ['14:00', '17:00', '19:00', '20:00'],
+        'tiktok': ['06:00', '10:00', '19:00', '20:00']
     }
     
-    symbol = currency_symbols.get(currency, currency)
-    return f"{symbol}{amount:.2f}"
+    return optimal_times.get(platform, optimal_times['instagram'])
 
-def truncate_text(text: str, max_length: int, suffix: str = '...') -> str:
+def truncate_text(text, max_length, add_ellipsis=True):
     """Truncate text to specified length"""
-    if len(text) <= max_length:
+    if not text or len(text) <= max_length:
         return text
     
-    return text[:max_length - len(suffix)] + suffix
-
-def remove_duplicates(lst: List, key_func=None) -> List:
-    """Remove duplicates from list while preserving order"""
-    if key_func is None:
-        # Simple deduplication
-        seen = set()
-        result = []
-        for item in lst:
-            if item not in seen:
-                seen.add(item)
-                result.append(item)
-        return result
+    if add_ellipsis:
+        return text[:max_length-3] + "..."
     else:
-        # Deduplication with key function
-        seen = set()
-        result = []
-        for item in lst:
-            key = key_func(item)
-            if key not in seen:
-                seen.add(key)
-                result.append(item)
-        return result
+        return text[:max_length]
 
-def batch_process(items: List, batch_size: int, process_func, *args, **kwargs):
-    """Process items in batches"""
-    results = []
-    for i in range(0, len(items), batch_size):
-        batch = items[i:i + batch_size]
-        batch_results = process_func(batch, *args, **kwargs)
-        if isinstance(batch_results, list):
-            results.extend(batch_results)
-        else:
-            results.append(batch_results)
-    return results
+def validate_url(url):
+    """Validate URL format"""
+    url_pattern = re.compile(
+        r'^https?://'  # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+        r'localhost|'  # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+        r'(?::\d+)?'  # optional port
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    
+    return bool(url_pattern.match(url))
 
-def retry_on_failure(max_attempts: int = 3, delay: float = 1.0, 
-                    backoff_multiplier: float = 2.0, exceptions=(Exception,)):
-    """Decorator to retry function on failure"""
-    def decorator(func):
-        import time
-        from functools import wraps
-        
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            attempt = 1
-            current_delay = delay
-            
-            while attempt <= max_attempts:
-                try:
-                    return func(*args, **kwargs)
-                except exceptions as e:
-                    if attempt == max_attempts:
-                        raise e
-                    
-                    time.sleep(current_delay)
-                    current_delay *= backoff_multiplier
-                    attempt += 1
-            
-        return wrapper
-    return decorator
+def extract_hashtags(text):
+    """Extract hashtags from text"""
+    return re.findall(r'#\w+', text)
 
-def memoize(maxsize: int = 128):
-    """Simple memoization decorator"""
-    def decorator(func):
-        from functools import lru_cache
-        return lru_cache(maxsize=maxsize)(func)
-    return decorator
+def extract_mentions(text):
+    """Extract mentions from text"""
+    return re.findall(r'@\w+', text)
 
-def rate_limited_call(func, rate_limit: int, time_window: int = 60):
-    """Execute function with rate limiting"""
-    import time
-    
-    if not hasattr(rate_limited_call, 'calls'):
-        rate_limited_call.calls = {}
-    
-    func_name = func.__name__
-    current_time = time.time()
-    
-    # Initialize or clean old calls
-    if func_name not in rate_limited_call.calls:
-        rate_limited_call.calls[func_name] = []
-    
-    # Remove calls outside time window
-    rate_limited_call.calls[func_name] = [
-        call_time for call_time in rate_limited_call.calls[func_name]
-        if current_time - call_time < time_window
-    ]
-    
-    # Check rate limit
-    if len(rate_limited_call.calls[func_name]) >= rate_limit:
-        oldest_call = min(rate_limited_call.calls[func_name])
-        wait_time = time_window - (current_time - oldest_call)
-        raise Exception(f"Rate limit exceeded. Try again in {wait_time:.1f} seconds")
-    
-    # Record call and execute
-    rate_limited_call.calls[func_name].append(current_time)
-    return func()
+def clean_filename(filename):
+    """Clean filename for safe storage"""
+    # Remove potentially dangerous characters
+    cleaned = re.sub(r'[^\w\-_\.]', '', filename)
+    return cleaned[:100]  # Limit length
 
-def get_file_extension(filename: str) -> str:
-    """Get file extension from filename"""
+def generate_oauth_state():
+    """Generate secure OAuth state parameter"""
+    return secrets.token_urlsafe(32)
+
+def is_valid_json(json_string):
+    """Check if string is valid JSON"""
+    try:
+        json.loads(json_string)
+        return True
+    except:
+        return False
+
+def merge_dictionaries(*dicts):
+    """Merge multiple dictionaries"""
+    result = {}
+    for d in dicts:
+        if isinstance(d, dict):
+            result.update(d)
+    return result
+
+def get_file_extension(filename):
+    """Get file extension"""
     return filename.split('.')[-1].lower() if '.' in filename else ''
 
-def is_valid_file_type(filename: str, allowed_types: List[str]) -> bool:
-    """Check if file type is allowed"""
-    extension = get_file_extension(filename)
-    return extension in [t.lower() for t in allowed_types]
-
-def generate_secure_token(length: int = 32) -> str:
-    """Generate a cryptographically secure token"""
-    return secrets.token_urlsafe(length)
-
-def time_function(func):
-    """Decorator to time function execution"""
-    import time
-    from functools import wraps
-    
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        
-        execution_time = end_time - start_time
-        print(f"{func.__name__} executed in {execution_time:.4f} seconds")
-        
-        return result
-    
-    return wrapper
-
-def validate_json_schema(data: Dict, schema: Dict) -> List[str]:
-    """Basic JSON schema validation"""
-    errors = []
-    
-    for field, field_schema in schema.items():
-        if field_schema.get('required', False) and field not in data:
-            errors.append(f"Required field '{field}' is missing")
-            continue
-        
-        if field in data:
-            value = data[field]
-            expected_type = field_schema.get('type')
-            
-            if expected_type and not isinstance(value, expected_type):
-                errors.append(f"Field '{field}' must be of type {expected_type.__name__}")
-            
-            min_length = field_schema.get('min_length')
-            if min_length and isinstance(value, str) and len(value) < min_length:
-                errors.append(f"Field '{field}' must be at least {min_length} characters")
-            
-            max_length = field_schema.get('max_length')
-            if max_length and isinstance(value, str) and len(value) > max_length:
-                errors.append(f"Field '{field}' must be at most {max_length} characters")
-    
-    return errors
-
-def create_thumbnail_filename(original_filename: str, size: str = 'thumb') -> str:
-    """Create thumbnail filename from original"""
-    name, ext = os.path.splitext(original_filename)
-    return f"{name}_{size}{ext}"
-
-def get_mime_type(filename: str) -> str:
-    """Get MIME type from filename"""
-    import mimetypes
-    mime_type, _ = mimetypes.guess_type(filename)
-    return mime_type or 'application/octet-stream'
-
-def is_image_file(filename: str) -> bool:
+def is_image_file(filename):
     """Check if file is an image"""
-    image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg']
+    image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
     return get_file_extension(filename) in image_extensions
 
-def is_video_file(filename: str) -> bool:
+def is_video_file(filename):
     """Check if file is a video"""
     video_extensions = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv']
     return get_file_extension(filename) in video_extensions
 
-def normalize_phone_number(phone: str, country_code: str = '+1') -> str:
-    """Normalize phone number format"""
-    # Remove all non-digit characters
-    digits = re.sub(r'\D', '', phone)
+def calculate_text_similarity(text1, text2):
+    """Calculate similarity between two texts (simple approach)"""
+    if not text1 or not text2:
+        return 0
     
-    # Add country code if not present
-    if not digits.startswith(country_code.replace('+', '')):
-        digits = country_code.replace('+', '') + digits
+    words1 = set(text1.lower().split())
+    words2 = set(text2.lower().split())
     
-    return '+' + digits
+    intersection = len(words1 & words2)
+    union = len(words1 | words2)
+    
+    return intersection / union if union > 0 else 0
 
-def format_duration(seconds: int) -> str:
-    """Format duration in human readable format"""
-    if seconds < 60:
-        return f"{seconds}s"
-    elif seconds < 3600:
-        minutes = seconds // 60
-        return f"{minutes}m {seconds % 60}s"
+def format_large_number(number):
+    """Format large numbers (1K, 1M, etc.)"""
+    if number < 1000:
+        return str(number)
+    elif number < 1000000:
+        return f"{number/1000:.1f}K"
+    elif number < 1000000000:
+        return f"{number/1000000:.1f}M"
     else:
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        return f"{hours}h {minutes}m"
+        return f"{number/1000000000:.1f}B"
 
-def get_current_timestamp() -> int:
-    """Get current Unix timestamp"""
-    return int(datetime.utcnow().timestamp())
+def get_time_ago(timestamp):
+    """Get human readable time ago"""
+    if not timestamp:
+        return "Unknown"
+    
+    now = datetime.now(timezone.utc)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    
+    diff = now - timestamp
+    
+    seconds = diff.total_seconds()
+    
+    if seconds < 60:
+        return "Just now"
+    elif seconds < 3600:
+        minutes = int(seconds / 60)
+        return f"{minutes}m ago"
+    elif seconds < 86400:
+        hours = int(seconds / 3600)
+        return f"{hours}h ago"
+    elif seconds < 2592000:  # 30 days
+        days = int(seconds / 86400)
+        return f"{days}d ago"
+    else:
+        return timestamp.strftime("%b %d, %Y")
 
-def timestamp_to_datetime(timestamp: Union[int, float]) -> datetime:
-    """Convert Unix timestamp to datetime"""
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+def validate_domain_selection(domains):
+    """Validate content domain selection"""
+    valid_domains = [
+        'memes', 'tech_news', 'coding_tips', 'lifestyle', 
+        'business', 'health_fitness', 'travel', 'food',
+        'fashion', 'gaming', 'music', 'sports'
+    ]
+    
+    if not isinstance(domains, list):
+        return False, "Domains must be a list"
+    
+    if len(domains) == 0:
+        return False, "At least one domain must be selected"
+    
+    if len(domains) > 5:
+        return False, "Maximum 5 domains can be selected"
+    
+    for domain in domains:
+        if domain not in valid_domains:
+            return False, f"Invalid domain: {domain}"
+    
+    return True, "Domains are valid"
 
-import os
+def get_platform_limits(plan_type):
+    """Get platform limits based on plan"""
+    limits = {
+        'free': {
+            'max_platforms': 2,
+            'max_posts_per_day': 2,
+            'max_content_generation': 10
+        },
+        'starter': {
+            'max_platforms': 3,
+            'max_posts_per_day': 6,
+            'max_content_generation': 100
+        },
+        'pro': {
+            'max_platforms': 5,
+            'max_posts_per_day': 15,
+            'max_content_generation': 500
+        },
+        'agency': {
+            'max_platforms': -1,  # Unlimited
+            'max_posts_per_day': -1,  # Unlimited
+            'max_content_generation': -1  # Unlimited
+        }
+    }
+    
+    return limits.get(plan_type, limits['free'])
+
+def check_rate_limit(user_id, action, limit_per_hour=60):
+    """Basic rate limiting check"""
+    # This is a simple implementation
+    # In production, you'd use Redis or similar
+    return True  # Placeholder
+
+def generate_api_key():
+    """Generate API key for external integrations"""
+    return f"vp_{secrets.token_hex(20)}"
+
+def mask_sensitive_data(data, fields_to_mask=None):
+    """Mask sensitive data in logs"""
+    if fields_to_mask is None:
+        fields_to_mask = ['password', 'token', 'secret', 'key']
+    
+    if isinstance(data, dict):
+        masked = {}
+        for key, value in data.items():
+            if any(field in key.lower() for field in fields_to_mask):
+                masked[key] = "*" * len(str(value)) if value else None
+            else:
+                masked[key] = mask_sensitive_data(value, fields_to_mask) if isinstance(value, (dict, list)) else value
+        return masked
+    elif isinstance(data, list):
+        return [mask_sensitive_data(item, fields_to_mask) for item in data]
+    else:
+        return data

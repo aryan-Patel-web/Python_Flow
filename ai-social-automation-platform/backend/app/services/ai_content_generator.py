@@ -1,551 +1,895 @@
 """
 AI Content Generation Service for VelocityPost.ai
-Handles content generation using Mistral and Groq APIs
+Uses Mistral AI + Groq as fallback for generating social media content
 """
 
 import os
-import requests
 import json
 import random
-from typing import Dict, List, Optional
-from datetime import datetime
-from flask import current_app
+import asyncio
+import aiohttp
+import requests
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AIContentGenerator:
-    """Main AI content generator class"""
+    """AI-powered content generation for social media platforms"""
     
     def __init__(self):
         self.mistral_api_key = os.getenv('MISTRAL_API_KEY')
         self.groq_api_key = os.getenv('GROQ_API_KEY')
+        self.openai_api_key = os.getenv('OPENAI_API_KEY')
         
-        # Content domains configuration
+        # API Endpoints
+        self.mistral_url = "https://api.mistral.ai/v1/chat/completions"
+        self.groq_url = "https://api.groq.com/openai/v1/chat/completions"
+        self.openai_url = "https://api.openai.com/v1/chat/completions"
+        
+        # Content domains and their characteristics
         self.content_domains = {
             'tech': {
-                'name': 'Tech & Innovation',
-                'keywords': ['AI', 'machine learning', 'blockchain', 'cybersecurity', 'cloud computing', 'IoT', 'automation'],
-                'tone': 'informative, forward-thinking',
-                'hashtags': ['#tech', '#innovation', '#AI', '#technology', '#future']
+                'name': 'Technology & Innovation',
+                'topics': [
+                    'AI and Machine Learning', 'Web Development', 'Mobile Apps', 
+                    'Cloud Computing', 'Cybersecurity', 'Blockchain', 'IoT', 
+                    'Software Development', 'Tech News', 'Programming Tips'
+                ],
+                'tone': 'informative, cutting-edge, professional',
+                'hashtags': ['#tech', '#innovation', '#AI', '#programming', '#development', '#software']
             },
             'memes': {
                 'name': 'Memes & Humor',
-                'keywords': ['funny', 'relatable', 'trending', 'viral', 'humor', 'comedy'],
-                'tone': 'casual, humorous, engaging',
-                'hashtags': ['#memes', '#funny', '#humor', '#viral', '#comedy']
+                'topics': [
+                    'Programming Memes', 'Work From Home', 'Developer Life',
+                    'Tech Humor', 'Internet Culture', 'Funny Observations',
+                    'Relatable Content', 'Pop Culture', 'Social Media Trends'
+                ],
+                'tone': 'funny, relatable, casual, witty',
+                'hashtags': ['#memes', '#humor', '#funny', '#relatable', '#lol', '#comedy']
             },
             'business': {
-                'name': 'Business Tips',
-                'keywords': ['entrepreneurship', 'startup', 'productivity', 'leadership', 'growth', 'strategy'],
-                'tone': 'professional, motivational',
-                'hashtags': ['#business', '#entrepreneur', '#startup', '#productivity', '#leadership']
+                'name': 'Business & Entrepreneurship',
+                'topics': [
+                    'Startup Tips', 'Leadership', 'Marketing Strategies',
+                    'Productivity', 'Business Growth', 'Success Stories',
+                    'Industry Insights', 'Networking', 'Business News'
+                ],
+                'tone': 'professional, motivational, authoritative',
+                'hashtags': ['#business', '#entrepreneur', '#startup', '#leadership', '#success', '#growth']
             },
             'lifestyle': {
-                'name': 'Lifestyle',
-                'keywords': ['wellness', 'mindfulness', 'self-care', 'balance', 'happiness'],
-                'tone': 'inspirational, positive',
-                'hashtags': ['#lifestyle', '#wellness', '#selfcare', '#mindfulness', '#balance']
+                'name': 'Lifestyle & Personal Development',
+                'topics': [
+                    'Self Improvement', 'Work-Life Balance', 'Mental Health',
+                    'Productivity Tips', 'Motivation', 'Health & Wellness',
+                    'Travel', 'Hobbies', 'Personal Growth'
+                ],
+                'tone': 'inspiring, personal, encouraging',
+                'hashtags': ['#lifestyle', '#motivation', '#selfcare', '#wellness', '#growth', '#inspiration']
             },
             'fitness': {
                 'name': 'Health & Fitness',
-                'keywords': ['workout', 'nutrition', 'health', 'exercise', 'wellness', 'strength'],
-                'tone': 'motivational, energetic',
-                'hashtags': ['#fitness', '#health', '#workout', '#nutrition', '#wellness']
+                'topics': [
+                    'Workout Tips', 'Nutrition', 'Mental Health',
+                    'Fitness Motivation', 'Healthy Recipes', 'Exercise Routines',
+                    'Wellness Tips', 'Sports', 'Recovery'
+                ],
+                'tone': 'energetic, motivational, health-focused',
+                'hashtags': ['#fitness', '#health', '#workout', '#nutrition', '#wellness', '#motivation']
             },
             'finance': {
                 'name': 'Finance & Investment',
-                'keywords': ['investing', 'saving', 'money', 'stocks', 'crypto', 'financial planning'],
-                'tone': 'analytical, educational',
-                'hashtags': ['#finance', '#investing', '#money', '#crypto', '#wealth']
+                'topics': [
+                    'Personal Finance', 'Investment Tips', 'Cryptocurrency',
+                    'Stock Market', 'Saving Money', 'Financial Planning',
+                    'Economic News', 'Budgeting', 'Passive Income'
+                ],
+                'tone': 'informative, trustworthy, analytical',
+                'hashtags': ['#finance', '#investing', '#money', '#crypto', '#stocks', '#financialfreedom']
             },
             'travel': {
                 'name': 'Travel & Adventure',
-                'keywords': ['destinations', 'adventure', 'culture', 'exploration', 'wanderlust'],
-                'tone': 'adventurous, inspiring',
-                'hashtags': ['#travel', '#adventure', '#wanderlust', '#explore', '#destinations']
+                'topics': [
+                    'Travel Tips', 'Destinations', 'Culture',
+                    'Adventure Stories', 'Budget Travel', 'Solo Travel',
+                    'Photography', 'Local Experiences', 'Travel Hacks'
+                ],
+                'tone': 'adventurous, inspiring, descriptive',
+                'hashtags': ['#travel', '#adventure', '#explore', '#wanderlust', '#culture', '#photography']
             },
             'food': {
-                'name': 'Food & Recipes',
-                'keywords': ['recipes', 'cooking', 'foodie', 'cuisine', 'delicious', 'ingredients'],
-                'tone': 'appetizing, friendly',
-                'hashtags': ['#food', '#cooking', '#recipe', '#foodie', '#delicious']
+                'name': 'Food & Cooking',
+                'topics': [
+                    'Recipes', 'Cooking Tips', 'Food Photography',
+                    'Restaurant Reviews', 'Healthy Eating', 'Baking',
+                    'International Cuisine', 'Food Trends', 'Kitchen Hacks'
+                ],
+                'tone': 'appetizing, descriptive, enthusiastic',
+                'hashtags': ['#food', '#cooking', '#recipe', '#foodie', '#delicious', '#homemade']
             }
         }
         
-        # Platform-specific configurations
-        self.platform_configs = {
-            'twitter': {
-                'max_length': 280,
-                'style': 'concise, punchy',
-                'hashtag_limit': 2
-            },
-            'facebook': {
-                'max_length': 2000,
-                'style': 'engaging, story-driven',
-                'hashtag_limit': 3
-            },
+        # Platform-specific requirements
+        self.platform_specs = {
             'instagram': {
                 'max_length': 2200,
-                'style': 'visual-focused, inspiring',
-                'hashtag_limit': 10
+                'optimal_length': 150,
+                'hashtag_limit': 30,
+                'style': 'visual-first, engaging, hashtag-heavy'
+            },
+            'facebook': {
+                'max_length': 63206,
+                'optimal_length': 250,
+                'hashtag_limit': 10,
+                'style': 'conversational, story-telling, engaging'
+            },
+            'twitter': {
+                'max_length': 280,
+                'optimal_length': 250,
+                'hashtag_limit': 5,
+                'style': 'concise, witty, news-worthy'
             },
             'linkedin': {
                 'max_length': 3000,
-                'style': 'professional, thought-leadership',
-                'hashtag_limit': 3
+                'optimal_length': 500,
+                'hashtag_limit': 10,
+                'style': 'professional, insightful, industry-focused'
             },
             'youtube': {
-                'max_length': 5000,
-                'style': 'descriptive, engaging',
-                'hashtag_limit': 5
+                'max_length': 1000,
+                'optimal_length': 200,
+                'hashtag_limit': 15,
+                'style': 'descriptive, engaging, SEO-friendly'
+            },
+            'pinterest': {
+                'max_length': 500,
+                'optimal_length': 100,
+                'hashtag_limit': 20,
+                'style': 'descriptive, keyword-rich, actionable'
             }
         }
     
-    def generate_content(self, domain: str, platform: str, custom_prompt: str = None, 
-                        tone: str = None, target_audience: str = None) -> Dict:
-        """Generate content for specific domain and platform"""
+    async def generate_content(
+        self,
+        domain: str,
+        platform: str,
+        content_type: str = 'post',
+        custom_prompt: Optional[str] = None,
+        creativity_level: int = 75,
+        include_hashtags: bool = True,
+        include_emojis: bool = True,
+        follow_trends: bool = True
+    ) -> Dict:
+        """Generate AI content for specific domain and platform"""
+        
         try:
-            # Get domain configuration
-            domain_config = self.content_domains.get(domain.lower())
-            if not domain_config:
+            # Validate inputs
+            if domain not in self.content_domains:
                 raise ValueError(f"Unsupported domain: {domain}")
             
-            # Get platform configuration
-            platform_config = self.platform_configs.get(platform.lower())
-            if not platform_config:
+            if platform not in self.platform_specs:
                 raise ValueError(f"Unsupported platform: {platform}")
             
-            # Build prompt
+            # Get domain and platform specs
+            domain_config = self.content_domains[domain]
+            platform_config = self.platform_specs[platform]
+            
+            # Build content generation prompt
             prompt = self._build_content_prompt(
-                domain_config, platform_config, custom_prompt, tone, target_audience
+                domain_config=domain_config,
+                platform_config=platform_config,
+                content_type=content_type,
+                custom_prompt=custom_prompt,
+                creativity_level=creativity_level,
+                include_hashtags=include_hashtags,
+                include_emojis=include_emojis,
+                follow_trends=follow_trends
             )
             
-            # Try Mistral first, fallback to Groq
-            content = self._generate_with_mistral(prompt)
-            if not content:
-                content = self._generate_with_groq(prompt)
+            # Generate content using AI services (try Mistral first, then Groq, then OpenAI)
+            content_text = await self._generate_with_fallback(prompt, creativity_level)
             
-            if not content:
-                raise Exception("Both AI services failed to generate content")
-            
-            # Process and optimize content
-            processed_content = self._process_generated_content(
-                content, domain_config, platform_config, platform
+            # Post-process and optimize content
+            optimized_content = self._optimize_content(
+                content=content_text,
+                platform=platform,
+                domain=domain,
+                include_hashtags=include_hashtags
             )
             
-            # Add performance prediction
-            performance_score = self._predict_performance(processed_content, domain, platform)
+            # Generate performance prediction
+            performance_prediction = self._predict_performance(
+                content=optimized_content,
+                domain=domain,
+                platform=platform
+            )
             
-            result = {
-                'content': processed_content['text'],
-                'hashtags': processed_content['hashtags'],
+            # Generate suggested media (if applicable)
+            media_suggestions = self._generate_media_suggestions(
+                content=optimized_content,
+                domain=domain,
+                platform=platform
+            )
+            
+            return {
+                'content': optimized_content,
                 'domain': domain,
                 'platform': platform,
-                'character_count': len(processed_content['text']),
-                'performance_prediction': performance_score,
-                'generated_at': datetime.utcnow().isoformat(),
-                'ai_provider': content.get('provider', 'mistral')
-            }
-            
-            return result
-            
-        except Exception as e:
-            current_app.logger.error(f'Content generation error: {str(e)}')
-            raise e
-    
-    def generate_bulk_content(self, domain: str, platforms: List[str], count: int = 5) -> List[Dict]:
-        """Generate multiple content pieces for multiple platforms"""
-        try:
-            results = []
-            
-            for platform in platforms:
-                for i in range(count):
-                    try:
-                        content = self.generate_content(domain, platform)
-                        results.append(content)
-                    except Exception as e:
-                        current_app.logger.error(f'Bulk content generation error for {platform}: {str(e)}')
-                        continue
-            
-            return results
-            
-        except Exception as e:
-            current_app.logger.error(f'Bulk content generation error: {str(e)}')
-            return []
-    
-    def _build_content_prompt(self, domain_config: Dict, platform_config: Dict, 
-                             custom_prompt: str = None, tone: str = None, 
-                             target_audience: str = None) -> str:
-        """Build AI prompt for content generation"""
-        
-        keywords = ', '.join(domain_config['keywords'][:5])
-        content_tone = tone or domain_config['tone']
-        max_length = platform_config['max_length']
-        style = platform_config['style']
-        
-        base_prompt = f"""
-        Create engaging social media content for {domain_config['name']} domain.
-        
-        Requirements:
-        - Topic area: {domain_config['name']} ({keywords})
-        - Platform: Optimized for {style}
-        - Tone: {content_tone}
-        - Maximum length: {max_length} characters
-        - Target audience: {target_audience or 'General audience interested in ' + domain_config['name'].lower()}
-        
-        Content should be:
-        - Engaging and shareable
-        - Authentic and relatable
-        - Include a clear call-to-action
-        - Avoid controversial topics
-        - Be original and creative
-        """
-        
-        if custom_prompt:
-            base_prompt += f"\n\nAdditional requirements: {custom_prompt}"
-        
-        base_prompt += f"\n\nGenerate ONLY the social media post text, no explanations or additional formatting."
-        
-        return base_prompt
-    
-    def _generate_with_mistral(self, prompt: str) -> Optional[Dict]:
-        """Generate content using Mistral AI"""
-        try:
-            if not self.mistral_api_key:
-                return None
-            
-            headers = {
-                'Authorization': f'Bearer {self.mistral_api_key}',
-                'Content-Type': 'application/json'
-            }
-            
-            data = {
-                'model': 'mistral-medium',
-                'messages': [
-                    {
-                        'role': 'user',
-                        'content': prompt
-                    }
-                ],
-                'max_tokens': 500,
-                'temperature': 0.7
-            }
-            
-            response = requests.post(
-                'https://api.mistral.ai/v1/chat/completions',
-                headers=headers,
-                json=data,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result['choices'][0]['message']['content'].strip()
-                return {
-                    'text': content,
-                    'provider': 'mistral'
+                'content_type': content_type,
+                'performance_prediction': performance_prediction,
+                'media_suggestions': media_suggestions,
+                'metadata': {
+                    'word_count': len(optimized_content.split()),
+                    'character_count': len(optimized_content),
+                    'hashtag_count': len([word for word in optimized_content.split() if word.startswith('#')]),
+                    'emoji_count': len([char for char in optimized_content if char in '😀😃😄😁😆😅😂🤣☺️😊😇🙂🙃😉😌😍🥰😘😗😙😚😋😛😝😜🤪🤨🧐🤓😎🤩🥳😏😒😞😔😟😕🙁☹️😣😖😫😩🥺😢😭😤😠😡🤬🤯😳🥵🥶😱😨😰😥😓🤗🤔🤭🤫🤥😶😐😑😬🙄😯😦😧😮😲🥱😴🤤😪😵🤐🥴🤢🤮🤧😷🤒🤕🤑🤠😈👿👹👺🤡💩👻💀☠️👽👾🤖🎃😺😸😹😻😼😽🙀😿😾']),
+                    'generated_at': datetime.utcnow().isoformat(),
+                    'ai_model_used': self._get_last_used_model(),
+                    'creativity_level': creativity_level
                 }
-            else:
-                current_app.logger.error(f'Mistral API error: {response.status_code} - {response.text}')
-                return None
-                
-        except Exception as e:
-            current_app.logger.error(f'Mistral generation error: {str(e)}')
-            return None
-    
-    def _generate_with_groq(self, prompt: str) -> Optional[Dict]:
-        """Generate content using Groq"""
-        try:
-            if not self.groq_api_key:
-                return None
-            
-            headers = {
-                'Authorization': f'Bearer {self.groq_api_key}',
-                'Content-Type': 'application/json'
             }
             
-            data = {
-                'model': 'mixtral-8x7b-32768',
-                'messages': [
-                    {
-                        'role': 'user',
-                        'content': prompt
-                    }
-                ],
-                'max_tokens': 500,
-                'temperature': 0.7
-            }
-            
-            response = requests.post(
-                'https://api.groq.com/openai/v1/chat/completions',
-                headers=headers,
-                json=data,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result['choices'][0]['message']['content'].strip()
-                return {
-                    'text': content,
-                    'provider': 'groq'
-                }
-            else:
-                current_app.logger.error(f'Groq API error: {response.status_code} - {response.text}')
-                return None
-                
         except Exception as e:
-            current_app.logger.error(f'Groq generation error: {str(e)}')
-            return None
+            logger.error(f"Content generation failed for {domain}/{platform}: {e}")
+            raise Exception(f"Content generation failed: {str(e)}")
     
-    def _process_generated_content(self, content: Dict, domain_config: Dict, 
-                                  platform_config: Dict, platform: str) -> Dict:
-        """Process and optimize generated content"""
-        text = content['text']
+    def _build_content_prompt(
+        self,
+        domain_config: Dict,
+        platform_config: Dict,
+        content_type: str,
+        custom_prompt: Optional[str],
+        creativity_level: int,
+        include_hashtags: bool,
+        include_emojis: bool,
+        follow_trends: bool
+    ) -> str:
+        """Build comprehensive prompt for AI content generation"""
         
-        # Remove quotes if AI added them
-        if text.startswith('"') and text.endswith('"'):
-            text = text[1:-1]
+        # Get current trends if requested
+        trending_topics = self._get_trending_topics(domain_config['name']) if follow_trends else []
         
-        # Ensure it fits platform limits
-        max_length = platform_config['max_length']
-        if len(text) > max_length:
-            # Truncate at last complete sentence or word
-            truncated = text[:max_length]
-            last_period = truncated.rfind('.')
-            last_space = truncated.rfind(' ')
-            
-            if last_period > max_length * 0.8:  # If period is near end
-                text = truncated[:last_period + 1]
-            elif last_space > max_length * 0.8:  # If space is near end
-                text = truncated[:last_space] + '...'
-            else:
-                text = truncated + '...'
-        
-        # Generate hashtags
-        hashtags = self._generate_hashtags(domain_config, platform_config, platform)
-        
-        return {
-            'text': text,
-            'hashtags': hashtags
-        }
-    
-    def _generate_hashtags(self, domain_config: Dict, platform_config: Dict, platform: str) -> List[str]:
-        """Generate relevant hashtags"""
-        base_hashtags = domain_config['hashtags']
-        hashtag_limit = platform_config['hashtag_limit']
-        
-        # Select hashtags based on platform limits
-        if len(base_hashtags) <= hashtag_limit:
-            return base_hashtags
-        
-        # For platforms with higher limits, add more specific hashtags
-        additional_hashtags = {
-            'tech': ['#startup', '#coding', '#digital', '#software', '#data'],
-            'memes': ['#lol', '#trending', '#relatable', '#mood', '#weekend'],
-            'business': ['#success', '#motivation', '#goals', '#growth', '#mindset'],
-            'lifestyle': ['#life', '#inspiration', '#motivation', '#positive', '#mindset'],
-            'fitness': ['#gym', '#training', '#strength', '#cardio', '#healthy'],
-            'finance': ['#trading', '#investment', '#portfolio', '#financial', '#savings'],
-            'travel': ['#vacation', '#trip', '#photography', '#nature', '#culture'],
-            'food': ['#chef', '#homecooking', '#yummy', '#ingredients', '#kitchen']
-        }
-        
-        domain_key = list(domain_config.keys())[0] if domain_config else 'tech'
-        extra_hashtags = additional_hashtags.get(domain_key, [])
-        
-        all_hashtags = base_hashtags + extra_hashtags
-        
-        # Select random hashtags up to limit
-        return random.sample(all_hashtags, min(hashtag_limit, len(all_hashtags)))
-    
-    def _predict_performance(self, content: Dict, domain: str, platform: str) -> Dict:
-        """Predict content performance using AI heuristics"""
-        text = content['text']
-        hashtags = content['hashtags']
-        
-        # Basic scoring factors
-        score_factors = {
-            'length_score': self._score_content_length(text, platform),
-            'engagement_score': self._score_engagement_potential(text),
-            'hashtag_score': self._score_hashtag_usage(hashtags, platform),
-            'readability_score': self._score_readability(text),
-            'trending_score': self._score_trending_potential(text, domain)
-        }
-        
-        # Calculate weighted overall score
-        weights = {
-            'length_score': 0.15,
-            'engagement_score': 0.30,
-            'hashtag_score': 0.20,
-            'readability_score': 0.20,
-            'trending_score': 0.15
-        }
-        
-        overall_score = sum(score * weights[factor] for factor, score in score_factors.items())
-        
-        # Convert to 0-100 scale
-        overall_score = int(overall_score * 100)
-        
-        # Predict engagement ranges based on score
-        if overall_score >= 85:
-            engagement_prediction = "High (500+ interactions)"
-        elif overall_score >= 70:
-            engagement_prediction = "Good (100-500 interactions)"
-        elif overall_score >= 50:
-            engagement_prediction = "Average (50-100 interactions)"
-        else:
-            engagement_prediction = "Low (<50 interactions)"
-        
-        return {
-            'overall_score': overall_score,
-            'engagement_prediction': engagement_prediction,
-            'score_breakdown': score_factors,
-            'best_posting_times': self._suggest_posting_times(platform),
-            'improvement_tips': self._generate_improvement_tips(score_factors)
-        }
-    
-    def _score_content_length(self, text: str, platform: str) -> float:
-        """Score content based on optimal length for platform"""
-        length = len(text)
-        
-        optimal_lengths = {
-            'twitter': (50, 280),
-            'facebook': (100, 400),
-            'instagram': (125, 300),
-            'linkedin': (150, 500),
-            'youtube': (200, 1000)
-        }
-        
-        if platform not in optimal_lengths:
-            return 0.7
-        
-        min_optimal, max_optimal = optimal_lengths[platform]
-        
-        if min_optimal <= length <= max_optimal:
-            return 1.0
-        elif length < min_optimal:
-            return max(0.3, length / min_optimal)
-        else:
-            # Penalize overly long content
-            return max(0.3, 1.0 - ((length - max_optimal) / max_optimal))
-    
-    def _score_engagement_potential(self, text: str) -> float:
-        """Score based on engagement-driving elements"""
-        score = 0.5  # Base score
-        
-        engagement_indicators = [
-            ('?', 0.1),  # Questions
-            ('!', 0.05), # Exclamations
-            ('you', 0.1), # Direct address
-            ('your', 0.05),
-            ('tips', 0.05),
-            ('how to', 0.1),
-            ('secret', 0.05),
-            ('amazing', 0.05),
-            ('incredible', 0.05),
-            ('must', 0.05),
-            ('now', 0.05)
-        ]
-        
-        text_lower = text.lower()
-        for indicator, points in engagement_indicators:
-            if indicator in text_lower:
-                score += points
-        
-        return min(1.0, score)
-    
-    def _score_hashtag_usage(self, hashtags: List[str], platform: str) -> float:
-        """Score hashtag usage"""
-        if not hashtags:
-            return 0.3
-        
-        optimal_counts = {
-            'twitter': 2,
-            'facebook': 3,
-            'instagram': 8,
-            'linkedin': 3,
-            'youtube': 5
-        }
-        
-        optimal = optimal_counts.get(platform, 3)
-        actual = len(hashtags)
-        
-        if actual == optimal:
-            return 1.0
-        elif actual < optimal:
-            return actual / optimal
-        else:
-            return max(0.5, 1.0 - ((actual - optimal) / optimal))
-    
-    def _score_readability(self, text: str) -> float:
-        """Score readability using simple metrics"""
-        words = text.split()
-        sentences = text.split('.')
-        
-        if not words or not sentences:
-            return 0.5
-        
-        avg_words_per_sentence = len(words) / len(sentences)
-        avg_word_length = sum(len(word) for word in words) / len(words)
-        
-        # Optimal ranges for social media
-        if 5 <= avg_words_per_sentence <= 15 and 3 <= avg_word_length <= 6:
-            return 1.0
-        elif 3 <= avg_words_per_sentence <= 20 and 2 <= avg_word_length <= 8:
-            return 0.8
-        else:
-            return 0.6
-    
-    def _score_trending_potential(self, text: str, domain: str) -> float:
-        """Score based on trending potential"""
-        trending_words = {
-            'tech': ['AI', 'automation', 'future', 'innovation', 'breakthrough'],
-            'memes': ['viral', 'trending', 'mood', 'relatable', 'everyone'],
-            'business': ['growth', 'success', 'entrepreneur', 'mindset', 'goals'],
-            'lifestyle': ['wellness', 'balance', 'mindful', 'self-care', 'positive'],
-            'fitness': ['transformation', 'results', 'strength', 'challenge', 'journey'],
-            'finance': ['investment', 'wealth', 'portfolio', 'passive income', 'financial freedom'],
-            'travel': ['adventure', 'wanderlust', 'bucket list', 'hidden gems', 'culture'],
-            'food': ['recipe', 'delicious', 'homemade', 'fresh', 'comfort food']
-        }
-        
-        domain_trends = trending_words.get(domain, [])
-        text_lower = text.lower()
-        
-        trend_score = sum(0.1 for trend in domain_trends if trend.lower() in text_lower)
-        return min(1.0, 0.5 + trend_score)
-    
-    def _suggest_posting_times(self, platform: str) -> List[str]:
-        """Suggest optimal posting times for platform"""
-        posting_times = {
-            'twitter': ['9:00 AM', '1:00 PM', '5:00 PM'],
-            'facebook': ['1:00 PM', '3:00 PM', '8:00 PM'],
-            'instagram': ['11:00 AM', '2:00 PM', '7:00 PM'],
-            'linkedin': ['8:00 AM', '12:00 PM', '5:00 PM'],
-            'youtube': ['2:00 PM', '8:00 PM', '9:00 PM']
-        }
-        
-        return posting_times.get(platform, ['9:00 AM', '1:00 PM', '6:00 PM'])
-    
-    def _generate_improvement_tips(self, score_factors: Dict) -> List[str]:
-        """Generate improvement tips based on scores"""
-        tips = []
-        
-        if score_factors.get('engagement_score', 0) < 0.7:
-            tips.append("Add questions or call-to-actions to boost engagement")
-        
-        if score_factors.get('hashtag_score', 0) < 0.7:
-            tips.append("Optimize hashtag count for better reach")
-        
-        if score_factors.get('readability_score', 0) < 0.7:
-            tips.append("Use shorter sentences and simpler words")
-        
-        if score_factors.get('trending_score', 0) < 0.7:
-            tips.append("Include trending keywords for your domain")
-        
-        if not tips:
-            tips.append("Great content! Consider posting at suggested optimal times")
-        
-        return tips
+        # Base prompt structure
+        prompt = f"""You are an expert social media content creator specializing in {domain_config['name']} content for {platform_config.get('style', 'social media')}.
 
-# Initialize the content generator
-content_generator = AIContentGenerator()
+CONTENT REQUIREMENTS:
+- Platform: {platform_config.get('style', 'general social media')}
+- Domain: {domain_config['name']} ({domain_config['tone']})
+- Content Type: {content_type}
+- Max Length: {platform_config['max_length']} characters
+- Optimal Length: {platform_config['optimal_length']} characters
+- Creativity Level: {creativity_level}/100
+
+CONTENT GUIDELINES:
+- Write in a {domain_config['tone']} tone
+- Target topics: {', '.join(random.sample(domain_config['topics'], min(3, len(domain_config['topics']))))}
+- Make it engaging and authentic
+- Ensure it provides value to the audience
+- Use natural, conversational language"""
+
+        if custom_prompt:
+            prompt += f"\n- Custom Requirements: {custom_prompt}"
+
+        if trending_topics:
+            prompt += f"\n- Consider incorporating these trending topics: {', '.join(trending_topics[:3])}"
+
+        if include_emojis:
+            prompt += "\n- Include relevant emojis (2-5 emojis, strategically placed)"
+
+        if include_hashtags:
+            hashtag_count = min(platform_config.get('hashtag_limit', 10), 8)
+            prompt += f"\n- Include {hashtag_count} relevant hashtags from: {', '.join(domain_config['hashtags'])}"
+
+        # Platform-specific instructions
+        platform_instructions = {
+            'instagram': "Focus on visual storytelling. Use line breaks for readability. Include a call-to-action.",
+            'facebook': "Create engaging stories that encourage comments and shares. Ask questions to boost engagement.",
+            'twitter': "Be concise and impactful. Use thread-worthy content or standalone tweets. Consider current events.",
+            'linkedin': "Professional tone with industry insights. Share valuable knowledge or career advice.",
+            'youtube': "Create compelling descriptions that improve discoverability. Include relevant keywords.",
+            'pinterest': "Use descriptive, keyword-rich text that helps with search. Focus on actionable content."
+        }
+
+        if platform_instructions.get(platform_config.get('platform')):
+            prompt += f"\n- Platform-specific: {platform_instructions[platform_config.get('platform')]}"
+
+        prompt += "\n\nGenerate ONE high-quality social media post that follows all these requirements. Return only the post content, no explanations or meta-commentary."
+
+        return prompt
+    
+    async def _generate_with_fallback(self, prompt: str, creativity_level: int) -> str:
+        """Generate content with AI service fallback (Mistral -> Groq -> OpenAI)"""
+        
+        # Convert creativity level to temperature (0.1 to 1.0)
+        temperature = max(0.1, min(1.0, creativity_level / 100))
+        
+        # Try Mistral first
+        if self.mistral_api_key:
+            try:
+                content = await self._call_mistral(prompt, temperature)
+                if content:
+                    self._last_used_model = 'mistral'
+                    return content
+            except Exception as e:
+                logger.warning(f"Mistral API failed: {e}")
+        
+        # Fallback to Groq
+        if self.groq_api_key:
+            try:
+                content = await self._call_groq(prompt, temperature)
+                if content:
+                    self._last_used_model = 'groq'
+                    return content
+            except Exception as e:
+                logger.warning(f"Groq API failed: {e}")
+        
+        # Final fallback to OpenAI
+        if self.openai_api_key:
+            try:
+                content = await self._call_openai(prompt, temperature)
+                if content:
+                    self._last_used_model = 'openai'
+                    return content
+            except Exception as e:
+                logger.warning(f"OpenAI API failed: {e}")
+        
+        # If all APIs fail, return a template-based content
+        logger.error("All AI services failed, using template fallback")
+        self._last_used_model = 'template'
+        return self._generate_template_content(prompt)
+    
+    async def _call_mistral(self, prompt: str, temperature: float) -> str:
+        """Call Mistral AI API"""
+        headers = {
+            'Authorization': f'Bearer {self.mistral_api_key}',
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            'model': 'mistral-large-latest',
+            'messages': [
+                {'role': 'user', 'content': prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': 1000,
+            'top_p': 0.9
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.mistral_url, headers=headers, json=payload) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['choices'][0]['message']['content'].strip()
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Mistral API error {response.status}: {error_text}")
+    
+    async def _call_groq(self, prompt: str, temperature: float) -> str:
+        """Call Groq Cloud API"""
+        headers = {
+            'Authorization': f'Bearer {self.groq_api_key}',
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            'model': 'mixtral-8x7b-32768',
+            'messages': [
+                {'role': 'user', 'content': prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': 1000,
+            'top_p': 0.9
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.groq_url, headers=headers, json=payload) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['choices'][0]['message']['content'].strip()
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Groq API error {response.status}: {error_text}")
+    
+    async def _call_openai(self, prompt: str, temperature: float) -> str:
+        """Call OpenAI API (fallback)"""
+        headers = {
+            'Authorization': f'Bearer {self.openai_api_key}',
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            'model': 'gpt-3.5-turbo',
+            'messages': [
+                {'role': 'user', 'content': prompt}
+            ],
+            'temperature': temperature,
+            'max_tokens': 1000,
+            'top_p': 0.9
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.openai_url, headers=headers, json=payload) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['choices'][0]['message']['content'].strip()
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"OpenAI API error {response.status}: {error_text}")
+    
+    def _generate_template_content(self, prompt: str) -> str:
+        """Generate template-based content as final fallback"""
+        templates = {
+            'tech': [
+                "🚀 Exciting developments in technology today! The future of innovation is here. What tech trends are you most excited about? #tech #innovation #future",
+                "💻 Pro tip: Always keep learning new technologies. The tech industry moves fast, and staying updated is key to success! #programming #learning #tech",
+                "🔧 Building something amazing with code today! There's nothing quite like solving complex problems with elegant solutions. #coding #development #programming"
+            ],
+            'business': [
+                "📈 Success in business comes down to one thing: providing real value to your customers. Focus on solving problems, not just making sales. #business #entrepreneur #success",
+                "💡 Great leaders don't create followers, they create more leaders. Invest in your team's growth and watch your business thrive! #leadership #teamwork #growth",
+                "🎯 Setting clear goals is the first step to achieving them. What's your biggest business goal for this month? #goals #business #motivation"
+            ],
+            'lifestyle': [
+                "🌟 Remember: self-care isn't selfish, it's essential. Take time for yourself today - you deserve it! #selfcare #wellness #motivation",
+                "✨ Small daily improvements lead to stunning long-term results. What's one thing you can do today to better yourself? #growth #improvement #mindset",
+                "🙏 Gratitude changes everything. What are three things you're grateful for today? #gratitude #positivity #mindfulness"
+            ]
+        }
+        
+        # Extract domain from prompt or use general
+        domain = 'business'  # Default
+        for d in templates.keys():
+            if d in prompt.lower():
+                domain = d
+                break
+        
+        return random.choice(templates.get(domain, templates['business']))
+    
+    def _optimize_content(self, content: str, platform: str, domain: str, include_hashtags: bool) -> str:
+        """Post-process and optimize generated content"""
+        
+        # Clean up the content
+        content = content.strip()
+        
+        # Remove any unwanted prefixes/suffixes
+        unwanted_starts = ["Here's a", "Here is a", "Caption:", "Post:", "Content:"]
+        for start in unwanted_starts:
+            if content.lower().startswith(start.lower()):
+                content = content[len(start):].strip()
+        
+        # Ensure proper length for platform
+        platform_config = self.platform_specs[platform]
+        max_length = platform_config['max_length']
+        
+        if len(content) > max_length:
+            # Truncate smartly (preserve hashtags if possible)
+            if include_hashtags and '#' in content:
+                # Split content and hashtags
+                parts = content.split('#')
+                main_content = parts[0].strip()
+                hashtags = ['#' + part.split()[0] for part in parts[1:] if part.strip()]
+                hashtag_text = ' '.join(hashtags)
+                
+                # Calculate available space for main content
+                available_space = max_length - len(hashtag_text) - 2  # 2 for space
+                
+                if available_space > 50:  # Ensure minimum content length
+                    content = main_content[:available_space].strip() + ' ' + hashtag_text
+                else:
+                    content = content[:max_length]
+            else:
+                content = content[:max_length]
+        
+        # Platform-specific optimizations
+        if platform == 'instagram':
+            # Ensure line breaks for readability
+            if len(content) > 100 and '\n' not in content[:100]:
+                sentences = content.split('. ')
+                if len(sentences) > 1:
+                    mid_point = len(sentences) // 2
+                    content = '. '.join(sentences[:mid_point]) + '.\n\n' + '. '.join(sentences[mid_point:])
+        
+        elif platform == 'twitter':
+            # Ensure it fits in a tweet
+            if len(content) > 280:
+                content = content[:277] + '...'
+        
+        elif platform == 'linkedin':
+            # Add professional formatting
+            if not content.startswith('🔥') and not content.startswith('💡'):
+                professional_emojis = ['💡', '🚀', '📈', '🎯', '⭐']
+                content = random.choice(professional_emojis) + ' ' + content
+        
+        return content
+    
+    def _predict_performance(self, content: str, domain: str, platform: str) -> Dict:
+        """Predict content performance using various metrics"""
+        
+        score = 50  # Base score
+        factors = []
+        
+        # Length optimization
+        platform_config = self.platform_specs[platform]
+        optimal_length = platform_config['optimal_length']
+        content_length = len(content)
+        
+        if abs(content_length - optimal_length) <= optimal_length * 0.2:
+            score += 15
+            factors.append("Optimal length")
+        elif content_length < optimal_length * 0.5:
+            score -= 10
+            factors.append("Too short")
+        elif content_length > platform_config['max_length'] * 0.8:
+            score -= 5
+            factors.append("Quite long")
+        
+        # Hashtag analysis
+        hashtag_count = len([word for word in content.split() if word.startswith('#')])
+        optimal_hashtags = platform_config.get('hashtag_limit', 5)
+        
+        if 0 < hashtag_count <= optimal_hashtags:
+            score += 10
+            factors.append("Good hashtag usage")
+        elif hashtag_count > optimal_hashtags:
+            score -= 5
+            factors.append("Too many hashtags")
+        
+        # Emoji analysis
+        emoji_count = len([char for char in content if char in '😀😃😄😁😆😅😂🤣☺️😊😇🙂🙃😉😌😍🥰😘😗😙😚😋😛😝😜🤪🤨🧐🤓😎🤩🥳😏'])
+        if 1 <= emoji_count <= 5:
+            score += 8
+            factors.append("Good emoji usage")
+        elif emoji_count > 8:
+            score -= 5
+            factors.append("Too many emojis")
+        
+        # Engagement triggers
+        engagement_words = ['what', 'how', 'why', 'do you', 'what do you think', 'share', 'comment', 'thoughts', '?']
+        if any(word in content.lower() for word in engagement_words):
+            score += 12
+            factors.append("Encourages engagement")
+        
+        # Call-to-action detection
+        cta_words = ['check out', 'learn more', 'click', 'visit', 'follow', 'subscribe', 'join', 'download']
+        if any(word in content.lower() for word in cta_words):
+            score += 8
+            factors.append("Includes call-to-action")
+        
+        # Domain-specific bonuses
+        domain_config = self.content_domains[domain]
+        domain_keywords = [topic.lower() for topic in domain_config['topics']]
+        if any(keyword in content.lower() for keyword in domain_keywords[:5]):
+            score += 10
+            factors.append("Relevant to domain")
+        
+        # Platform-specific bonuses
+        if platform == 'linkedin' and any(word in content.lower() for word in ['professional', 'career', 'business', 'industry']):
+            score += 8
+            factors.append("Professional content")
+        
+        if platform == 'instagram' and '\n' in content:
+            score += 5
+            factors.append("Good formatting")
+        
+        # Trending topics bonus (simplified)
+        trending_keywords = ['AI', 'trending', 'latest', 'new', '2024', '2025', 'update']
+        if any(word in content for word in trending_keywords):
+            score += 7
+            factors.append("Includes trending topics")
+        
+        # Cap the score
+        score = max(10, min(100, score))
+        
+        return {
+            'score': score,
+            'grade': self._get_performance_grade(score),
+            'factors': factors,
+            'predicted_engagement': {
+                'likes': self._predict_likes(score, platform),
+                'comments': self._predict_comments(score, platform),
+                'shares': self._predict_shares(score, platform)
+            },
+            'recommendations': self._get_recommendations(score, content, platform)
+        }
+    
+    def _get_performance_grade(self, score: int) -> str:
+        """Convert score to grade"""
+        if score >= 90:
+            return 'A+'
+        elif score >= 80:
+            return 'A'
+        elif score >= 70:
+            return 'B+'
+        elif score >= 60:
+            return 'B'
+        elif score >= 50:
+            return 'C'
+        else:
+            return 'D'
+    
+    def _predict_likes(self, score: int, platform: str) -> int:
+        """Predict likes based on score and platform"""
+        base_likes = {
+            'instagram': 50,
+            'facebook': 25,
+            'twitter': 30,
+            'linkedin': 15,
+            'youtube': 20,
+            'pinterest': 10
+        }
+        
+        base = base_likes.get(platform, 25)
+        multiplier = score / 50
+        return int(base * multiplier * random.uniform(0.8, 1.5))
+    
+    def _predict_comments(self, score: int, platform: str) -> int:
+        """Predict comments based on score and platform"""
+        base_comments = {
+            'instagram': 8,
+            'facebook': 12,
+            'twitter': 5,
+            'linkedin': 3,
+            'youtube': 6,
+            'pinterest': 2
+        }
+        
+        base = base_comments.get(platform, 5)
+        multiplier = score / 50
+        return int(base * multiplier * random.uniform(0.7, 1.3))
+    
+    def _predict_shares(self, score: int, platform: str) -> int:
+        """Predict shares based on score and platform"""
+        base_shares = {
+            'instagram': 3,
+            'facebook': 8,
+            'twitter': 15,
+            'linkedin': 5,
+            'youtube': 2,
+            'pinterest': 20
+        }
+        
+        base = base_shares.get(platform, 5)
+        multiplier = score / 50
+        return int(base * multiplier * random.uniform(0.6, 1.4))
+    
+    def _get_recommendations(self, score: int, content: str, platform: str) -> List[str]:
+        """Get content improvement recommendations"""
+        recommendations = []
+        
+        if score < 60:
+            recommendations.append("Consider adding more engaging elements like questions or call-to-actions")
+        
+        if '#' not in content:
+            recommendations.append("Add relevant hashtags to increase discoverability")
+        
+        hashtag_count = len([word for word in content.split() if word.startswith('#')])
+        if hashtag_count > self.platform_specs[platform].get('hashtag_limit', 10):
+            recommendations.append("Reduce the number of hashtags for better engagement")
+        
+        if '?' not in content and platform in ['facebook', 'instagram']:
+            recommendations.append("Ask a question to encourage comments and engagement")
+        
+        if len(content) < self.platform_specs[platform]['optimal_length'] * 0.6:
+            recommendations.append("Consider expanding the content to provide more value")
+        
+        emoji_count = len([char for char in content if char in '😀😃😄😁😆😅'])
+        if emoji_count == 0 and platform in ['instagram', 'facebook']:
+            recommendations.append("Add 1-2 relevant emojis to make the content more engaging")
+        
+        return recommendations[:3]  # Return top 3 recommendations
+    
+    def _generate_media_suggestions(self, content: str, domain: str, platform: str) -> Dict:
+        """Generate media suggestions based on content"""
+        
+        suggestions = {
+            'images': [],
+            'videos': [],
+            'graphics': []
+        }
+        
+        # Domain-specific media suggestions
+        if domain == 'tech':
+            suggestions['images'] = [
+                'Code snippet screenshots',
+                'Tech product photos',
+                'Infographic about tech trends',
+                'Behind-the-scenes development'
+            ]
+            suggestions['videos'] = [
+                'Coding timelapse',
+                'Product demo',
+                'Tech explanation video'
+            ]
+        
+        elif domain == 'business':
+            suggestions['images'] = [
+                'Professional headshots',
+                'Office/workspace photos',
+                'Chart or graph visuals',
+                'Team collaboration shots'
+            ]
+            suggestions['videos'] = [
+                'Behind-the-scenes business',
+                'Quick tip videos',
+                'Day-in-the-life content'
+            ]
+        
+        elif domain == 'lifestyle':
+            suggestions['images'] = [
+                'Lifestyle photography',
+                'Motivational quotes',
+                'Personal moments',
+                'Aesthetic flat lays'
+            ]
+            suggestions['videos'] = [
+                'Morning routine',
+                'Wellness tips',
+                'Personal story content'
+            ]
+        
+        # Platform-specific adjustments
+        if platform == 'instagram':
+            suggestions['graphics'].extend([
+                'Instagram story templates',
+                'Carousel post designs',
+                'Quote graphics with brand colors'
+            ])
+        
+        elif platform == 'pinterest':
+            suggestions['graphics'].extend([
+                'Vertical pin designs',
+                'Step-by-step guides',
+                'List-style graphics'
+            ])
+        
+        return suggestions
+    
+    def _get_trending_topics(self, domain: str) -> List[str]:
+        """Get trending topics for domain (simplified implementation)"""
+        # In a real implementation, this would call trending APIs
+        trending_by_domain = {
+            'Technology & Innovation': ['AI automation', 'Web3', 'Sustainable tech', 'Remote work tools'],
+            'Memes & Humor': ['Work from home', 'AI memes', 'Gen Z humor', 'Social media trends'],
+            'Business & Entrepreneurship': ['Digital marketing', 'Startup funding', 'Remote teams', 'AI in business'],
+            'Lifestyle & Personal Development': ['Mindfulness', 'Work-life balance', 'Digital detox', 'Productivity hacks'],
+            'Health & Fitness': ['Mental health', 'Home workouts', 'Nutrition tips', 'Wellness trends'],
+            'Finance & Investment': ['Cryptocurrency', 'Personal finance apps', 'Investment tips', 'Financial literacy'],
+            'Travel & Adventure': ['Sustainable travel', 'Digital nomad life', 'Local experiences', 'Travel photography'],
+            'Food & Cooking': ['Healthy recipes', 'Meal prep', 'International cuisine', 'Food photography']
+        }
+        
+        return trending_by_domain.get(domain, [])
+    
+    def _get_last_used_model(self) -> str:
+        """Get the last used AI model"""
+        return getattr(self, '_last_used_model', 'unknown')
+    
+    async def generate_multiple_variants(
+        self,
+        domain: str,
+        platform: str,
+        count: int = 5,
+        **kwargs
+    ) -> List[Dict]:
+        """Generate multiple content variants"""
+        
+        variants = []
+        for i in range(count):
+            try:
+                # Slightly vary creativity for diversity
+                creativity = kwargs.get('creativity_level', 75) + random.randint(-10, 10)
+                creativity = max(10, min(100, creativity))
+                
+                variant_kwargs = {**kwargs, 'creativity_level': creativity}
+                variant = await self.generate_content(domain, platform, **variant_kwargs)
+                variants.append(variant)
+                
+                # Small delay to avoid rate limits
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                logger.warning(f"Failed to generate variant {i+1}: {e}")
+                continue
+        
+        return variants
+    
+    def get_domain_info(self, domain: str) -> Dict:
+        """Get information about a content domain"""
+        if domain not in self.content_domains:
+            raise ValueError(f"Unsupported domain: {domain}")
+        
+        return self.content_domains[domain]
+    
+    def get_platform_info(self, platform: str) -> Dict:
+        """Get information about a platform"""
+        if platform not in self.platform_specs:
+            raise ValueError(f"Unsupported platform: {platform}")
+        
+        return self.platform_specs[platform]
+    
+    def get_supported_domains(self) -> List[Dict]:
+        """Get list of supported content domains"""
+        return [
+            {
+                'id': domain_id,
+                'name': config['name'],
+                'topics': config['topics'],
+                'tone': config['tone']
+            }
+            for domain_id, config in self.content_domains.items()
+        ]
+    
+    def get_supported_platforms(self) -> List[Dict]:
+        """Get list of supported platforms"""
+        return [
+            {
+                'id': platform_id,
+                'max_length': config['max_length'],
+                'optimal_length': config['optimal_length'],
+                'style': config['style']
+            }
+            for platform_id, config in self.platform_specs.items()
+        ]
+
+
+# Global instance
+ai_content_generator = AIContentGenerator()
+
+
+# Async wrapper functions for use in Flask routes
+def generate_content_sync(domain: str, platform: str, **kwargs) -> Dict:
+    """Synchronous wrapper for content generation"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        result = loop.run_until_complete(
+            ai_content_generator.generate_content(domain, platform, **kwargs)
+        )
+        return result
+    finally:
+        loop.close()
+
+
+def generate_multiple_variants_sync(domain: str, platform: str, count: int = 5, **kwargs) -> List[Dict]:
+    """Synchronous wrapper for multiple variant generation"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        result = loop.run_until_complete(
+            ai_content_generator.generate_multiple_variants(domain, platform, count, **kwargs)
+        )
+        return result
+    finally:
+        loop.close()
+
+
+if __name__ == '__main__':
+    # Test the AI content generator
+    import asyncio
+    
+    async def test_generator():
+        try:
+            # Test content generation
+            content = await ai_content_generator.generate_content(
+                domain='tech',
+                platform='instagram',
+                creativity_level=80,
+                include_hashtags=True,
+                include_emojis=True
+            )
+            
+            print("✅ Content Generation Test:")
+            print(f"Content: {content['content']}")
+            print(f"Performance Score: {content['performance_prediction']['score']}/100")
+            print(f"AI Model Used: {content['metadata']['ai_model_used']}")
+            
+        except Exception as e:
+            print(f"❌ Test failed: {e}")
+    
+    # Run test
+    asyncio.run(test_generator())

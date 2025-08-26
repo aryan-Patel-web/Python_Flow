@@ -3,7 +3,9 @@ Celery Configuration for Background Tasks
 """
 import os
 from celery import Celery
-from app.models import db
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure Redis URL
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
@@ -39,10 +41,14 @@ celery_app.conf.update(
             'task': 'app.workers.content_generation_worker.generate_scheduled_content',
             'schedule': 1800.0,  # Every 30 minutes
         },
+        'verify-credentials': {
+            'task': 'app.workers.credential_verification_worker.verify_all_credentials',
+            'schedule': 86400.0,  # Daily
+        }
     }
 )
 
-# Auto-discover tasks
+# Auto-discover tasks (these will be created when needed)
 celery_app.autodiscover_tasks([
     'app.workers.content_generation_worker',
     'app.workers.auto_posting_worker',
@@ -60,7 +66,11 @@ def debug_task(self):
 @celery_app.task
 def health_check():
     """Health check for Celery workers"""
-    return {'status': 'healthy', 'timestamp': celery_app.now()}
+    from datetime import datetime
+    return {
+        'status': 'healthy', 
+        'timestamp': datetime.utcnow().isoformat()
+    }
 
 if __name__ == '__main__':
     celery_app.start()

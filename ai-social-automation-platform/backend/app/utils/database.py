@@ -1,508 +1,533 @@
 """
-Database Models and Connection Management
-MongoDB with Pymongo for VelocityPost.ai
+Database Configuration for VelocityPost.ai
+Supports both local MongoDB and MongoDB Atlas
 """
 
 import os
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-from pymongo import MongoClient, ASCENDING, DESCENDING
-from pymongo.errors import ConnectionFailure, DuplicateKeyError
-from bson import ObjectId
-from werkzeug.security import generate_password_hash, check_password_hash
-from cryptography.fernet import Fernet
-import json
+from pymongo import MongoClient
+from pymongo.errors import ServerSelectionTimeoutError, OperationFailure
+import urllib.parse
 
-# Global database connection
-db = None
-client = None
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class DatabaseManager:
-    """Database connection and operations manager"""
-    
     def __init__(self):
-        self.client = None
         self.db = None
-        self.cipher_suite = None
-        
-    def init_app(self, app):
-        """Initialize database connection with Flask app"""
-        # Try MongoDB Atlas first, then local
-        mongodb_uri = app.config.get('MONGODB_ATLAS_URI') or app.config.get('MONGODB_URI')
+        self.client = None
+        self.database_name = 'velocityposts'
+    
+    def connect(self, app=None):
+        """Connect to MongoDB with fallback support"""
+        try:
+            # Try MongoDB Atlas first if URI provided
+            atlas_uri = os.getenv('MONGODB_ATLAS_URI')
+            if atlas_uri:
+                logger.info("Attempting to connect to MongoDB Atlas...")
+                self.client = MongoClient(
+                    atlas_uri,
+                    serverSelectionTimeoutMS=5000,
+                    connectTimeoutMS=10000,
+                    maxPoolSize=50,
+                    minPoolSize=5
+                )
+                self.db = self.client[self.database_name]
+                # Test connection
+                self.client.server_info()
+                logger.info("Connected to MongoDB Atlas successfully")
+                return True
+        except Exception as e:
+            logger.warning(f"MongoDB Atlas connection failed: {e}")
         
         try:
-            self.client = MongoClient(mongodb_uri)
+            # Fallback to local MongoDB
+            local_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
+            logger.info("Attempting to connect to local MongoDB...")
+            self.client = MongoClient(
+                local_uri,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=10000
+            )
+            self.db = self.client[self.database_name]
             # Test connection
-            self.client.admin.command('ping')
-            
-            # Get database name from URI or default
-            db_name = mongodb_uri.split('/')[-1].split('?')[0] if '/' in mongodb_uri else 'velocitypost'
-            self.db = self.client[db_name]
-            
-            # Initialize encryption
-            encryption_key = app.config.get('ENCRYPTION_KEY', Fernet.generate_key())
-            self.cipher_suite = Fernet(encryption_key)
-            
-            # Create indexes
-            self._create_indexes()
-            
-            app.logger.info(f"Connected to MongoDB: {db_name}")
-            
-        except ConnectionFailure as e:
-            app.logger.error(f"Failed to connect to MongoDB: {e}")
-            raise
+            self.client.server_info()
+            logger.info("Connected to local MongoDB successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Local MongoDB connection failed: {e}")
+            raise Exception("Failed to connect to any MongoDB instance")
     
-    def _create_indexes(self):
-        """Create database indexes for performance"""
-        # Users collection indexes
-        self.db.users.create_index([("email", ASCENDING)], unique=True)
-        self.db.users.create_index([("created_at", DESCENDING)])
-        
-        # 🔥 NEW: Platform connections indexes
-        self.db.platform_connections.create_index([("user_id", ASCENDING), ("platform", ASCENDING)], unique=True)
-        self.db.platform_connections.create_index([("created_at", DESCENDING)])
-        
-        # 🔥 NEW: Content generation indexes
-        self.db.generated_content.create_index([("user_id", ASCENDING)])
-        self.db.generated_content.create_index([("created_at", DESCENDING)])
-        self.db.generated_content.create_index([("status", ASCENDING)])
-        
-        # 🔥 NEW: Auto-posting logs indexes
-        self.db.auto_posting_logs.create_index([("user_id", ASCENDING)])
-        self.db.auto_posting_logs.create_index([("posted_at", DESCENDING)])
-        self.db.auto_posting_logs.create_index([("platform", ASCENDING)])
-        
-        # Posts collection indexes
-        self.db.posts.create_index([("user_id", ASCENDING)])
-        self.db.posts.create_index([("scheduled_time", ASCENDING)])
-        self.db.posts.create_index([("created_at", DESCENDING)])
-        
-        # Subscriptions indexes
-        self.db.subscriptions.create_index([("user_id", ASCENDING)], unique=True)
-        self.db.subscriptions.create_index([("status", ASCENDING)])
+    def get_db(self):
+        """Get database instance"""
+        if self.db is None:
+            self.connect()
+        return self.db
     
-    def encrypt_data(self, data: str) -> str:
-        """Encrypt sensitive data"""
-        return self.cipher_suite.encrypt(data.encode()).decode()
-    
-    def decrypt_data(self, encrypted_data: str) -> str:
-        """Decrypt sensitive data"""
-        return self.cipher_suite.decrypt(encrypted_data.encode()).decode()
+    def close_connection(self):
+        """Close database connection"""
+        if self.client:
+            self.client.close()
+            logger.info("Database connection closed")
 
 # Global database manager instance
 db_manager = DatabaseManager()
 
-def init_db(app):
-    """Initialize database with Flask app"""
-    global db, client
-    db_manager.init_app(app)
-    db = db_manager.db
-    client = db_manager.client
+def init_db(app=None):
+    """Initialize database connection"""
+    try:
+        db_manager.connect(app)
+        if app:
+            app.db = db_manager.get_db()
+        
+        # Create indexes for performance
+        create_indexes()
+        
+        return db_manager.get_db()
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        raise
 
-# Model Classes
-class User:
-    """User model for authentication and profile management"""
+def get_db():
+    """Get database instance"""
+    return db_manager.get_db()
+
+def get_database():
+    """Alias for get_db() for compatibility with platforms.py"""
+    return get_db()
+
+def create_indexes():
+    """Create database indexes for optimal performance"""
+    try:
+        db = db_manager.get_db()
+        
+        # Users collection indexes
+        try:
+            db.users.create_index("email", unique=True)
+        except Exception:
+            pass  # Index may already exist
+            
+        db.users.create_index("created_at")
+        db.users.create_index([("email", 1), ("is_active", 1)])
+        
+        # Platform connections collection indexes (renamed from social_accounts)
+        try:
+            db.platform_connections.create_index([("user_id", 1), ("platform", 1)], unique=True)
+        except Exception:
+            pass
+            
+        db.platform_connections.create_index("is_active")
+        db.platform_connections.create_index("last_used_at")
+        db.platform_connections.create_index("token_expires_at")
+        
+        # Posts collection indexes
+        db.posts.create_index([("user_id", 1), ("created_at", -1)])
+        db.posts.create_index([("user_id", 1), ("platform", 1)])
+        db.posts.create_index("scheduled_for")
+        db.posts.create_index("status")
+        db.posts.create_index([("status", 1), ("scheduled_for", 1)])
+        
+        # Generated content collection indexes
+        db.generated_content.create_index([("user_id", 1), ("created_at", -1)])
+        db.generated_content.create_index("domain")
+        db.generated_content.create_index("platform")
+        db.generated_content.create_index([("user_id", 1), ("domain", 1)])
+        
+        # Automation settings collection indexes
+        try:
+            db.automation_settings.create_index("user_id", unique=True)
+        except Exception:
+            pass
+            
+        db.automation_settings.create_index("is_active")
+        
+        # Analytics collection indexes
+        db.analytics.create_index([("user_id", 1), ("date", -1)])
+        db.analytics.create_index([("user_id", 1), ("platform", 1)])
+        
+        # Subscriptions collection indexes
+        try:
+            db.subscriptions.create_index("user_id", unique=True)
+            db.subscriptions.create_index("stripe_subscription_id", unique=True, sparse=True)
+        except Exception:
+            pass
+            
+        db.subscriptions.create_index("plan_type")
+        db.subscriptions.create_index("expires_at")
+        
+        logger.info("Database indexes created successfully")
+        
+    except Exception as e:
+        logger.error(f"Failed to create indexes: {e}")
+
+# Database Models and Helper Functions
+
+class UserModel:
+    """User model for database operations"""
     
     @staticmethod
-    def create(email: str, password: str, name: str, **kwargs) -> Dict:
+    def create_user(email, password_hash, name, plan_type='free'):
         """Create a new user"""
+        db = get_db()
         user_data = {
-            'email': email.lower(),
-            'password_hash': generate_password_hash(password),
+            'email': email,
+            'password_hash': password_hash,
             'name': name,
+            'plan_type': plan_type,
             'is_active': True,
-            'is_verified': False,
-            'plan': 'free',  # free, pro, agency
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
-            'profile': {
-                'avatar_url': kwargs.get('avatar_url'),
-                'bio': kwargs.get('bio', ''),
-                'timezone': kwargs.get('timezone', 'UTC'),
-                'language': kwargs.get('language', 'en')
-            },
+            'profile_data': {},
             'settings': {
-                'email_notifications': True,
-                'push_notifications': True,
-                'marketing_emails': False
-            },
-            # 🔥 NEW: Auto-posting settings
-            'auto_posting': {
-                'enabled': False,
-                'daily_limit': 2,  # Free tier limit
-                'domains': [],
-                'posting_times': ['09:00', '18:00'],
-                'timezone': 'UTC'
+                'timezone': 'UTC',
+                'notifications_enabled': True,
+                'auto_posting_enabled': False
             }
         }
         
         result = db.users.insert_one(user_data)
-        user_data['_id'] = result.inserted_id
-        return user_data
+        return str(result.inserted_id)
     
     @staticmethod
-    def find_by_email(email: str) -> Optional[Dict]:
-        """Find user by email"""
-        return db.users.find_one({'email': email.lower()})
+    def get_user_by_email(email):
+        """Get user by email"""
+        db = get_db()
+        return db.users.find_one({'email': email})
     
     @staticmethod
-    def find_by_id(user_id: str) -> Optional[Dict]:
-        """Find user by ID"""
+    def get_user_by_id(user_id):
+        """Get user by ID"""
+        db = get_db()
+        from bson import ObjectId
         return db.users.find_one({'_id': ObjectId(user_id)})
-    
-    @staticmethod
-    def verify_password(password_hash: str, password: str) -> bool:
-        """Verify user password"""
-        return check_password_hash(password_hash, password)
-    
-    @staticmethod
-    def update(user_id: str, update_data: Dict) -> bool:
-        """Update user data"""
-        update_data['updated_at'] = datetime.utcnow()
-        result = db.users.update_one(
-            {'_id': ObjectId(user_id)},
-            {'$set': update_data}
-        )
-        return result.modified_count > 0
 
-# 🔥 NEW: Platform Connection Model
-class PlatformConnection:
-    """Model for storing OAuth platform connections"""
+class PlatformConnectionModel:
+    """Platform connection model for OAuth tokens"""
     
     @staticmethod
-    def create(user_id: str, platform: str, access_token: str, **kwargs) -> Dict:
-        """Create a new platform connection"""
+    def save_connection(user_id, platform, token_data, profile_data):
+        """Save or update platform connection"""
+        db = get_db()
+        from bson import ObjectId
+        
+        # Calculate token expiry
+        expires_at = None
+        if token_data.get('expires_in'):
+            expires_at = datetime.utcnow() + timedelta(seconds=int(token_data['expires_in']))
+        
         connection_data = {
             'user_id': ObjectId(user_id),
-            'platform': platform.lower(),
-            'access_token': db_manager.encrypt_data(access_token),
-            'refresh_token': db_manager.encrypt_data(kwargs.get('refresh_token', '')),
-            'token_expires_at': kwargs.get('expires_at'),
-            'platform_user_id': kwargs.get('platform_user_id'),
-            'platform_username': kwargs.get('platform_username'),
-            'profile_info': kwargs.get('profile_info', {}),
-            'permissions': kwargs.get('permissions', []),
-            'is_active': True,
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow(),
-            'last_used_at': None
+            'platform': platform,
+            'platform_user_id': profile_data.get('id', ''),
+            'username': profile_data.get('username', ''),
+            'display_name': profile_data.get('name', ''),
+            'profile_picture': profile_data.get('picture', ''),
+            'access_token': token_data['access_token'],
+            'refresh_token': token_data.get('refresh_token'),
+            'token_expires_at': expires_at,
+            'profile_data': profile_data,
+            'permissions': token_data.get('scope', '').split() if token_data.get('scope') else [],
+            'connected_at': datetime.utcnow(),
+            'last_used_at': datetime.utcnow(),
+            'is_active': True
         }
         
-        # Use upsert to handle reconnections
+        # Update existing or insert new
         result = db.platform_connections.update_one(
-            {'user_id': ObjectId(user_id), 'platform': platform.lower()},
+            {'user_id': ObjectId(user_id), 'platform': platform},
             {'$set': connection_data},
             upsert=True
         )
         
-        if result.upserted_id:
-            connection_data['_id'] = result.upserted_id
-        
-        return connection_data
+        return result.upserted_id or True
     
     @staticmethod
-    def get_user_connections(user_id: str) -> List[Dict]:
-        """Get all platform connections for a user"""
-        connections = list(db.platform_connections.find({
-            'user_id': ObjectId(user_id),
-            'is_active': True
-        }))
+    def get_connections_by_user(user_id):
+        """Get all connected platforms for user"""
+        db = get_db()
+        from bson import ObjectId
         
-        # Decrypt tokens for use (don't return in API)
-        for conn in connections:
-            if 'access_token' in conn:
-                conn['access_token'] = db_manager.decrypt_data(conn['access_token'])
-            if 'refresh_token' in conn:
-                conn['refresh_token'] = db_manager.decrypt_data(conn['refresh_token'])
-                
+        connections = list(db.platform_connections.find(
+            {'user_id': ObjectId(user_id), 'is_active': True}
+        ))
+        
+        # Remove sensitive data and convert ObjectIds
+        for connection in connections:
+            connection['_id'] = str(connection['_id'])
+            connection['user_id'] = str(connection['user_id'])
+            connection.pop('access_token', None)
+            connection.pop('refresh_token', None)
+        
         return connections
     
     @staticmethod
-    def get_connection(user_id: str, platform: str) -> Optional[Dict]:
+    def get_connection_by_platform(user_id, platform):
         """Get specific platform connection"""
-        connection = db.platform_connections.find_one({
+        db = get_db()
+        from bson import ObjectId
+        
+        return db.platform_connections.find_one({
             'user_id': ObjectId(user_id),
-            'platform': platform.lower(),
+            'platform': platform,
             'is_active': True
         })
-        
-        if connection and 'access_token' in connection:
-            connection['access_token'] = db_manager.decrypt_data(connection['access_token'])
-            if 'refresh_token' in connection:
-                connection['refresh_token'] = db_manager.decrypt_data(connection['refresh_token'])
-                
-        return connection
-    
-    @staticmethod
-    def update_tokens(user_id: str, platform: str, access_token: str, refresh_token: str = None, expires_at: datetime = None):
-        """Update platform tokens"""
-        update_data = {
-            'access_token': db_manager.encrypt_data(access_token),
-            'updated_at': datetime.utcnow(),
-            'last_used_at': datetime.utcnow()
-        }
-        
-        if refresh_token:
-            update_data['refresh_token'] = db_manager.encrypt_data(refresh_token)
-        if expires_at:
-            update_data['token_expires_at'] = expires_at
-            
-        return db.platform_connections.update_one(
-            {'user_id': ObjectId(user_id), 'platform': platform.lower()},
-            {'$set': update_data}
-        )
-    
-    @staticmethod
-    def disconnect(user_id: str, platform: str) -> bool:
-        """Disconnect a platform"""
-        result = db.platform_connections.update_one(
-            {'user_id': ObjectId(user_id), 'platform': platform.lower()},
-            {'$set': {'is_active': False, 'updated_at': datetime.utcnow()}}
-        )
-        return result.modified_count > 0
 
-# 🔥 NEW: Generated Content Model
-class GeneratedContent:
-    """Model for AI-generated content"""
+class PostModel:
+    """Post model for content management"""
     
     @staticmethod
-    def create(user_id: str, content: str, domain: str, platforms: List[str], **kwargs) -> Dict:
-        """Create generated content entry"""
-        content_data = {
+    def create_post(user_id, platform, content, media_urls=None, scheduled_for=None):
+        """Create a new post"""
+        db = get_db()
+        from bson import ObjectId
+        
+        post_data = {
             'user_id': ObjectId(user_id),
+            'platform': platform,
             'content': content,
-            'domain': domain,
-            'platforms': platforms,
-            'status': 'draft',  # draft, scheduled, posted, failed
-            'metadata': {
-                'tone': kwargs.get('tone', 'professional'),
-                'length': kwargs.get('length', 'medium'),
-                'hashtags': kwargs.get('hashtags', []),
-                'mentions': kwargs.get('mentions', []),
-                'ai_model': kwargs.get('ai_model', 'mistral'),
-                'generation_time': kwargs.get('generation_time', 0),
-                'performance_prediction': kwargs.get('performance_prediction', {})
-            },
-            'scheduled_for': kwargs.get('scheduled_for'),
-            'posted_at': None,
-            'engagement_stats': {},
+            'media_urls': media_urls or [],
+            'scheduled_for': scheduled_for,
+            'status': 'scheduled' if scheduled_for else 'draft',
             'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow()
+            'updated_at': datetime.utcnow(),
+            'is_ai_generated': True,
+            'engagement_data': {},
+            'performance_score': None,
+            'platform_post_id': None,
+            'error_message': None,
+            'posted_at': None
         }
         
-        result = db.generated_content.insert_one(content_data)
-        content_data['_id'] = result.inserted_id
-        return content_data
+        result = db.posts.insert_one(post_data)
+        return str(result.inserted_id)
     
     @staticmethod
-    def get_user_content(user_id: str, limit: int = 50, status: str = None) -> List[Dict]:
-        """Get user's generated content"""
-        query = {'user_id': ObjectId(user_id)}
+    def get_user_posts(user_id, limit=50, platform=None, status=None):
+        """Get user's posts with filters"""
+        db = get_db()
+        from bson import ObjectId
+        
+        filter_query = {'user_id': ObjectId(user_id)}
+        if platform:
+            filter_query['platform'] = platform
         if status:
-            query['status'] = status
-            
-        return list(db.generated_content.find(query)
-                   .sort('created_at', DESCENDING)
-                   .limit(limit))
+            filter_query['status'] = status
+        
+        posts = list(db.posts.find(filter_query)
+                    .sort('created_at', -1)
+                    .limit(limit))
+        
+        # Convert ObjectIds to strings
+        for post in posts:
+            post['_id'] = str(post['_id'])
+            post['user_id'] = str(post['user_id'])
+        
+        return posts
     
     @staticmethod
-    def update_status(content_id: str, status: str, **kwargs) -> bool:
-        """Update content status"""
+    def update_post_status(post_id, status, platform_post_id=None, error_message=None):
+        """Update post status after posting"""
+        db = get_db()
+        from bson import ObjectId
+        
         update_data = {
             'status': status,
             'updated_at': datetime.utcnow()
         }
         
-        if status == 'posted':
+        if platform_post_id:
+            update_data['platform_post_id'] = platform_post_id
             update_data['posted_at'] = datetime.utcnow()
-            
-        if 'engagement_stats' in kwargs:
-            update_data['engagement_stats'] = kwargs['engagement_stats']
-            
-        result = db.generated_content.update_one(
-            {'_id': ObjectId(content_id)},
+        
+        if error_message:
+            update_data['error_message'] = error_message
+        
+        return db.posts.update_one(
+            {'_id': ObjectId(post_id)},
             {'$set': update_data}
         )
-        return result.modified_count > 0
 
-# 🔥 NEW: Auto-Posting Log Model
-class AutoPostingLog:
-    """Model for tracking auto-posting activities"""
+class ContentModel:
+    """Generated content model"""
     
     @staticmethod
-    def create(user_id: str, platform: str, action: str, **kwargs) -> Dict:
-        """Create auto-posting log entry"""
-        log_data = {
+    def save_generated_content(user_id, domain, platform, content, performance_prediction=None):
+        """Save AI-generated content"""
+        db = get_db()
+        from bson import ObjectId
+        
+        content_data = {
             'user_id': ObjectId(user_id),
+            'domain': domain,
             'platform': platform,
-            'action': action,  # generated, posted, failed, scheduled
-            'content_id': kwargs.get('content_id'),
-            'post_id': kwargs.get('post_id'),
-            'status': kwargs.get('status', 'success'),
-            'error_message': kwargs.get('error_message'),
-            'metadata': kwargs.get('metadata', {}),
-            'posted_at': datetime.utcnow(),
-            'created_at': datetime.utcnow()
-        }
-        
-        result = db.auto_posting_logs.insert_one(log_data)
-        log_data['_id'] = result.inserted_id
-        return log_data
-    
-    @staticmethod
-    def get_user_logs(user_id: str, limit: int = 100) -> List[Dict]:
-        """Get user's auto-posting logs"""
-        return list(db.auto_posting_logs.find({'user_id': ObjectId(user_id)})
-                   .sort('posted_at', DESCENDING)
-                   .limit(limit))
-
-# Subscription Model
-class Subscription:
-    """Subscription model for billing management"""
-    
-    @staticmethod
-    def create(user_id: str, plan: str, **kwargs) -> Dict:
-        """Create a subscription"""
-        sub_data = {
-            'user_id': ObjectId(user_id),
-            'plan': plan,  # free, pro, agency
-            'status': 'active',
-            'billing_cycle': kwargs.get('billing_cycle', 'monthly'),
-            'amount': kwargs.get('amount', 0),
-            'currency': kwargs.get('currency', 'INR'),
-            'payment_method': kwargs.get('payment_method'),
-            'stripe_subscription_id': kwargs.get('stripe_subscription_id'),
-            'razorpay_subscription_id': kwargs.get('razorpay_subscription_id'),
-            'current_period_start': datetime.utcnow(),
-            'current_period_end': datetime.utcnow() + timedelta(days=30),
-            'trial_end': kwargs.get('trial_end'),
+            'content': content,
+            'performance_prediction': performance_prediction,
+            'is_used': False,
             'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow(),
-            # Plan limits
-            'limits': {
-                'platforms': 2 if plan == 'free' else (5 if plan == 'pro' else 999),
-                'daily_posts': 2 if plan == 'free' else (50 if plan == 'pro' else 999),
-                'ai_generations': 10 if plan == 'free' else (1000 if plan == 'pro' else 9999),
-                'team_members': 1 if plan == 'free' else (3 if plan == 'pro' else 25)
-            }
+            'hashtags': extract_hashtags(content),
+            'word_count': len(content.split()),
+            'character_count': len(content)
         }
         
-        result = db.subscriptions.insert_one(sub_data)
-        sub_data['_id'] = result.inserted_id
-        return sub_data
+        result = db.generated_content.insert_one(content_data)
+        return str(result.inserted_id)
     
     @staticmethod
-    def get_user_subscription(user_id: str) -> Optional[Dict]:
-        """Get user's active subscription"""
-        return db.subscriptions.find_one({
-            'user_id': ObjectId(user_id),
-            'status': 'active'
-        })
-    
-    @staticmethod
-    def update_plan(user_id: str, plan: str, **kwargs) -> bool:
-        """Update subscription plan"""
-        update_data = {
-            'plan': plan,
-            'updated_at': datetime.utcnow()
-        }
+    def get_generated_content(user_id, domain=None, platform=None, limit=20):
+        """Get generated content with filters"""
+        db = get_db()
+        from bson import ObjectId
         
-        # Update limits based on plan
-        if plan == 'free':
-            update_data['limits'] = {
-                'platforms': 2,
-                'daily_posts': 2,
-                'ai_generations': 10,
-                'team_members': 1
-            }
-        elif plan == 'pro':
-            update_data['limits'] = {
-                'platforms': 5,
-                'daily_posts': 50,
-                'ai_generations': 1000,
-                'team_members': 3
-            }
-        elif plan == 'agency':
-            update_data['limits'] = {
-                'platforms': 999,
-                'daily_posts': 999,
-                'ai_generations': 9999,
-                'team_members': 25
-            }
+        filter_query = {'user_id': ObjectId(user_id)}
+        if domain:
+            filter_query['domain'] = domain
+        if platform:
+            filter_query['platform'] = platform
         
-        result = db.subscriptions.update_one(
-            {'user_id': ObjectId(user_id)},
-            {'$set': update_data}
-        )
-        return result.modified_count > 0
+        content = list(db.generated_content.find(filter_query)
+                      .sort('created_at', -1)
+                      .limit(limit))
+        
+        # Convert ObjectIds to strings
+        for item in content:
+            item['_id'] = str(item['_id'])
+            item['user_id'] = str(item['user_id'])
+        
+        return content
 
-# 🔥 NEW: Usage Tracking Model
-class UsageTracking:
-    """Track user usage for billing and limits"""
+def extract_hashtags(content):
+    """Extract hashtags from content"""
+    import re
+    return re.findall(r'#\w+', content)
+
+def test_database_connection():
+    """Test database connection"""
+    try:
+        db = get_db()
+        # Test with a simple operation
+        db.test_collection.find_one()
+        logger.info("Database connection test successful")
+        return True
+    except Exception as e:
+        logger.error(f"Database connection test failed: {e}")
+        return False
+
+# Plan limits and validation
+PLAN_LIMITS = {
+    'free': {
+        'max_platforms': 2,
+        'max_posts_per_day': 2,
+        'max_generated_content': 10,
+        'ai_credits': 50
+    },
+    'pro': {
+        'max_platforms': 5,
+        'max_posts_per_day': 20,
+        'max_generated_content': 1000,
+        'ai_credits': 1000
+    },
+    'agency': {
+        'max_platforms': -1,
+        'max_posts_per_day': -1,
+        'max_generated_content': -1,
+        'ai_credits': -1
+    }
+}
+
+def check_user_limits(user_id, action, platform=None):
+    """Check if user can perform action based on their plan"""
+    db = get_db()
+    from bson import ObjectId
     
-    @staticmethod
-    def track_usage(user_id: str, action: str, platform: str = None):
-        """Track user action for billing/limits"""
-        today = datetime.utcnow().date()
-        
-        usage_data = {
-            'user_id': ObjectId(user_id),
-            'date': today,
-            'actions': {
-                action: 1
-            }
-        }
-        
-        # Increment existing or create new
-        db.usage_tracking.update_one(
-            {'user_id': ObjectId(user_id), 'date': today},
-            {
-                '$inc': {f'actions.{action}': 1},
-                '$set': {'updated_at': datetime.utcnow()}
-            },
-            upsert=True
-        )
+    user = db.users.find_one({'_id': ObjectId(user_id)})
+    if not user:
+        raise ValueError("User not found")
     
-    @staticmethod
-    def get_daily_usage(user_id: str, date: datetime = None) -> Dict:
-        """Get usage for a specific date"""
-        if not date:
-            date = datetime.utcnow().date()
-            
-        usage = db.usage_tracking.find_one({
+    plan_type = user.get('plan_type', 'free')
+    limits = PLAN_LIMITS[plan_type]
+    
+    if action == 'connect_platform':
+        connected_count = db.platform_connections.count_documents({
             'user_id': ObjectId(user_id),
-            'date': date
+            'is_active': True
         })
         
-        return usage.get('actions', {}) if usage else {}
+        max_platforms = limits['max_platforms']
+        if max_platforms != -1 and connected_count >= max_platforms:
+            return False, f"Plan limit reached: {max_platforms} platforms maximum"
     
-    @staticmethod
-    def check_limit(user_id: str, action: str, limit: int) -> bool:
-        """Check if user has exceeded daily limit"""
-        today_usage = UsageTracking.get_daily_usage(user_id)
-        current_usage = today_usage.get(action, 0)
-        return current_usage < limit
+    elif action == 'create_post':
+        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow = today + timedelta(days=1)
+        
+        posts_today = db.posts.count_documents({
+            'user_id': ObjectId(user_id),
+            'created_at': {'$gte': today, '$lt': tomorrow}
+        })
+        
+        max_posts = limits['max_posts_per_day']
+        if max_posts != -1 and posts_today >= max_posts:
+            return False, f"Daily limit reached: {max_posts} posts maximum"
+    
+    elif action == 'generate_content':
+        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow = today + timedelta(days=1)
+        
+        generated_today = db.generated_content.count_documents({
+            'user_id': ObjectId(user_id),
+            'created_at': {'$gte': today, '$lt': tomorrow}
+        })
+        
+        max_generated = limits['max_generated_content']
+        if max_generated != -1 and generated_today >= max_generated:
+            return False, f"Daily generation limit reached: {max_generated} maximum"
+    
+    return True, "Action allowed"
 
-# Utility functions
-def serialize_doc(doc):
-    """Convert MongoDB document to JSON serializable format"""
-    if doc is None:
-        return None
-    if isinstance(doc, list):
-        return [serialize_doc(item) for item in doc]
-    if isinstance(doc, dict):
-        result = {}
-        for key, value in doc.items():
-            if key == '_id':
-                result[key] = str(value)
-            elif isinstance(value, ObjectId):
-                result[key] = str(value)
-            elif isinstance(value, datetime):
-                result[key] = value.isoformat()
-            elif isinstance(value, (dict, list)):
-                result[key] = serialize_doc(value)
-            else:
-                result[key] = value
-        return result
-    return doc
+def validate_user_data(data):
+    """Validate user data"""
+    required_fields = ['email', 'password', 'name']
+    for field in required_fields:
+        if not data.get(field):
+            raise ValueError(f"Missing required field: {field}")
+    
+    import re
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, data['email']):
+        raise ValueError("Invalid email format")
+    
+    return True
+
+def validate_platform(platform):
+    """Validate supported platform"""
+    supported_platforms = [
+        'facebook', 'instagram', 'twitter', 'linkedin', 
+        'youtube', 'pinterest', 'tiktok'
+    ]
+    
+    if platform not in supported_platforms:
+        raise ValueError(f"Unsupported platform: {platform}")
+    
+    return True
+
+def validate_content_domain(domain):
+    """Validate content domain"""
+    supported_domains = [
+        'tech', 'memes', 'business', 'lifestyle', 'fitness',
+        'finance', 'travel', 'food', 'entertainment', 'education'
+    ]
+    
+    if domain not in supported_domains:
+        raise ValueError(f"Unsupported domain: {domain}")
+    
+    return True
+
+if __name__ == '__main__':
+    try:
+        init_db()
+        print("Database connection successful")
+        test_database_connection()
+    except Exception as e:
+        print(f"Database connection failed: {e}")

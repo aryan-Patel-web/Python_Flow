@@ -1,459 +1,991 @@
+#!/usr/bin/env python3
 """
 Authentication Routes for VelocityPost.ai
-Handles user registration, login, JWT tokens
+Handles user registration, login, password reset, and JWT token management
 """
 
+import os
+import re
+import hashlib
+import secrets
+import logging
+from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, create_refresh_token
-from datetime import datetime, timedelta
-import re
-from bson import ObjectId
+import jwt
+from bson.objectid import ObjectId
 
-from app.utils.database import get_database
-from app.utils.validators import validate_email, validate_password
-from app.utils.helpers import generate_response
+from config.database import get_collection
 
+logger = logging.getLogger(__name__)
+
+# Create Blueprint
 auth_bp = Blueprint('auth', __name__)
+
+# Configuration
+JWT_SECRET = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
+JWT_ALGORITHM = 'HS256'
+JWT_EXPIRY_HOURS = 24  # 24 hours
+REFRESH_TOKEN_EXPIRY_DAYS = 30  # 30 days
+
+# Password requirements
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_PATTERN = re.compile(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]')
+
+def validate_email(email):
+    """Validate email format"""
+    email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+    return bool(email_pattern.match(email))
+
+def validate_password(password):
+    """Validate password strength"""
+    if len(password) < PASSWORD_MIN_LENGTH:
+        return False, f"Password must be at least {PASSWORD_MIN_LENGTH} characters long"
+    
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter"
+    
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+    
+    if not re.search(r'\d', password):
+        return False, "Password must contain at least one number"
+    
+    if not re.search(r'[@$!%*?&]', password):
+        return False, "Password must contain at least one special character (@$!%*?&)"
+    
+    return True, "Password is valid"
+
+def hash_password(password):
+    """Hash password using Werkzeug's secure method"""
+    return generate_password_hash(password, method='pbkdf2:sha256', salt_length=16)
+
+def verify_password(password_hash, password):
+    """Verify password against hash"""
+    return check_password_hash(password_hash, password)
+
+def generate_jwt_token(user_id, email, token_type='access'):
+    """Generate JWT access or refresh token"""
+    if token_type == 'refresh':
+        exp_delta = timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS)
+    else:
+        exp_delta = timedelta(hours=JWT_EXPIRY_HOURS)
+    
+    payload = {
+        'user_id': str(user_id),
+        'email': email,
+        'token_type': token_type,
+        'exp': datetime.utcnow() + exp_delta,
+        'iat': datetime.utcnow()
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def verify_jwt_token(token, token_type='access'):
+    """Verify JWT token and return payload"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get('token_type') != token_type:
+            return None
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+def require_auth(f):
+    """Decorator to require authentication"""
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'success': False,
+                'message': 'Authentication required',
+                'error': 'Missing or invalid authorization header'
+            }), 401
+        
+        token = auth_header.split(' ')[1]
+        payload = verify_jwt_token(token)
+        
+        if not payload:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid or expired token',
+                'error': 'Authentication failed'
+            }), 401
+        
+        # Add user info to request
+        request.user_id = payload['user_id']
+        request.user_email = payload['email']
+        
+        return f(*args, **kwargs)
+    
+    decorated_function.__name__ = f.__name__
+    return decorated_function
+
+def get_user_by_email(email):
+    """Get user by email from database"""
+    users_collection = get_collection('users')
+    if not users_collection:
+        return None
+    return users_collection.find_one({'email': email})
+
+def get_user_by_id(user_id):
+    """Get user by ID from database"""
+    users_collection = get_collection('users')
+    if not users_collection:
+        return None
+    try:
+        return users_collection.find_one({'_id': ObjectId(user_id)})
+    except:
+        return None
+
+def create_user(email, password_hash, name, plan_type='free'):
+    """Create a new user in database"""
+    users_collection = get_collection('users')
+    if not users_collection:
+        raise Exception("Database unavailable")
+    
+    user_doc = {
+        'email': email,
+        'password_hash': password_hash,
+        'name': name,
+        'plan_type': plan_type,
+        'is_active': True,
+        'email_verified': False,
+        'settings': {
+            'timezone': 'UTC',
+            'notifications_enabled': True,
+            'auto_posting_enabled': False
+        },
+        'created_at': datetime.utcnow(),
+        'updated_at': datetime.utcnow(),
+        'last_login_at': None
+    }
+    
+    result = users_collection.insert_one(user_doc)
+    return result.inserted_id
+
+def send_password_reset_email(email, reset_token):
+    """Send password reset email (placeholder - implement with your email service)"""
+    try:
+        # This is a placeholder - implement with your email service
+        # For now, just log the reset token for development
+        logger.info(f"Password reset token for {email}: {reset_token}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send password reset email: {e}")
+        return False
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
-    """Register new user with free plan"""
+    """Register a new user"""
     try:
         data = request.get_json()
         
-        # Validate required fields
-        required_fields = ['name', 'email', 'password']
-        for field in required_fields:
-            if not data.get(field):
-                return generate_response(False, f'{field.title()} is required', status_code=400)
+        # Validate input
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided',
+                'error': 'Request body is required'
+            }), 400
         
-        name = data['name'].strip()
-        email = data['email'].strip().lower()
-        password = data['password']
+        name = data.get('name', '').strip()
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
         
-        # Validate email format
-        if not validate_email(email):
-            return generate_response(False, 'Invalid email format', status_code=400)
+        # Validation
+        if not name:
+            return jsonify({
+                'success': False,
+                'message': 'Name is required',
+                'error': 'Please provide your full name'
+            }), 400
         
-        # Validate password strength
-        if not validate_password(password):
-            return generate_response(False, 'Password must be at least 8 characters with uppercase, lowercase, number and special character', status_code=400)
+        if not email or not validate_email(email):
+            return jsonify({
+                'success': False,
+                'message': 'Valid email is required',
+                'error': 'Please provide a valid email address'
+            }), 400
+        
+        is_valid, password_message = validate_password(password)
+        if not is_valid:
+            return jsonify({
+                'success': False,
+                'message': 'Password validation failed',
+                'error': password_message
+            }), 400
         
         # Check if user already exists
-        db = get_database()
-        existing_user = db.users.find_one({'email': email})
+        users_collection = get_collection('users')
+        if not users_collection:
+            return jsonify({
+                'success': False,
+                'message': 'Database unavailable',
+                'error': 'Please try again later'
+            }), 503
         
+        existing_user = users_collection.find_one({'email': email})
         if existing_user:
-            return generate_response(False, 'User already exists with this email', status_code=409)
+            return jsonify({
+                'success': False,
+                'message': 'Email already registered',
+                'error': 'An account with this email already exists'
+            }), 409
         
-        # Create user with free plan
-        hashed_password = generate_password_hash(password)
-        
-        user_data = {
+        # Create user
+        hashed_password = hash_password(password)
+        user_doc = {
             'name': name,
             'email': email,
             'password_hash': hashed_password,
-            'subscription_plan': 'free',  # Start with free plan
-            'plan_limits': {
-                'max_platforms': 2,
-                'max_posts_per_day': 2,
-                'max_domains': 3
-            },
+            'plan_type': 'free',
+            'is_active': True,
+            'email_verified': False,
             'connected_platforms': [],
-            'selected_domains': [],
-            'auto_posting_active': False,
+            'posts_this_month': 0,
+            'total_posts': 0,
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
-            'email_verified': False,
-            'is_active': True
+            'last_login': None,
+            'preferences': {
+                'timezone': 'UTC',
+                'email_notifications': True,
+                'auto_posting_enabled': False
+            }
         }
         
-        result = db.users.insert_one(user_data)
-        user_id = str(result.inserted_id)
+        result = users_collection.insert_one(user_doc)
+        user_id = result.inserted_id
         
-        # Create JWT tokens
-        access_token = create_access_token(
-            identity=user_id,
-            expires_delta=timedelta(hours=24)
-        )
-        refresh_token = create_refresh_token(
-            identity=user_id,
-            expires_delta=timedelta(days=30)
-        )
+        # Generate access token
+        access_token = generate_jwt_token(user_id, email)
         
         # Return user data (without password)
-        user_response = {
-            'id': user_id,
+        user_data = {
+            'id': str(user_id),
             'name': name,
             'email': email,
-            'subscription_plan': 'free',
-            'plan_limits': user_data['plan_limits'],
+            'plan_type': 'free',
+            'is_active': True,
             'connected_platforms': [],
-            'auto_posting_active': False
+            'posts_this_month': 0,
+            'total_posts': 0,
+            'created_at': user_doc['created_at'].isoformat(),
+            'preferences': user_doc['preferences']
         }
         
-        return generate_response(
-            True, 
-            'Registration successful', 
-            data={
-                'user': user_response,
-                'access_token': access_token,
-                'refresh_token': refresh_token
-            }
-        )
+        logger.info(f"New user registered: {email}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'User registered successfully',
+            'access_token': access_token,
+            'token_type': 'Bearer',
+            'expires_in': JWT_EXPIRY_HOURS * 3600,
+            'user': user_data
+        }), 201
         
     except Exception as e:
-        current_app.logger.error(f'Registration error: {str(e)}')
-        return generate_response(False, 'Registration failed', status_code=500)
+        logger.error(f"Registration error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': 'Registration failed',
+            'error': 'An unexpected error occurred'
+        }), 500
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
-    """User login with email and password"""
+    """User login"""
     try:
         data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided',
+                'error': 'Email and password are required'
+            }), 400
         
         email = data.get('email', '').strip().lower()
         password = data.get('password', '')
         
         if not email or not password:
-            return generate_response(False, 'Email and password are required', status_code=400)
+            return jsonify({
+                'success': False,
+                'message': 'Email and password are required',
+                'error': 'Please provide both email and password'
+            }), 400
         
         # Find user
-        db = get_database()
-        user = db.users.find_one({'email': email})
+        users_collection = get_collection('users')
+        if not users_collection:
+            return jsonify({
+                'success': False,
+                'message': 'Database unavailable',
+                'error': 'Please try again later'
+            }), 503
         
-        if not user:
-            return generate_response(False, 'Invalid email or password', status_code=401)
+        user = users_collection.find_one({'email': email})
         
-        # Check password
-        if not check_password_hash(user['password_hash'], password):
-            return generate_response(False, 'Invalid email or password', status_code=401)
+        if not user or not verify_password(user['password_hash'], password):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid credentials',
+                'error': 'Email or password is incorrect'
+            }), 401
         
         # Check if user is active
         if not user.get('is_active', True):
-            return generate_response(False, 'Account is deactivated', status_code=403)
+            return jsonify({
+                'success': False,
+                'message': 'Account deactivated',
+                'error': 'Please contact support to reactivate your account'
+            }), 403
         
         # Update last login
-        db.users.update_one(
-            {'_id': user['_id']},
-            {'$set': {'last_login': datetime.utcnow()}}
-        )
-        
-        # Create JWT tokens
-        user_id = str(user['_id'])
-        access_token = create_access_token(
-            identity=user_id,
-            expires_delta=timedelta(hours=24)
-        )
-        refresh_token = create_refresh_token(
-            identity=user_id,
-            expires_delta=timedelta(days=30)
-        )
-        
-        # Get connected platforms count
-        connected_platforms = db.platform_connections.find({
-            'user_id': ObjectId(user_id),
-            'is_active': True
-        }).count()
-        
-        # Return user data (without password)
-        user_response = {
-            'id': user_id,
-            'name': user['name'],
-            'email': user['email'],
-            'subscription_plan': user.get('subscription_plan', 'free'),
-            'plan_limits': user.get('plan_limits', {}),
-            'connected_platforms_count': connected_platforms,
-            'auto_posting_active': user.get('auto_posting_active', False),
-            'selected_domains': user.get('selected_domains', [])
-        }
-        
-        return generate_response(
-            True,
-            'Login successful',
-            data={
-                'user': user_response,
-                'access_token': access_token,
-                'refresh_token': refresh_token
-            }
-        )
-        
-    except Exception as e:
-        current_app.logger.error(f'Login error: {str(e)}')
-        return generate_response(False, 'Login failed', status_code=500)
-
-@auth_bp.route('/refresh', methods=['POST'])
-@jwt_required(refresh=True)
-def refresh():
-    """Refresh access token"""
-    try:
-        current_user_id = get_jwt_identity()
-        
-        # Create new access token
-        new_access_token = create_access_token(
-            identity=current_user_id,
-            expires_delta=timedelta(hours=24)
-        )
-        
-        return generate_response(
-            True,
-            'Token refreshed successfully',
-            data={'access_token': new_access_token}
-        )
-        
-    except Exception as e:
-        current_app.logger.error(f'Token refresh error: {str(e)}')
-        return generate_response(False, 'Token refresh failed', status_code=500)
-
-@auth_bp.route('/me', methods=['GET'])
-@jwt_required()
-def get_current_user():
-    """Get current user profile"""
-    try:
-        user_id = get_jwt_identity()
-        
-        db = get_database()
-        user = db.users.find_one({'_id': ObjectId(user_id)})
-        
-        if not user:
-            return generate_response(False, 'User not found', status_code=404)
-        
-        # Get connected platforms
-        connected_platforms = list(db.platform_connections.find({
-            'user_id': ObjectId(user_id),
-            'is_active': True
-        }))
-        
-        platforms_data = []
-        for platform in connected_platforms:
-            platforms_data.append({
-                'platform': platform['platform'],
-                'username': platform['username'],
-                'connected_at': platform['created_at'].isoformat(),
-                'is_active': platform['is_active']
-            })
-        
-        # Get usage stats for today
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        posts_today = db.posts.find({
-            'user_id': ObjectId(user_id),
-            'created_at': {'$gte': today}
-        }).count()
-        
-        user_response = {
-            'id': str(user['_id']),
-            'name': user['name'],
-            'email': user['email'],
-            'subscription_plan': user.get('subscription_plan', 'free'),
-            'plan_limits': user.get('plan_limits', {}),
-            'connected_platforms': platforms_data,
-            'selected_domains': user.get('selected_domains', []),
-            'auto_posting_active': user.get('auto_posting_active', False),
-            'posts_today': posts_today,
-            'created_at': user['created_at'].isoformat(),
-            'email_verified': user.get('email_verified', False)
-        }
-        
-        return generate_response(True, 'User profile retrieved', data={'user': user_response})
-        
-    except Exception as e:
-        current_app.logger.error(f'Get current user error: {str(e)}')
-        return generate_response(False, 'Failed to get user profile', status_code=500)
-
-@auth_bp.route('/logout', methods=['POST'])
-@jwt_required()
-def logout():
-    """Logout user (client-side token removal)"""
-    try:
-        # In a more complex setup, you might want to blacklist the token
-        # For now, we'll just return success and let client remove token
-        return generate_response(True, 'Logout successful')
-        
-    except Exception as e:
-        current_app.logger.error(f'Logout error: {str(e)}')
-        return generate_response(False, 'Logout failed', status_code=500)
-
-@auth_bp.route('/forgot-password', methods=['POST'])
-def forgot_password():
-    """Request password reset"""
-    try:
-        data = request.get_json()
-        email = data.get('email', '').strip().lower()
-        
-        if not email:
-            return generate_response(False, 'Email is required', status_code=400)
-        
-        db = get_database()
-        user = db.users.find_one({'email': email})
-        
-        if not user:
-            # Don't reveal if email exists or not for security
-            return generate_response(True, 'If email exists, reset instructions have been sent')
-        
-        # Generate reset token (in production, use proper token generation)
-        reset_token = create_access_token(
-            identity=str(user['_id']),
-            expires_delta=timedelta(hours=1)
-        )
-        
-        # Store reset token (in production, store hash of token)
-        db.users.update_one(
+        users_collection.update_one(
             {'_id': user['_id']},
             {
                 '$set': {
-                    'reset_token': reset_token,
-                    'reset_token_expires': datetime.utcnow() + timedelta(hours=1)
+                    'last_login': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
                 }
             }
         )
         
-        # TODO: Send email with reset link
-        # send_password_reset_email(email, reset_token)
+        # Generate access token
+        access_token = generate_jwt_token(user['_id'], email)
         
-        return generate_response(True, 'Password reset instructions sent to your email')
+        # Prepare user data
+        user_data = {
+            'id': str(user['_id']),
+            'name': user['name'],
+            'email': user['email'],
+            'plan_type': user.get('plan_type', 'free'),
+            'is_active': user.get('is_active', True),
+            'connected_platforms': user.get('connected_platforms', []),
+            'posts_this_month': user.get('posts_this_month', 0),
+            'total_posts': user.get('total_posts', 0),
+            'created_at': user['created_at'].isoformat(),
+            'last_login': datetime.utcnow().isoformat(),
+            'preferences': user.get('preferences', {})
+        }
+        
+        logger.info(f"User logged in: {email}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Login successful',
+            'access_token': access_token,
+            'token_type': 'Bearer',
+            'expires_in': JWT_EXPIRY_HOURS * 3600,
+            'user': user_data
+        }), 200
         
     except Exception as e:
-        current_app.logger.error(f'Forgot password error: {str(e)}')
-        return generate_response(False, 'Failed to process password reset request', status_code=500)
+        logger.error(f"Login error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': 'Login failed',
+            'error': 'An unexpected error occurred'
+        }), 500
+
+@auth_bp.route('/refresh', methods=['POST'])
+def refresh():
+    """Refresh access token"""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'success': False,
+                'error': 'Missing token',
+                'message': 'Refresh token is required'
+            }), 401
+        
+        refresh_token = auth_header.split(' ')[1]
+        payload = verify_jwt_token(refresh_token, 'refresh')
+        
+        if not payload:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid token',
+                'message': 'Refresh token is invalid or expired'
+            }), 401
+        
+        current_user_id = payload['user_id']
+        
+        # Verify user still exists and is active
+        user = get_user_by_id(current_user_id)
+        if not user or not user.get('is_active', True):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid user',
+                'message': 'User not found or disabled'
+            }), 401
+        
+        # Create new access token
+        new_access_token = generate_jwt_token(current_user_id, user['email'], 'access')
+        
+        return jsonify({
+            'success': True,
+            'access_token': new_access_token,
+            'token_type': 'Bearer',
+            'expires_in': JWT_EXPIRY_HOURS * 3600
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Token refresh failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Token refresh failed',
+            'message': 'Unable to refresh token. Please login again.'
+        }), 500
+
+@auth_bp.route('/logout', methods=['POST'])
+@require_auth
+def logout():
+    """Logout user (client-side token invalidation)"""
+    try:
+        # In a production app, you might want to blacklist the token
+        # For now, we'll rely on client-side token removal
+        
+        return jsonify({
+            'success': True,
+            'message': 'Logout successful'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Logout failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Logout failed',
+            'message': 'An error occurred during logout'
+        }), 500
+
+@auth_bp.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    """Send password reset email"""
+    try:
+        data = request.get_json()
+        
+        if not data.get('email'):
+            return jsonify({
+                'success': False,
+                'error': 'Email required',
+                'message': 'Please provide your email address'
+            }), 400
+        
+        email = data['email'].lower().strip()
+        
+        # Check if user exists
+        user = get_user_by_email(email)
+        if not user:
+            # Don't reveal if email exists or not (security best practice)
+            return jsonify({
+                'success': True,
+                'message': 'If an account with this email exists, you will receive password reset instructions.'
+            }), 200
+        
+        # Generate reset token
+        reset_token = secrets.token_urlsafe(32)
+        reset_expires = datetime.utcnow() + timedelta(hours=1)  # 1 hour expiry
+        
+        # Save reset token to database
+        users_collection = get_collection('users')
+        if users_collection:
+            users_collection.update_one(
+                {'_id': ObjectId(user['_id'])},
+                {'$set': {
+                    'password_reset_token': reset_token,
+                    'password_reset_expires': reset_expires,
+                    'updated_at': datetime.utcnow()
+                }}
+            )
+        
+        # Send reset email
+        email_sent = send_password_reset_email(email, reset_token)
+        
+        if email_sent:
+            logger.info(f"Password reset email sent to: {email}")
+        else:
+            logger.error(f"Failed to send password reset email to: {email}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'If an account with this email exists, you will receive password reset instructions.'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Password reset request failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Reset failed',
+            'message': 'Unable to process password reset request. Please try again.'
+        }), 500
 
 @auth_bp.route('/reset-password', methods=['POST'])
 def reset_password():
     """Reset password with token"""
     try:
         data = request.get_json()
-        token = data.get('token')
-        new_password = data.get('password')
         
-        if not token or not new_password:
-            return generate_response(False, 'Token and new password are required', status_code=400)
+        required_fields = ['token', 'new_password']
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({
+                    'success': False,
+                    'error': 'Missing required field',
+                    'message': f'{field} is required'
+                }), 400
         
-        if not validate_password(new_password):
-            return generate_response(False, 'Password must be at least 8 characters with uppercase, lowercase, number and special character', status_code=400)
+        token = data['token']
+        new_password = data['new_password']
         
-        db = get_database()
+        # Validate new password
+        password_valid, password_message = validate_password(new_password)
+        if not password_valid:
+            return jsonify({
+                'success': False,
+                'error': 'Weak password',
+                'message': password_message
+            }), 400
         
         # Find user with valid reset token
-        user = db.users.find_one({
-            'reset_token': token,
-            'reset_token_expires': {'$gt': datetime.utcnow()}
+        users_collection = get_collection('users')
+        if not users_collection:
+            return jsonify({
+                'success': False,
+                'error': 'Database unavailable',
+                'message': 'Please try again later'
+            }), 503
+        
+        user = users_collection.find_one({
+            'password_reset_token': token,
+            'password_reset_expires': {'$gt': datetime.utcnow()}
         })
         
         if not user:
-            return generate_response(False, 'Invalid or expired reset token', status_code=400)
+            return jsonify({
+                'success': False,
+                'error': 'Invalid token',
+                'message': 'Password reset token is invalid or expired'
+            }), 400
         
         # Update password and remove reset token
-        hashed_password = generate_password_hash(new_password)
+        new_password_hash = hash_password(new_password)
         
-        db.users.update_one(
-            {'_id': user['_id']},
-            {
-                '$set': {
-                    'password_hash': hashed_password,
-                    'updated_at': datetime.utcnow()
-                },
-                '$unset': {
-                    'reset_token': '',
-                    'reset_token_expires': ''
-                }
-            }
+        users_collection.update_one(
+            {'_id': ObjectId(user['_id'])},
+            {'$set': {
+                'password_hash': new_password_hash,
+                'updated_at': datetime.utcnow()
+            }, '$unset': {
+                'password_reset_token': '',
+                'password_reset_expires': ''
+            }}
         )
         
-        return generate_response(True, 'Password reset successful')
+        logger.info(f"Password reset successful for user: {user['email']}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Password reset successful. You can now login with your new password.'
+        }), 200
         
     except Exception as e:
-        current_app.logger.error(f'Reset password error: {str(e)}')
-        return generate_response(False, 'Failed to reset password', status_code=500)
+        logger.error(f"Password reset failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Reset failed',
+            'message': 'Unable to reset password. Please try again.'
+        }), 500
 
 @auth_bp.route('/change-password', methods=['POST'])
-@jwt_required()
+@require_auth
 def change_password():
     """Change password for authenticated user"""
     try:
-        user_id = get_jwt_identity()
+        current_user_id = request.user_id
         data = request.get_json()
         
-        current_password = data.get('current_password')
-        new_password = data.get('new_password')
+        required_fields = ['current_password', 'new_password']
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({
+                    'success': False,
+                    'error': 'Missing required field',
+                    'message': f'{field} is required'
+                }), 400
         
-        if not current_password or not new_password:
-            return generate_response(False, 'Current and new password are required', status_code=400)
+        current_password = data['current_password']
+        new_password = data['new_password']
         
-        if not validate_password(new_password):
-            return generate_response(False, 'New password must be at least 8 characters with uppercase, lowercase, number and special character', status_code=400)
-        
-        db = get_database()
-        user = db.users.find_one({'_id': ObjectId(user_id)})
-        
+        # Get user
+        user = get_user_by_id(current_user_id)
         if not user:
-            return generate_response(False, 'User not found', status_code=404)
+            return jsonify({
+                'success': False,
+                'error': 'User not found',
+                'message': 'User not found'
+            }), 404
         
         # Verify current password
-        if not check_password_hash(user['password_hash'], current_password):
-            return generate_response(False, 'Current password is incorrect', status_code=400)
+        if not verify_password(user['password_hash'], current_password):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid password',
+                'message': 'Current password is incorrect'
+            }), 400
         
-        # Update to new password
-        hashed_password = generate_password_hash(new_password)
+        # Validate new password
+        password_valid, password_message = validate_password(new_password)
+        if not password_valid:
+            return jsonify({
+                'success': False,
+                'error': 'Weak password',
+                'message': password_message
+            }), 400
         
-        db.users.update_one(
-            {'_id': ObjectId(user_id)},
-            {
-                '$set': {
-                    'password_hash': hashed_password,
+        # Check if new password is different
+        if current_password == new_password:
+            return jsonify({
+                'success': False,
+                'error': 'Same password',
+                'message': 'New password must be different from current password'
+            }), 400
+        
+        # Update password
+        new_password_hash = hash_password(new_password)
+        
+        users_collection = get_collection('users')
+        if users_collection:
+            users_collection.update_one(
+                {'_id': ObjectId(current_user_id)},
+                {'$set': {
+                    'password_hash': new_password_hash,
                     'updated_at': datetime.utcnow()
-                }
-            }
-        )
+                }}
+            )
         
-        return generate_response(True, 'Password changed successfully')
+        logger.info(f"Password changed for user: {user['email']}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Password changed successfully'
+        }), 200
         
     except Exception as e:
-        current_app.logger.error(f'Change password error: {str(e)}')
-        return generate_response(False, 'Failed to change password', status_code=500)
+        logger.error(f"Password change failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Password change failed',
+            'message': 'Unable to change password. Please try again.'
+        }), 500
 
-@auth_bp.route('/update-profile', methods=['PUT'])
-@jwt_required()
+@auth_bp.route('/profile', methods=['GET'])
+@require_auth
+def get_profile():
+    """Get current user profile"""
+    try:
+        current_user_id = request.user_id
+        
+        # Get user
+        user = get_user_by_id(current_user_id)
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': 'User not found',
+                'message': 'User not found'
+            }), 404
+        
+        # Get user statistics
+        social_accounts_collection = get_collection('social_accounts')
+        posts_collection = get_collection('posts')
+        
+        # Count connected platforms
+        connected_platforms = 0
+        if social_accounts_collection:
+            connected_platforms = social_accounts_collection.count_documents({
+                'user_id': ObjectId(current_user_id),
+                'is_active': True
+            })
+        
+        # Count total posts
+        total_posts = 0
+        if posts_collection:
+            total_posts = posts_collection.count_documents({
+                'user_id': ObjectId(current_user_id)
+            })
+        
+        # Count posts this month
+        month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        posts_this_month = 0
+        if posts_collection:
+            posts_this_month = posts_collection.count_documents({
+                'user_id': ObjectId(current_user_id),
+                'created_at': {'$gte': month_start}
+            })
+        
+        # User data for response
+        user_data = {
+            'id': str(user['_id']),
+            'email': user['email'],
+            'name': user['name'],
+            'plan_type': user.get('plan_type', 'free'),
+            'is_active': user.get('is_active', True),
+            'email_verified': user.get('email_verified', False),
+            'created_at': user['created_at'].isoformat(),
+            'updated_at': user.get('updated_at', user['created_at']).isoformat(),
+            'last_login_at': user.get('last_login_at').isoformat() if user.get('last_login_at') else None,
+            'settings': user.get('settings', {}),
+            'statistics': {
+                'connected_platforms': connected_platforms,
+                'total_posts': total_posts,
+                'posts_this_month': posts_this_month
+            }
+        }
+        
+        return jsonify({
+            'success': True,
+            'user': user_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get profile failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Profile fetch failed',
+            'message': 'Unable to fetch profile. Please try again.'
+        }), 500
+
+@auth_bp.route('/profile', methods=['PUT'])
+@require_auth
 def update_profile():
     """Update user profile"""
     try:
-        user_id = get_jwt_identity()
+        current_user_id = request.user_id
         data = request.get_json()
         
-        # Fields that can be updated
-        allowed_fields = ['name']
+        # Get user
+        user = get_user_by_id(current_user_id)
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': 'User not found',
+                'message': 'User not found'
+            }), 404
+        
+        # Allowed fields to update
+        allowed_fields = ['name', 'settings']
         update_data = {}
         
         for field in allowed_fields:
             if field in data:
-                update_data[field] = data[field].strip() if isinstance(data[field], str) else data[field]
+                update_data[field] = data[field]
+        
+        # Validate name if provided
+        if 'name' in update_data:
+            if not update_data['name'] or len(update_data['name'].strip()) < 2:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid name',
+                    'message': 'Name must be at least 2 characters long'
+                }), 400
+            update_data['name'] = update_data['name'].strip()
+        
+        # Validate settings if provided
+        if 'settings' in update_data:
+            allowed_settings = ['timezone', 'notifications_enabled', 'auto_posting_enabled']
+            settings = {}
+            for setting in allowed_settings:
+                if setting in update_data['settings']:
+                    settings[setting] = update_data['settings'][setting]
+            update_data['settings'] = {**user.get('settings', {}), **settings}
         
         if not update_data:
-            return generate_response(False, 'No valid fields to update', status_code=400)
+            return jsonify({
+                'success': False,
+                'error': 'No data to update',
+                'message': 'Please provide data to update'
+            }), 400
         
-        # Add update timestamp
+        # Update user
         update_data['updated_at'] = datetime.utcnow()
         
-        db = get_database()
-        result = db.users.update_one(
-            {'_id': ObjectId(user_id)},
-            {'$set': update_data}
-        )
+        users_collection = get_collection('users')
+        if users_collection:
+            result = users_collection.update_one(
+                {'_id': ObjectId(current_user_id)},
+                {'$set': update_data}
+            )
+            
+            if result.modified_count == 0:
+                return jsonify({
+                    'success': False,
+                    'error': 'Update failed',
+                    'message': 'No changes were made'
+                }), 400
         
-        if result.matched_count == 0:
-            return generate_response(False, 'User not found', status_code=404)
-        
-        # Get updated user
-        updated_user = db.users.find_one({'_id': ObjectId(user_id)})
-        
-        user_response = {
+        # Get updated user data
+        updated_user = get_user_by_id(current_user_id)
+        user_data = {
             'id': str(updated_user['_id']),
-            'name': updated_user['name'],
             'email': updated_user['email'],
+            'name': updated_user['name'],
+            'plan_type': updated_user.get('plan_type', 'free'),
+            'is_active': updated_user.get('is_active', True),
+            'settings': updated_user.get('settings', {}),
             'updated_at': updated_user['updated_at'].isoformat()
         }
         
-        return generate_response(True, 'Profile updated successfully', data={'user': user_response})
+        logger.info(f"Profile updated for user: {updated_user['email']}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Profile updated successfully',
+            'user': user_data
+        }), 200
         
     except Exception as e:
-        current_app.logger.error(f'Update profile error: {str(e)}')
-        return generate_response(False, 'Failed to update profile', status_code=500)
+        logger.error(f"Profile update failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Profile update failed',
+            'message': 'Unable to update profile. Please try again.'
+        }), 500
+
+@auth_bp.route('/verify-token', methods=['POST'])
+@require_auth
+def verify_token():
+    """Verify if JWT token is valid"""
+    try:
+        current_user_id = request.user_id
+        
+        # Get user to ensure they still exist and are active
+        user = get_user_by_id(current_user_id)
+        if not user or not user.get('is_active', True):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid token',
+                'message': 'Token is invalid or user is disabled'
+            }), 401
+        
+        return jsonify({
+            'success': True,
+            'valid': True,
+            'user_id': current_user_id,
+            'email': user['email']
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Token verification failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'valid': False,
+            'error': 'Token verification failed'
+        }), 401
+
+@auth_bp.route('/delete-account', methods=['DELETE'])
+@require_auth
+def delete_account():
+    """Delete user account (soft delete)"""
+    try:
+        current_user_id = request.user_id
+        
+        # Get user
+        user = get_user_by_id(current_user_id)
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': 'User not found',
+                'message': 'User not found'
+            }), 404
+        
+        # Soft delete - deactivate account instead of deleting
+        users_collection = get_collection('users')
+        social_accounts_collection = get_collection('social_accounts')
+        
+        # Deactivate user
+        if users_collection:
+            users_collection.update_one(
+                {'_id': ObjectId(current_user_id)},
+                {'$set': {
+                    'is_active': False,
+                    'deactivated_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }}
+            )
+        
+        # Deactivate all social accounts
+        if social_accounts_collection:
+            social_accounts_collection.update_many(
+                {'user_id': ObjectId(current_user_id)},
+                {'$set': {'is_active': False, 'updated_at': datetime.utcnow()}}
+            )
+        
+        # Cancel any active subscriptions (implement based on payment provider)
+        # This would typically involve calling Stripe/Razorpay APIs to cancel subscriptions
+        
+        logger.info(f"Account deleted for user: {user['email']}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Account deleted successfully'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Account deletion failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Account deletion failed',
+            'message': 'Unable to delete account. Please contact support.'
+        }), 500
+
+# Error handlers specific to auth blueprint
+@auth_bp.errorhandler(400)
+def bad_request(error):
+    return jsonify({
+        'success': False,
+        'error': 'Bad request',
+        'message': 'The request was invalid'
+    }), 400
+
+@auth_bp.errorhandler(401)
+def unauthorized(error):
+    return jsonify({
+        'success': False,
+        'error': 'Unauthorized',
+        'message': 'Authentication required'
+    }), 401
+
+@auth_bp.errorhandler(422)
+def unprocessable_entity(error):
+    return jsonify({
+        'success': False,
+        'error': 'Unprocessable entity',
+        'message': 'The request was well-formed but contains semantic errors'
+    }), 422
+
+# Test function for password validation (for development)
+def test_password_validation():
+    """Test password validation function"""
+    test_passwords = [
+        'weak',
+        'StrongPass123!',
+        'NoSpecialChar123',
+        'nouppercasechar123!',
+        'NOLOWERCASECHAR123!',
+        'NoNumbers!',
+        'Short1!'
+    ]
+    
+    print("Password Validation Tests:")
+    print("-" * 40)
+    for pwd in test_passwords:
+        valid, message = validate_password(pwd)
+        print(f"Password '{pwd}': {valid} - {message}")
+
+if __name__ == '__main__':
+    test_password_validation()

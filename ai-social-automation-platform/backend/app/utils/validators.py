@@ -2,10 +2,8 @@
 Validation utilities for user input, credentials, and content
 """
 import re
-import email_validator
-from urllib.parse import urlparse
-import logging
 from typing import Dict, List, Optional, Any
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +14,9 @@ class ValidationError(Exception):
 def validate_email(email: str) -> bool:
     """Validate email address format"""
     try:
-        email_validator.validate_email(email)
-        return True
-    except email_validator.EmailNotValidError:
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        return bool(re.match(pattern, email))
+    except:
         return False
 
 def validate_username(username: str) -> bool:
@@ -83,6 +81,7 @@ def validate_password(password: str) -> Dict[str, Any]:
 def validate_url(url: str) -> bool:
     """Validate URL format"""
     try:
+        from urllib.parse import urlparse
         result = urlparse(url)
         return all([result.scheme, result.netloc])
     except:
@@ -325,11 +324,11 @@ def validate_domain_settings(domain_data: Dict[str, Any]) -> Dict[str, Any]:
     """Validate domain configuration settings"""
     errors = []
     
-    # Validate domain name
+    # Validate domain name - FIXED THE SYNTAX ERROR
     name = domain_data.get('name', '').strip()
     if not name:
         errors.append("Domain name is required")
-    elif not re.match(r'^[a-z0-9_]+, name):
+    elif not re.match(r'^[a-z0-9_]+$', name):  # FIXED: Added closing quote and $
         errors.append("Domain name must be lowercase alphanumeric with underscores")
     
     # Validate display name

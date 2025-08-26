@@ -8,7 +8,7 @@ import Layout from './components/Layout/Layout';
 // ===============================================
 // 🏠 LANDING PAGE - Public Route (/)
 // ===============================================
-import LandingPage from './pages/LandingPage';
+import LandingPage from './pages/LandingPage.jsx';
 
 // ===============================================
 // 🔐 AUTH PAGES - Public Routes
