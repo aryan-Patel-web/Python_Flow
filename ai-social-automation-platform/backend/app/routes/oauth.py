@@ -1,140 +1,242 @@
+#!/usr/bin/env python3
 """
 OAuth Routes for Social Media Platform Integration
-Handles secure OAuth 2.0 flow for all supported platforms
+Handles secure OAuth 2.0 flow for all supported platforms with Redis caching
 """
 
 import os
+import json
+import redis
+import base64
 import asyncio
-from datetime import datetime
-from flask import Blueprint, request, jsonify, redirect, current_app
-from flask_jwt_extended import jwt_required, get_jwt_identity
 import logging
+from datetime import datetime, timedelta
+from flask import Blueprint, request, jsonify, redirect
+from bson.objectid import ObjectId
 
-from app.services.oauth_service import OAuthService, PlatformAPIClient
-from app.utils.database import get_db, SocialAccountModel, check_user_limits
+# Try to import auth decorator
+try:
+    from app.routes.auth import require_auth
+except ImportError:
+    def require_auth(f):
+        def wrapper(*args, **kwargs):
+            return f(*args, **kwargs)
+        return wrapper
+
+from app.utils.database import get_collection, PlatformConnectionModel, check_user_limits
 
 logger = logging.getLogger(__name__)
 
 # Create Blueprint
 oauth_bp = Blueprint('oauth', __name__)
 
-# Initialize OAuth service
-oauth_service = OAuthService()
-api_client = PlatformAPIClient(oauth_service)
+# Redis connection for caching OAuth states and tokens
+redis_client = None
+try:
+    redis_client = redis.Redis(
+        host=os.getenv('REDIS_HOST', 'localhost'),
+        port=int(os.getenv('REDIS_PORT', 6379)),
+        db=int(os.getenv('REDIS_DB', 1)),  # Use DB 1 for OAuth
+        decode_responses=True
+    )
+    redis_client.ping()
+    logger.info("Redis connected successfully for OAuth")
+except Exception as e:
+    logger.warning(f"Redis connection failed for OAuth: {e}")
+    redis_client = None
+
+# Platform Configuration
+PLATFORM_CONFIGS = {
+    'facebook': {
+        'name': 'Facebook',
+        'client_id': os.getenv('FACEBOOK_CLIENT_ID'),
+        'client_secret': os.getenv('FACEBOOK_CLIENT_SECRET'),
+        'auth_url': 'https://www.facebook.com/v18.0/dialog/oauth',
+        'token_url': 'https://graph.facebook.com/v18.0/oauth/access_token',
+        'profile_url': 'https://graph.facebook.com/v18.0/me',
+        'scope': 'pages_manage_posts,pages_read_engagement,pages_show_list,publish_to_groups',
+        'icon': 'facebook',
+        'color': '#1877F2',
+        'requires_page': True,
+        'supported_content': ['text', 'images', 'links', 'videos']
+    },
+    'instagram': {
+        'name': 'Instagram',
+        'client_id': os.getenv('INSTAGRAM_CLIENT_ID'),
+        'client_secret': os.getenv('INSTAGRAM_CLIENT_SECRET'),
+        'auth_url': 'https://api.instagram.com/oauth/authorize',
+        'token_url': 'https://api.instagram.com/oauth/access_token',
+        'profile_url': 'https://graph.instagram.com/v18.0/me',
+        'scope': 'user_profile,user_media',
+        'icon': 'instagram',
+        'color': '#E4405F',
+        'requires_business_account': True,
+        'supported_content': ['images', 'videos', 'stories']
+    },
+    'twitter': {
+        'name': 'Twitter/X',
+        'client_id': os.getenv('TWITTER_CLIENT_ID'),
+        'client_secret': os.getenv('TWITTER_CLIENT_SECRET'),
+        'auth_url': 'https://twitter.com/i/oauth2/authorize',
+        'token_url': 'https://api.twitter.com/2/oauth2/token',
+        'profile_url': 'https://api.twitter.com/2/users/me',
+        'scope': 'tweet.read,tweet.write,users.read,offline.access',
+        'icon': 'twitter',
+        'color': '#000000',
+        'requires_page': False,
+        'supported_content': ['text', 'images', 'videos', 'threads']
+    },
+    'linkedin': {
+        'name': 'LinkedIn',
+        'client_id': os.getenv('LINKEDIN_CLIENT_ID'),
+        'client_secret': os.getenv('LINKEDIN_CLIENT_SECRET'),
+        'auth_url': 'https://www.linkedin.com/oauth/v2/authorization',
+        'token_url': 'https://www.linkedin.com/oauth/v2/accessToken',
+        'profile_url': 'https://api.linkedin.com/v2/people/~',
+        'scope': 'r_liteprofile,w_member_social',
+        'icon': 'linkedin',
+        'color': '#0A66C2',
+        'requires_page': False,
+        'supported_content': ['text', 'images', 'videos', 'articles']
+    },
+    'youtube': {
+        'name': 'YouTube',
+        'client_id': os.getenv('YOUTUBE_CLIENT_ID'),
+        'client_secret': os.getenv('YOUTUBE_CLIENT_SECRET'),
+        'auth_url': 'https://accounts.google.com/o/oauth2/v2/auth',
+        'token_url': 'https://oauth2.googleapis.com/token',
+        'profile_url': 'https://www.googleapis.com/oauth2/v2/userinfo',
+        'scope': 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube',
+        'icon': 'youtube',
+        'color': '#FF0000',
+        'requires_page': False,
+        'supported_content': ['videos', 'community_posts', 'shorts']
+    },
+    'pinterest': {
+        'name': 'Pinterest',
+        'client_id': os.getenv('PINTEREST_CLIENT_ID'),
+        'client_secret': os.getenv('PINTEREST_CLIENT_SECRET'),
+        'auth_url': 'https://www.pinterest.com/oauth/',
+        'token_url': 'https://api.pinterest.com/v5/oauth/token',
+        'profile_url': 'https://api.pinterest.com/v5/user_account',
+        'scope': 'boards:read,pins:read,pins:write',
+        'icon': 'pinterest',
+        'color': '#BD081C',
+        'requires_business_account': True,
+        'supported_content': ['images', 'idea_pins']
+    }
+}
 
 @oauth_bp.route('/platforms', methods=['GET'])
 def get_supported_platforms():
     """Get list of supported social media platforms"""
     try:
-        platforms = [
-            {
-                'id': 'facebook',
-                'name': 'Facebook',
-                'description': 'Connect your Facebook page to automatically post content',
-                'icon': 'facebook',
-                'color': '#1877F2',
-                'requires_page': True,
-                'supported_content': ['text', 'images', 'links', 'videos']
-            },
-            {
-                'id': 'instagram',
-                'name': 'Instagram',
-                'description': 'Connect your Instagram business account for automatic posting',
-                'icon': 'instagram',
-                'color': '#E4405F',
-                'requires_business_account': True,
-                'supported_content': ['images', 'videos', 'stories']
-            },
-            {
-                'id': 'twitter',
-                'name': 'Twitter/X',
-                'description': 'Automatically post tweets and engage with your audience',
-                'icon': 'twitter',
-                'color': '#000000',
-                'requires_page': False,
-                'supported_content': ['text', 'images', 'videos', 'threads']
-            },
-            {
-                'id': 'linkedin',
-                'name': 'LinkedIn',
-                'description': 'Share professional content and build your network',
-                'icon': 'linkedin',
-                'color': '#0A66C2',
-                'requires_page': False,
-                'supported_content': ['text', 'images', 'videos', 'articles']
-            },
-            {
-                'id': 'youtube',
-                'name': 'YouTube',
-                'description': 'Upload videos and manage your YouTube channel',
-                'icon': 'youtube',
-                'color': '#FF0000',
-                'requires_page': False,
-                'supported_content': ['videos', 'community_posts', 'shorts']
-            },
-            {
-                'id': 'pinterest',
-                'name': 'Pinterest',
-                'description': 'Create pins and manage your Pinterest boards',
-                'icon': 'pinterest',
-                'color': '#BD081C',
-                'requires_business_account': True,
-                'supported_content': ['images', 'idea_pins']
-            }
-        ]
+        platforms = []
+        for platform_id, config in PLATFORM_CONFIGS.items():
+            platforms.append({
+                'id': platform_id,
+                'name': config['name'],
+                'description': f"Connect your {config['name']} account to automatically post content",
+                'icon': config['icon'],
+                'color': config['color'],
+                'available': bool(config['client_id'] and config['client_secret']),
+                'scope': config['scope'],
+                'requires_page': config.get('requires_page', False),
+                'requires_business_account': config.get('requires_business_account', False),
+                'supported_content': config['supported_content']
+            })
         
         return jsonify({
+            'success': True,
             'platforms': platforms,
             'total_count': len(platforms)
         }), 200
         
     except Exception as e:
-        logger.error(f"Failed to get supported platforms: {e}")
+        logger.error(f"Get platforms error: {str(e)}")
         return jsonify({
-            'error': 'Failed to get platforms',
-            'message': 'Unable to retrieve supported platforms'
+            'success': False,
+            'message': 'Failed to get platforms',
+            'error': str(e)
         }), 500
 
 @oauth_bp.route('/auth-url/<platform>', methods=['POST'])
-@jwt_required()
-def get_auth_url(platform):
-    """Generate OAuth authorization URL for a platform"""
+@require_auth
+def generate_auth_url(platform):
+    """Generate OAuth authorization URL for platform"""
     try:
-        current_user_id = get_jwt_identity()
+        user_id = request.user_id
         
-        # Validate platform
-        if platform not in oauth_service.platforms:
+        if platform not in PLATFORM_CONFIGS:
             return jsonify({
-                'error': 'Unsupported platform',
-                'message': f'Platform {platform} is not supported'
+                'success': False,
+                'message': 'Platform not supported',
+                'error': f'Platform {platform} is not supported'
+            }), 400
+        
+        config = PLATFORM_CONFIGS[platform]
+        
+        # Check if credentials are configured
+        if not config['client_id'] or not config['client_secret']:
+            return jsonify({
+                'success': False,
+                'message': 'Platform not configured',
+                'error': f'{platform} OAuth credentials not configured'
             }), 400
         
         # Check user's plan limits
-        can_connect, message = check_user_limits(current_user_id, 'connect_platform', platform)
+        can_connect, limit_message = check_user_limits(user_id, 'connect_platform', platform)
         if not can_connect:
             return jsonify({
-                'error': 'Plan limit reached',
-                'message': message,
+                'success': False,
+                'message': 'Plan limit reached',
+                'error': limit_message,
                 'upgrade_required': True
             }), 403
+        
+        # Generate state for security
+        state_data = f"{user_id}:{platform}:{int(datetime.utcnow().timestamp())}"
+        state = base64.urlsafe_b64encode(state_data.encode()).decode()
+        
+        # Store state in Redis with 10 minute expiry
+        if redis_client:
+            try:
+                redis_client.setex(f"oauth_state:{state}", 600, json.dumps({
+                    'user_id': user_id,
+                    'platform': platform,
+                    'created_at': datetime.utcnow().isoformat()
+                }))
+            except Exception as e:
+                logger.warning(f"Failed to store OAuth state in Redis: {e}")
         
         # Generate redirect URI
         redirect_uri = f"{os.getenv('BACKEND_URL', 'http://localhost:5000')}/api/oauth/callback/{platform}"
         
-        # Generate authorization URL
-        auth_url, state = oauth_service.generate_auth_url(
-            platform=platform,
-            user_id=current_user_id,
-            redirect_uri=redirect_uri
-        )
+        # Build authorization URL
+        auth_params = {
+            'client_id': config['client_id'],
+            'redirect_uri': redirect_uri,
+            'scope': config['scope'],
+            'response_type': 'code',
+            'state': state
+        }
         
-        # Store state in session/cache for verification
-        # In production, use Redis or database
-        # For now, we'll include it in the response for client-side storage
+        # Platform-specific parameters
+        if platform == 'facebook':
+            auth_params['display'] = 'popup'
+        elif platform == 'linkedin':
+            auth_params['response_type'] = 'code'
+        elif platform == 'youtube':
+            auth_params['access_type'] = 'offline'
+            auth_params['prompt'] = 'consent'
         
-        logger.info(f"Generated OAuth URL for {platform}, user: {current_user_id}")
+        from urllib.parse import urlencode
+        auth_url = config['auth_url'] + '?' + urlencode(auth_params)
+        
+        logger.info(f"Generated OAuth URL for {platform}, user: {user_id}")
         
         return jsonify({
+            'success': True,
             'auth_url': auth_url,
             'state': state,
             'platform': platform,
@@ -142,10 +244,11 @@ def get_auth_url(platform):
         }), 200
         
     except Exception as e:
-        logger.error(f"Failed to generate auth URL for {platform}: {e}")
+        logger.error(f"Generate auth URL error for {platform}: {str(e)}")
         return jsonify({
-            'error': 'Auth URL generation failed',
-            'message': 'Unable to generate authorization URL. Please try again.'
+            'success': False,
+            'message': 'Failed to generate auth URL',
+            'error': str(e)
         }), 500
 
 @oauth_bp.route('/callback/<platform>', methods=['GET'])
@@ -157,94 +260,103 @@ def oauth_callback(platform):
         state = request.args.get('state')
         error = request.args.get('error')
         
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+        
         # Handle OAuth errors
         if error:
             error_description = request.args.get('error_description', 'Unknown error')
             logger.error(f"OAuth error for {platform}: {error} - {error_description}")
-            
-            # Redirect to frontend with error
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
             return redirect(f"{frontend_url}/platforms?error={error}&description={error_description}")
         
         # Validate required parameters
         if not code or not state:
             logger.error(f"Missing OAuth parameters for {platform}: code={bool(code)}, state={bool(state)}")
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
             return redirect(f"{frontend_url}/platforms?error=missing_parameters")
         
-        # Extract user_id from state
-        try:
-            import base64
-            decoded_state = base64.urlsafe_b64decode(state.encode()).decode()
-            state_user_id, state_platform, timestamp = decoded_state.split(':')
-            
-            if state_platform != platform:
-                raise ValueError("Platform mismatch in state")
-                
-        except Exception as e:
-            logger.error(f"Invalid state parameter for {platform}: {e}")
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
-            return redirect(f"{frontend_url}/platforms?error=invalid_state")
+        # Verify state from Redis if available
+        state_user_id = None
+        if redis_client:
+            try:
+                redis_key = f"oauth_state:{state}"
+                stored_state = redis_client.get(redis_key)
+                if stored_state:
+                    state_data = json.loads(stored_state)
+                    state_user_id = state_data['user_id']
+                    # Delete used state
+                    redis_client.delete(redis_key)
+                else:
+                    logger.error(f"Invalid or expired state for {platform}")
+                    return redirect(f"{frontend_url}/platforms?error=invalid_state")
+            except Exception as e:
+                logger.error(f"Redis state verification failed: {e}")
+                # Fall back to decoding state directly
         
-        # Verify state is not too old (10 minutes)
-        try:
-            from datetime import datetime
-            state_time = datetime.fromtimestamp(int(timestamp))
-            if (datetime.utcnow() - state_time).total_seconds() > 600:
-                raise ValueError("State expired")
-        except:
-            logger.error(f"Expired state for {platform}")
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
-            return redirect(f"{frontend_url}/platforms?error=state_expired")
+        # Fallback: Extract user_id from state if Redis failed
+        if not state_user_id:
+            try:
+                decoded_state = base64.urlsafe_b64decode(state.encode()).decode()
+                state_user_id, state_platform, timestamp = decoded_state.split(':')
+                
+                if state_platform != platform:
+                    raise ValueError("Platform mismatch in state")
+                
+                # Check if state is not too old (10 minutes)
+                state_time = datetime.fromtimestamp(int(timestamp))
+                if (datetime.utcnow() - state_time).total_seconds() > 600:
+                    raise ValueError("State expired")
+                    
+            except Exception as e:
+                logger.error(f"State validation failed for {platform}: {e}")
+                return redirect(f"{frontend_url}/platforms?error=invalid_state")
         
         # Generate redirect URI (same as in auth_url)
         redirect_uri = f"{os.getenv('BACKEND_URL', 'http://localhost:5000')}/api/oauth/callback/{platform}"
         
         # Exchange code for token
-        try:
-            # Use asyncio to run the async function
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            token_data = loop.run_until_complete(
-                oauth_service.exchange_code_for_token(
-                    platform=platform,
-                    code=code,
-                    redirect_uri=redirect_uri,
-                    state=state
-                )
-            )
-            
-            loop.close()
-            
-        except Exception as e:
-            logger.error(f"Token exchange failed for {platform}: {e}")
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
-            return redirect(f"{frontend_url}/platforms?error=token_exchange_failed&message={str(e)}")
+        config = PLATFORM_CONFIGS[platform]
+        token_data = exchange_code_for_token(platform, code, config, redirect_uri)
         
-        # Save social account to database
+        if not token_data:
+            logger.error(f"Token exchange failed for {platform}")
+            return redirect(f"{frontend_url}/platforms?error=token_exchange_failed")
+        
+        # Get user profile from platform
+        profile_data = get_user_profile(platform, token_data['access_token'], config)
+        
+        if not profile_data:
+            logger.error(f"Profile fetch failed for {platform}")
+            return redirect(f"{frontend_url}/platforms?error=profile_fetch_failed")
+        
+        # Save connection to database
         try:
-            account_id = SocialAccountModel.save_social_account(
-                user_id=state_user_id,
-                platform=platform,
-                token_data={
-                    'access_token': oauth_service.encrypt_token(token_data['access_token']),
-                    'refresh_token': oauth_service.encrypt_token(token_data.get('refresh_token', '')),
-                    'expires_in': token_data.get('expires_in'),
-                    'scope': token_data.get('scope', '')
-                },
-                profile_data=token_data['profile']
+            connection_result = PlatformConnectionModel.save_connection(
+                state_user_id, platform, token_data, profile_data
             )
+            
+            if not connection_result:
+                raise Exception("Database save failed")
             
             logger.info(f"Successfully connected {platform} for user {state_user_id}")
             
+            # Cache connection status in Redis
+            if redis_client:
+                try:
+                    cache_key = f"platform_connection:{state_user_id}:{platform}"
+                    cache_data = {
+                        'platform': platform,
+                        'username': profile_data.get('username', ''),
+                        'connected_at': datetime.utcnow().isoformat(),
+                        'is_active': True
+                    }
+                    redis_client.setex(cache_key, 3600, json.dumps(cache_data))  # 1 hour cache
+                except Exception as e:
+                    logger.warning(f"Failed to cache connection in Redis: {e}")
+            
         except Exception as e:
             logger.error(f"Failed to save social account for {platform}: {e}")
-            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
             return redirect(f"{frontend_url}/platforms?error=save_failed")
         
         # Redirect to frontend with success
-        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
         return redirect(f"{frontend_url}/platforms?connected={platform}&success=true")
         
     except Exception as e:
@@ -252,26 +364,139 @@ def oauth_callback(platform):
         frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
         return redirect(f"{frontend_url}/platforms?error=callback_failed")
 
+@oauth_bp.route('/callback/<platform>', methods=['POST'])
+@require_auth
+def handle_oauth_callback_post(platform):
+    """Handle OAuth callback via POST (alternative method)"""
+    try:
+        user_id = request.user_id
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided',
+                'error': 'Authorization code and state required'
+            }), 400
+        
+        code = data.get('code')
+        state = data.get('state')
+        
+        if not code:
+            return jsonify({
+                'success': False,
+                'message': 'Authorization code required',
+                'error': 'No authorization code provided'
+            }), 400
+        
+        # Verify state if provided
+        if state and redis_client:
+            try:
+                redis_key = f"oauth_state:{state}"
+                stored_state = redis_client.get(redis_key)
+                if stored_state:
+                    state_data = json.loads(stored_state)
+                    if state_data['user_id'] != user_id:
+                        return jsonify({
+                            'success': False,
+                            'message': 'State validation failed',
+                            'error': 'Invalid state parameter'
+                        }), 400
+                    redis_client.delete(redis_key)
+            except Exception as e:
+                logger.warning(f"State validation warning: {e}")
+        
+        # Exchange code for access token
+        config = PLATFORM_CONFIGS[platform]
+        redirect_uri = f"{os.getenv('BACKEND_URL', 'http://localhost:5000')}/api/oauth/callback/{platform}"
+        
+        token_data = exchange_code_for_token(platform, code, config, redirect_uri)
+        
+        if not token_data:
+            return jsonify({
+                'success': False,
+                'message': 'Token exchange failed',
+                'error': 'Failed to exchange authorization code for access token'
+            }), 400
+        
+        # Get user profile from platform
+        profile_data = get_user_profile(platform, token_data['access_token'], config)
+        
+        if not profile_data:
+            return jsonify({
+                'success': False,
+                'message': 'Profile fetch failed',
+                'error': 'Failed to fetch user profile from platform'
+            }), 400
+        
+        # Save connection to database
+        connection_result = PlatformConnectionModel.save_connection(
+            user_id, platform, token_data, profile_data
+        )
+        
+        if not connection_result:
+            return jsonify({
+                'success': False,
+                'message': 'Failed to save connection',
+                'error': 'Database error while saving connection'
+            }), 500
+        
+        logger.info(f"OAuth connection successful: {platform} for user {user_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'{platform.title()} connected successfully',
+            'platform': platform,
+            'profile': {
+                'id': profile_data.get('id'),
+                'username': profile_data.get('username', ''),
+                'name': profile_data.get('name', ''),
+                'picture': profile_data.get('picture', '')
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"OAuth callback POST error for {platform}: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': 'OAuth callback failed',
+            'error': str(e)
+        }), 500
+
 @oauth_bp.route('/connected-accounts', methods=['GET'])
-@jwt_required()
+@require_auth
 def get_connected_accounts():
     """Get user's connected social media accounts"""
     try:
-        current_user_id = get_jwt_identity()
+        user_id = request.user_id
         
-        # Get connected accounts
-        accounts = SocialAccountModel.get_connected_accounts(current_user_id)
+        # Try to get from Redis cache first
+        cached_accounts = []
+        if redis_client:
+            try:
+                for platform in PLATFORM_CONFIGS.keys():
+                    cache_key = f"platform_connection:{user_id}:{platform}"
+                    cached_data = redis_client.get(cache_key)
+                    if cached_data:
+                        cached_accounts.append(json.loads(cached_data))
+            except Exception as e:
+                logger.warning(f"Redis cache read failed: {e}")
+        
+        # Get from database (always do this to ensure accuracy)
+        connections = PlatformConnectionModel.get_connections_by_user(user_id)
         
         # Add platform-specific information and status
         enriched_accounts = []
-        for account in accounts:
-            platform_config = oauth_service.platforms.get(account['platform'])
+        for account in connections:
+            platform_config = PLATFORM_CONFIGS.get(account['platform'])
             
             enriched_account = {
                 **account,
                 'platform_name': platform_config['name'] if platform_config else account['platform'].title(),
+                'icon': platform_config.get('icon', account['platform']) if platform_config else account['platform'],
+                'color': platform_config.get('color', '#000000') if platform_config else '#000000',
                 'connection_status': 'active' if account['is_active'] else 'inactive',
-                'requires_reauth': False,  # Check if token is expired/invalid
+                'requires_reauth': False,
                 'last_used': account.get('last_used_at'),
                 'permissions': account.get('permissions', []),
                 'profile_data': {
@@ -283,7 +508,7 @@ def get_connected_accounts():
                 }
             }
             
-            # Check if token needs refresh (if expires_at exists and is past)
+            # Check if token needs refresh
             if account.get('token_expires_at'):
                 if datetime.utcnow() > account['token_expires_at']:
                     enriched_account['requires_reauth'] = True
@@ -292,391 +517,169 @@ def get_connected_accounts():
             enriched_accounts.append(enriched_account)
         
         return jsonify({
+            'success': True,
             'accounts': enriched_accounts,
             'total_count': len(enriched_accounts),
             'active_count': len([acc for acc in enriched_accounts if acc['connection_status'] == 'active'])
         }), 200
         
     except Exception as e:
-        logger.error(f"Failed to get connected accounts: {e}")
+        logger.error(f"Get connected accounts error: {str(e)}")
         return jsonify({
-            'error': 'Failed to get accounts',
-            'message': 'Unable to retrieve connected accounts'
+            'success': False,
+            'message': 'Failed to get connected accounts',
+            'error': str(e)
         }), 500
 
 @oauth_bp.route('/disconnect/<platform>', methods=['DELETE'])
-@jwt_required()
-def disconnect_account(platform):
-    """Disconnect a social media account"""
+@require_auth
+def disconnect_platform(platform):
+    """Disconnect a social media platform"""
     try:
-        current_user_id = get_jwt_identity()
+        user_id = request.user_id
         
         # Get the account to disconnect
-        account = SocialAccountModel.get_account_by_platform(current_user_id, platform)
-        if not account:
+        connection = PlatformConnectionModel.get_connection_by_platform(user_id, platform)
+        if not connection:
             return jsonify({
-                'error': 'Account not found',
-                'message': f'No connected {platform} account found'
+                'success': False,
+                'message': 'Platform not connected',
+                'error': f'No connected {platform} account found'
             }), 404
         
-        # Decrypt token for revocation
-        try:
-            access_token = oauth_service.decrypt_token(account['access_token'])
-            
-            # Attempt to revoke token on the platform
-            revoke_success = oauth_service.revoke_token(platform, access_token)
-            if not revoke_success:
-                logger.warning(f"Failed to revoke token on {platform} - proceeding with local disconnect")
-                
-        except Exception as e:
-            logger.warning(f"Token revocation failed for {platform}: {e} - proceeding with local disconnect")
+        # Update connection status in database
+        connections_collection = get_collection('platform_connections')
+        if not connections_collection:
+            return jsonify({
+                'success': False,
+                'message': 'Database unavailable',
+                'error': 'Please try again later'
+            }), 503
         
-        # Remove account from database
-        db = get_db()
-        from bson import ObjectId
-        
-        result = db.social_accounts.update_one(
-            {
-                'user_id': ObjectId(current_user_id),
-                'platform': platform
-            },
-            {
-                '$set': {
-                    'is_active': False,
-                    'disconnected_at': datetime.utcnow(),
-                    'updated_at': datetime.utcnow()
-                }
-            }
+        result = connections_collection.update_one(
+            {'user_id': ObjectId(user_id), 'platform': platform},
+            {'$set': {
+                'is_active': False,
+                'disconnected_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow()
+            }}
         )
         
-        if result.modified_count == 0:
+        if result.matched_count == 0:
             return jsonify({
-                'error': 'Disconnect failed',
-                'message': 'Failed to disconnect account'
-            }), 500
+                'success': False,
+                'message': 'Platform not connected',
+                'error': f'{platform} is not connected to your account'
+            }), 404
         
-        logger.info(f"Disconnected {platform} account for user {current_user_id}")
+        # Remove from Redis cache
+        if redis_client:
+            try:
+                cache_key = f"platform_connection:{user_id}:{platform}"
+                redis_client.delete(cache_key)
+            except Exception as e:
+                logger.warning(f"Failed to remove from Redis cache: {e}")
+        
+        logger.info(f"Platform disconnected: {platform} for user {user_id}")
         
         return jsonify({
-            'message': f'{platform.title()} account disconnected successfully',
-            'platform': platform
+            'success': True,
+            'message': f'{platform.title()} disconnected successfully'
         }), 200
         
     except Exception as e:
-        logger.error(f"Failed to disconnect {platform} account: {e}")
+        logger.error(f"Disconnect platform error for {platform}: {str(e)}")
         return jsonify({
-            'error': 'Disconnect failed',
-            'message': f'Unable to disconnect {platform} account. Please try again.'
+            'success': False,
+            'message': 'Failed to disconnect platform',
+            'error': str(e)
         }), 500
 
-@oauth_bp.route('/test-connection/<platform>', methods=['POST'])
-@jwt_required()
-def test_connection(platform):
-    """Test if a connected account's token is still valid"""
+def exchange_code_for_token(platform, code, config, redirect_uri):
+    """Exchange authorization code for access token"""
     try:
-        current_user_id = get_jwt_identity()
+        import requests
         
-        # Get the account
-        account = SocialAccountModel.get_account_by_platform(current_user_id, platform)
-        if not account:
-            return jsonify({
-                'error': 'Account not found',
-                'message': f'No connected {platform} account found'
-            }), 404
+        token_data = {
+            'client_id': config['client_id'],
+            'client_secret': config['client_secret'],
+            'code': code,
+            'redirect_uri': redirect_uri,
+            'grant_type': 'authorization_code'
+        }
         
-        # Decrypt and validate token
-        try:
-            access_token = oauth_service.decrypt_token(account['access_token'])
-            is_valid = oauth_service.validate_token(platform, access_token)
-            
-            # Update last_used_at if valid
-            if is_valid:
-                db = get_db()
-                from bson import ObjectId
-                db.social_accounts.update_one(
-                    {'_id': ObjectId(account['_id'])},
-                    {'$set': {'last_used_at': datetime.utcnow()}}
-                )
-            
-            return jsonify({
-                'platform': platform,
-                'is_valid': is_valid,
-                'status': 'active' if is_valid else 'invalid',
-                'tested_at': datetime.utcnow().isoformat()
-            }), 200
-            
-        except Exception as e:
-            logger.error(f"Token validation failed for {platform}: {e}")
-            return jsonify({
-                'platform': platform,
-                'is_valid': False,
-                'status': 'error',
-                'error_message': str(e)
-            }), 200
+        # Platform-specific token exchange
+        if platform == 'twitter':
+            # Twitter requires PKCE
+            token_data['code_verifier'] = 'challenge'
         
+        response = requests.post(config['token_url'], data=token_data, timeout=10)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.error(f"Token exchange failed for {platform}: {response.text}")
+            return None
+            
     except Exception as e:
-        logger.error(f"Connection test failed for {platform}: {e}")
-        return jsonify({
-            'error': 'Test failed',
-            'message': f'Unable to test {platform} connection'
-        }), 500
+        logger.error(f"Token exchange error for {platform}: {str(e)}")
+        return None
 
-@oauth_bp.route('/refresh-token/<platform>', methods=['POST'])
-@jwt_required()
-def refresh_token(platform):
-    """Refresh expired access token for a platform"""
+def get_user_profile(platform, access_token, config):
+    """Get user profile from platform API"""
     try:
-        current_user_id = get_jwt_identity()
+        import requests
         
-        # Get the account
-        account = SocialAccountModel.get_account_by_platform(current_user_id, platform)
-        if not account:
-            return jsonify({
-                'error': 'Account not found',
-                'message': f'No connected {platform} account found'
-            }), 404
+        headers = {'Authorization': f'Bearer {access_token}'}
         
-        # Check if refresh token exists
-        if not account.get('refresh_token'):
-            return jsonify({
-                'error': 'Refresh not available',
-                'message': f'{platform} account needs to be reconnected',
-                'requires_reauth': True
-            }), 400
+        # Platform-specific profile requests
+        params = {}
+        if platform == 'facebook':
+            params = {'fields': 'id,name,email,picture'}
+        elif platform == 'instagram':
+            params = {'fields': 'id,username,account_type,media_count'}
+        elif platform == 'twitter':
+            params = {'user.fields': 'id,name,username,profile_image_url'}
         
-        try:
-            # Decrypt refresh token
-            refresh_token = oauth_service.decrypt_token(account['refresh_token'])
-            
-            # Refresh the token
-            new_token_data = oauth_service.refresh_access_token(platform, refresh_token)
-            
-            # Update account with new token
-            db = get_db()
-            from bson import ObjectId
-            from datetime import datetime, timedelta
-            
-            update_data = {
-                'access_token': oauth_service.encrypt_token(new_token_data['access_token']),
-                'updated_at': datetime.utcnow(),
-                'last_used_at': datetime.utcnow()
-            }
-            
-            # Update refresh token if provided
-            if new_token_data.get('refresh_token'):
-                update_data['refresh_token'] = oauth_service.encrypt_token(new_token_data['refresh_token'])
-            
-            # Update expiry if provided
-            if new_token_data.get('expires_in'):
-                update_data['token_expires_at'] = datetime.utcnow() + timedelta(seconds=int(new_token_data['expires_in']))
-            
-            result = db.social_accounts.update_one(
-                {'_id': ObjectId(account['_id'])},
-                {'$set': update_data}
-            )
-            
-            if result.modified_count == 0:
-                raise Exception("Failed to update token in database")
-            
-            logger.info(f"Token refreshed successfully for {platform}, user {current_user_id}")
-            
-            return jsonify({
-                'message': f'{platform.title()} token refreshed successfully',
-                'platform': platform,
-                'refreshed_at': datetime.utcnow().isoformat()
-            }), 200
-            
-        except Exception as e:
-            logger.error(f"Token refresh failed for {platform}: {e}")
-            
-            # Mark account as requiring reauth
-            db = get_db()
-            from bson import ObjectId
-            db.social_accounts.update_one(
-                {'_id': ObjectId(account['_id'])},
-                {'$set': {
-                    'requires_reauth': True,
-                    'updated_at': datetime.utcnow()
-                }}
-            )
-            
-            return jsonify({
-                'error': 'Refresh failed',
-                'message': f'{platform.title()} account needs to be reconnected',
-                'requires_reauth': True
-            }), 400
+        response = requests.get(config['profile_url'], headers=headers, params=params, timeout=10)
         
+        if response.status_code == 200:
+            profile_data = response.json()
+            
+            # Normalize profile data across platforms
+            if platform == 'twitter' and 'data' in profile_data:
+                profile_data = profile_data['data']
+            
+            return profile_data
+        else:
+            logger.error(f"Profile fetch failed for {platform}: {response.text}")
+            return None
+            
     except Exception as e:
-        logger.error(f"Token refresh process failed for {platform}: {e}")
-        return jsonify({
-            'error': 'Refresh failed',
-            'message': f'Unable to refresh {platform} token'
-        }), 500
+        logger.error(f"Profile fetch error for {platform}: {str(e)}")
+        return None
 
-@oauth_bp.route('/account-info/<platform>', methods=['GET'])
-@jwt_required()
-def get_account_info(platform):
-    """Get detailed information about a connected account"""
-    try:
-        current_user_id = get_jwt_identity()
-        
-        # Get the account
-        account = SocialAccountModel.get_account_by_platform(current_user_id, platform)
-        if not account:
-            return jsonify({
-                'error': 'Account not found',
-                'message': f'No connected {platform} account found'
-            }), 404
-        
-        # Decrypt token to get fresh profile data
-        try:
-            access_token = oauth_service.decrypt_token(account['access_token'])
-            
-            # Get fresh profile data
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            fresh_profile = loop.run_until_complete(
-                oauth_service.get_user_profile(platform, access_token)
-            )
-            
-            loop.close()
-            
-            # Update profile data in database
-            db = get_db()
-            from bson import ObjectId
-            db.social_accounts.update_one(
-                {'_id': ObjectId(account['_id'])},
-                {'$set': {
-                    'profile_data': fresh_profile,
-                    'last_used_at': datetime.utcnow()
-                }}
-            )
-            
-            # Return detailed account info
-            account_info = {
-                'platform': platform,
-                'platform_name': oauth_service.platforms[platform]['name'],
-                'connected_at': account['connected_at'].isoformat(),
-                'last_used_at': account.get('last_used_at', account['connected_at']).isoformat(),
-                'is_active': account['is_active'],
-                'username': fresh_profile.get('username', ''),
-                'display_name': fresh_profile.get('name', ''),
-                'profile_picture': fresh_profile.get('picture', ''),
-                'profile_url': f"https://{platform}.com/{fresh_profile.get('username', '')}",
-                'permissions': account.get('permissions', []),
-                'account_stats': {
-                    'followers': fresh_profile.get('followers'),
-                    'following': fresh_profile.get('following'),
-                    'posts': fresh_profile.get('posts', fresh_profile.get('media_count', fresh_profile.get('tweets', fresh_profile.get('videos')))),
-                    'account_type': fresh_profile.get('account_type', 'personal')
-                },
-                'token_status': {
-                    'is_valid': True,
-                    'expires_at': account.get('token_expires_at').isoformat() if account.get('token_expires_at') else None,
-                    'requires_refresh': False
-                }
-            }
-            
-            return jsonify(account_info), 200
-            
-        except Exception as e:
-            logger.warning(f"Failed to get fresh profile data for {platform}: {e}")
-            
-            # Return cached account info
-            account_info = {
-                'platform': platform,
-                'platform_name': oauth_service.platforms[platform]['name'],
-                'connected_at': account['connected_at'].isoformat(),
-                'last_used_at': account.get('last_used_at', account['connected_at']).isoformat(),
-                'is_active': account['is_active'],
-                'username': account.get('username', ''),
-                'display_name': account.get('display_name', ''),
-                'profile_picture': account.get('profile_picture', ''),
-                'permissions': account.get('permissions', []),
-                'token_status': {
-                    'is_valid': False,
-                    'error': str(e),
-                    'requires_refresh': True
-                }
-            }
-            
-            return jsonify(account_info), 200
-        
-    except Exception as e:
-        logger.error(f"Failed to get account info for {platform}: {e}")
-        return jsonify({
-            'error': 'Account info failed',
-            'message': f'Unable to get {platform} account information'
-        }), 500
-
-@oauth_bp.route('/platform-requirements/<platform>', methods=['GET'])
-def get_platform_requirements(platform):
-    """Get platform-specific requirements and posting guidelines"""
-    try:
-        if platform not in oauth_service.platforms:
-            return jsonify({
-                'error': 'Unsupported platform',
-                'message': f'Platform {platform} is not supported'
-            }), 400
-        
-        requirements = api_client.get_posting_requirements(platform)
-        platform_config = oauth_service.platforms[platform]
-        
-        return jsonify({
-            'platform': platform,
-            'platform_name': platform_config['name'],
-            'requirements': requirements,
-            'scopes_required': platform_config['scopes'],
-            'setup_instructions': {
-                'facebook': 'You need a Facebook Page to post content. Personal profiles cannot be used for automated posting.',
-                'instagram': 'You need an Instagram Business or Creator account connected to a Facebook Page.',
-                'twitter': 'Personal Twitter accounts can be used for posting.',
-                'linkedin': 'You can post to your LinkedIn profile or company pages you manage.',
-                'youtube': 'You can upload videos to your YouTube channel.',
-                'pinterest': 'You need a Pinterest Business account to use the API.'
-            }.get(platform, f'Connect your {platform} account to start posting.')
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Failed to get platform requirements for {platform}: {e}")
-        return jsonify({
-            'error': 'Requirements fetch failed',
-            'message': f'Unable to get {platform} requirements'
-        }), 500
-
-# Error handlers for OAuth blueprint
+# Error handlers specific to oauth blueprint
 @oauth_bp.errorhandler(400)
 def bad_request(error):
     return jsonify({
-        'error': 'Bad request',
-        'message': 'Invalid request parameters'
+        'success': False,
+        'message': 'Bad request',
+        'error': 'Invalid request parameters'
     }), 400
 
 @oauth_bp.errorhandler(403)
 def forbidden(error):
     return jsonify({
-        'error': 'Forbidden',
-        'message': 'Plan upgrade required for this feature'
+        'success': False,
+        'message': 'Forbidden',
+        'error': 'Plan upgrade required for this feature'
     }), 403
 
 @oauth_bp.errorhandler(404)
 def not_found(error):
     return jsonify({
-        'error': 'Not found',
-        'message': 'Platform or account not found'
+        'success': False,
+        'message': 'Not found',
+        'error': 'Platform or account not found'
     }), 404
-
-if __name__ == '__main__':
-    # Test OAuth service initialization
-    try:
-        test_service = OAuthService()
-        print("✅ OAuth service initialized successfully")
-        print(f"Supported platforms: {list(test_service.platforms.keys())}")
-        
-        # Test auth URL generation
-        test_url, test_state = test_service.generate_auth_url('twitter', 'test_user_123', 'http://localhost:5000/callback')
-        print(f"✅ Test auth URL generated: {test_url[:100]}...")
-        
-    except Exception as e:
-        print(f"❌ OAuth service test failed: {e}")

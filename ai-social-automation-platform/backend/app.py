@@ -13,10 +13,14 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 
 # Add current directory to Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+print(f"🔍 Current directory: {current_dir}")
+print(f"🔍 Python path: {sys.path[:3]}...")  # Show first 3 paths
 
 # Load environment variables
 load_dotenv()
+print("🔍 Environment variables loaded")
 
 # Configure logging
 logging.basicConfig(
@@ -27,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 def create_app():
     """Application factory pattern"""
+    print("🔍 Creating Flask app...")
     app = Flask(__name__)
     
     # Configuration
@@ -35,6 +40,7 @@ def create_app():
     app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'uploads/temp')
     app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
     app.config['MONGODB_URI'] = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/velocitypost')
+    print("🔍 Flask app configuration set")
     
     # CORS Configuration
     allowed_origins = [
@@ -48,17 +54,22 @@ def create_app():
         allowed_origins.append(os.getenv('FRONTEND_URL'))
     
     CORS(app, origins=allowed_origins, supports_credentials=True)
+    print("🔍 CORS configured")
     
     # Initialize database
+    print("🔍 Attempting to initialize database...")
     try:
         from config.database import db_instance
         db_instance.init_app(app)
-        logger.info("✅ Database initialized successfully")
+        print("✅ Database initialized successfully")
+    except ImportError as e:
+        print(f"⚠️ Database import failed: {str(e)}")
     except Exception as e:
-        logger.warning(f"Database initialization warning: {str(e)}")
+        print(f"⚠️ Database initialization warning: {str(e)}")
         # Continue without database for development
     
     # Register blueprints
+    print("🔍 Starting blueprint registration...")
     registered_blueprints = register_blueprints(app)
     
     # Register error handlers
@@ -67,8 +78,9 @@ def create_app():
     # Create upload directories
     upload_dir = app.config['UPLOAD_FOLDER']
     os.makedirs(upload_dir, exist_ok=True)
+    print(f"🔍 Upload directory created: {upload_dir}")
     
-    logger.info(f"✅ Registered blueprints: {registered_blueprints}")
+    print(f"✅ App creation complete. Registered blueprints: {registered_blueprints}")
     
     return app
 
@@ -76,53 +88,117 @@ def register_blueprints(app):
     """Register all application blueprints"""
     registered_blueprints = []
     
+    # Check if routes directory exists
+    routes_dir = os.path.join(os.path.dirname(__file__), 'routes')
+    print(f"🔍 Checking routes directory: {routes_dir}")
+    print(f"🔍 Routes directory exists: {os.path.exists(routes_dir)}")
+    
+    if os.path.exists(routes_dir):
+        files_in_routes = os.listdir(routes_dir)
+        print(f"🔍 Files in routes directory: {files_in_routes}")
+    
     # Try to register auth blueprint
+    print("🔍 Attempting to register auth blueprint...")
     try:
-        from routes.auth import auth_bp
-        app.register_blueprint(auth_bp, url_prefix='/api/auth')
-        registered_blueprints.append('auth_bp')
-        logger.info("✅ Registered auth blueprint")
-    except ImportError as e:
-        logger.warning(f"Could not import auth blueprint: {e}")
+        # Try different import patterns
+        import_attempts = [
+            'app.routes.auth',
+            'routes.auth', 
+            '.routes.auth'
+        ]
+        
+        auth_bp = None
+        for import_path in import_attempts:
+            try:
+                print(f"🔍 Trying import: {import_path}")
+                if import_path.startswith('.'):
+                    from .routes.auth import auth_bp
+                else:
+                    module = __import__(import_path, fromlist=['auth_bp'])
+                    auth_bp = getattr(module, 'auth_bp')
+                print(f"✅ Successfully imported from: {import_path}")
+                break
+            except ImportError as e:
+                print(f"❌ Import failed for {import_path}: {e}")
+                continue
+            except AttributeError as e:
+                print(f"❌ Blueprint not found in {import_path}: {e}")
+                continue
+        
+        if auth_bp:
+            app.register_blueprint(auth_bp, url_prefix='/api/auth')
+            registered_blueprints.append('auth_bp')
+            print("✅ Auth blueprint registered successfully")
+        else:
+            print("❌ Could not import auth blueprint from any path")
+            
     except Exception as e:
-        logger.error(f"Error registering auth blueprint: {e}")
+        print(f"❌ Unexpected error with auth blueprint: {e}")
     
     # Try to register content generator blueprint
+    print("🔍 Attempting to register content generator blueprint...")
     try:
-        from routes.content_generator import content_generator_bp
-        app.register_blueprint(content_generator_bp, url_prefix='/api/content-generator')
-        registered_blueprints.append('content_generator_bp')
-        logger.info("✅ Registered content generator blueprint")
-    except ImportError as e:
-        logger.warning(f"Could not import content generator blueprint: {e}")
+        import_attempts = [
+            'app.routes.content_generator',
+            'routes.content_generator', 
+            '.routes.content_generator'
+        ]
+        
+        content_generator_bp = None
+        for import_path in import_attempts:
+            try:
+                print(f"🔍 Trying import: {import_path}")
+                if import_path.startswith('.'):
+                    from .routes.content_generator import content_generator_bp
+                else:
+                    module = __import__(import_path, fromlist=['content_generator_bp'])
+                    content_generator_bp = getattr(module, 'content_generator_bp')
+                print(f"✅ Successfully imported from: {import_path}")
+                break
+            except ImportError as e:
+                print(f"❌ Import failed for {import_path}: {e}")
+                continue
+            except AttributeError as e:
+                print(f"❌ Blueprint not found in {import_path}: {e}")
+                continue
+        
+        if content_generator_bp:
+            app.register_blueprint(content_generator_bp, url_prefix='/api/content-generator')
+            registered_blueprints.append('content_generator_bp')
+            print("✅ Content generator blueprint registered successfully")
+        else:
+            print("❌ Could not import content generator blueprint from any path")
+            
     except Exception as e:
-        logger.error(f"Error registering content generator blueprint: {e}")
+        print(f"❌ Unexpected error with content generator blueprint: {e}")
     
     # Future blueprints (create these later)
     future_blueprints = [
-        ('routes.oauth', 'oauth_bp', '/api/oauth'),
-        ('routes.platforms', 'platforms_bp', '/api/platforms'),
-        ('routes.posts', 'posts_bp', '/api/posts'),
-        ('routes.analytics', 'analytics_bp', '/api/analytics'),
-        ('routes.billing', 'billing_bp', '/api/billing'),
-        ('routes.automation', 'automation_bp', '/api/automation'),
+        ('app.routes.oauth', 'oauth_bp', '/api/oauth'),
+        ('app.routes.platforms', 'platforms_bp', '/api/platforms'),
+        ('app.routes.posts', 'posts_bp', '/api/posts'),
+        ('app.routes.analytics', 'analytics_bp', '/api/analytics'),
+        ('app.routes.billing', 'billing_bp', '/api/billing'),
+        ('app.routes.automation', 'automation_bp', '/api/automation'),
     ]
     
+    print("🔍 Checking for future blueprints...")
     for module_path, blueprint_name, url_prefix in future_blueprints:
         try:
             module = __import__(module_path, fromlist=[blueprint_name])
             blueprint = getattr(module, blueprint_name)
             app.register_blueprint(blueprint, url_prefix=url_prefix)
             registered_blueprints.append(blueprint_name)
-            logger.info(f"✅ Registered {blueprint_name}")
+            print(f"✅ Registered {blueprint_name}")
         except ImportError:
-            logger.info(f"{blueprint_name} not available yet (will be created later)")
+            print(f"ℹ️ {blueprint_name} not available yet (will be created later)")
         except Exception as e:
-            logger.warning(f"Error with {blueprint_name}: {e}")
+            print(f"⚠️ Error with {blueprint_name}: {e}")
     
     # Health check endpoint
     @app.route('/api/health')
     def health_check():
+        print("🔍 Health check endpoint called")
         try:
             # Test database connection
             db_status = 'unknown'
@@ -130,11 +206,12 @@ def register_blueprints(app):
                 from config.database import db_instance
                 db_health = db_instance.health_check()
                 db_status = db_health.get('status', 'unknown')
+                print(f"🔍 Database status: {db_status}")
             except Exception as e:
                 db_status = 'not-configured'
-                logger.debug(f"Database health check failed: {e}")
+                print(f"🔍 Database health check failed: {e}")
             
-            return jsonify({
+            health_data = {
                 'status': 'healthy',
                 'timestamp': datetime.utcnow().isoformat(),
                 'version': '1.0.0',
@@ -148,9 +225,11 @@ def register_blueprints(app):
                     'User Authentication',
                     'Multi-Platform Support'
                 ]
-            })
+            }
+            print(f"🔍 Health check response: {health_data}")
+            return jsonify(health_data)
         except Exception as e:
-            logger.error(f"Health check failed: {str(e)}")
+            print(f"❌ Health check failed: {str(e)}")
             return jsonify({
                 'status': 'partial',
                 'timestamp': datetime.utcnow().isoformat(),
@@ -161,6 +240,7 @@ def register_blueprints(app):
     # Root endpoint
     @app.route('/')
     def root():
+        print("🔍 Root endpoint called")
         return jsonify({
             'message': 'VelocityPost.ai API Server',
             'version': '1.0.0',
@@ -174,6 +254,7 @@ def register_blueprints(app):
     @app.route('/api/docs')
     def api_docs():
         """API documentation"""
+        print("🔍 API docs endpoint called")
         return jsonify({
             'api_version': '1.0.0',
             'base_url': request.host_url + 'api',
@@ -201,12 +282,9 @@ def register_blueprints(app):
                     'GET /api/content-generator/platforms': 'Get supported platforms',
                     'POST /api/content-generator/generate': 'Generate AI content (Protected)',
                     'POST /api/content-generator/generate-variants': 'Generate content variants (Pro+)',
-                    'POST /api/content-generator/upload-file': 'Upload file for processing (Protected)',
-                    'GET /api/content-generator/files': 'Get user files (Protected)',
-                    'DELETE /api/content-generator/files/<id>': 'Delete file (Protected)',
-                    'GET /api/content-generator/generations': 'Get generation history (Protected)',
                     'GET /api/content-generator/usage-stats': 'Get usage statistics (Protected)',
-                    'GET /api/content-generator/templates': 'Get content templates'
+                    'GET /api/content-generator/templates': 'Get content templates',
+                    'GET /api/content-generator/history': 'Get generation history (Protected)'
                 }
             },
             'request_format': {
@@ -231,10 +309,12 @@ def register_blueprints(app):
             }
         })
     
+    print(f"🔍 Blueprint registration complete. Total registered: {len(registered_blueprints)}")
     return registered_blueprints
 
 def register_error_handlers(app):
     """Register error handlers"""
+    print("🔍 Registering error handlers...")
     
     @app.errorhandler(400)
     def bad_request(error):
@@ -331,22 +411,26 @@ def register_error_handlers(app):
             'status_code': 500,
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+    
+    print("✅ Error handlers registered")
 
 # Create the Flask app
+print("🔍 Starting app creation...")
 app = create_app()
+print("✅ App created successfully")
 
 # Add request/response logging middleware
 @app.before_request
 def log_request_info():
     """Log request information"""
     if app.debug:
-        logger.debug(f"Request: {request.method} {request.url}")
+        print(f"🔍 Request: {request.method} {request.url}")
 
 @app.after_request
 def log_response_info(response):
     """Log response information and add headers"""
     if app.debug:
-        logger.debug(f"Response: {response.status_code}")
+        print(f"🔍 Response: {response.status_code}")
     
     # Add security headers
     response.headers['X-Content-Type-Options'] = 'nosniff'

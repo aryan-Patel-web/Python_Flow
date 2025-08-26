@@ -18,7 +18,7 @@ class DatabaseManager:
     def __init__(self):
         self.db = None
         self.client = None
-        self.database_name = 'velocityposts'
+        self.database_name = 'velocitypost'  # Fixed database name to match
     
     def connect(self, app=None):
         """Connect to MongoDB with fallback support"""
@@ -44,8 +44,13 @@ class DatabaseManager:
         
         try:
             # Fallback to local MongoDB
-            local_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
-            logger.info("Attempting to connect to local MongoDB...")
+            local_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/velocitypost')
+            logger.info(f"Attempting to connect to local MongoDB: {local_uri}")
+            
+            # Parse database name from URI
+            if '/velocitypost' in local_uri:
+                self.database_name = 'velocitypost'
+            
             self.client = MongoClient(
                 local_uri,
                 serverSelectionTimeoutMS=5000,
@@ -54,7 +59,7 @@ class DatabaseManager:
             self.db = self.client[self.database_name]
             # Test connection
             self.client.server_info()
-            logger.info("Connected to local MongoDB successfully")
+            logger.info(f"Connected to local MongoDB successfully. Database: {self.database_name}")
             return True
         except Exception as e:
             logger.error(f"Local MongoDB connection failed: {e}")
@@ -98,6 +103,22 @@ def get_database():
     """Alias for get_db() for compatibility with platforms.py"""
     return get_db()
 
+# MISSING FUNCTION - This is what auth.py needs!
+def get_collection(collection_name):
+    """Get a specific collection from database"""
+    try:
+        db = get_db()
+        if db is None:
+            logger.error("Database not initialized")
+            return None
+        
+        collection = db[collection_name]
+        logger.debug(f"Retrieved collection: {collection_name}")
+        return collection
+    except Exception as e:
+        logger.error(f"Failed to get collection {collection_name}: {e}")
+        return None
+
 def create_indexes():
     """Create database indexes for optimal performance"""
     try:
@@ -121,6 +142,15 @@ def create_indexes():
         db.platform_connections.create_index("is_active")
         db.platform_connections.create_index("last_used_at")
         db.platform_connections.create_index("token_expires_at")
+        
+        # Social accounts collection indexes (for auth.py compatibility)
+        try:
+            db.social_accounts.create_index([("user_id", 1), ("platform", 1)], unique=True)
+        except Exception:
+            pass
+            
+        db.social_accounts.create_index("is_active")
+        db.social_accounts.create_index("last_used_at")
         
         # Posts collection indexes
         db.posts.create_index([("user_id", 1), ("created_at", -1)])
@@ -407,8 +437,8 @@ def test_database_connection():
     try:
         db = get_db()
         # Test with a simple operation
-        db.test_collection.find_one()
-        logger.info("Database connection test successful")
+        result = db.list_collection_names()
+        logger.info(f"Database connection test successful. Collections: {len(result)}")
         return True
     except Exception as e:
         logger.error(f"Database connection test failed: {e}")
