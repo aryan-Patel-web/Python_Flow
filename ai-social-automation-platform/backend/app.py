@@ -1,390 +1,184 @@
 #!/usr/bin/env python3
 """
-VelocityPost.ai - Main Flask Application
-AI-Powered Social Media Automation Platform
+VelocityPost.ai - AI Social Media Automation Platform
+Main Flask Application with complete auto-posting functionality
 """
 
 import os
-import sys
 import logging
-from datetime import datetime, timedelta
-from flask import Flask, jsonify, request
+import sys
+from datetime import datetime
+from flask import Flask, jsonify
 from flask_cors import CORS
-from dotenv import load_dotenv
+from werkzeug.exceptions import HTTPException
 
-# Add current directory to Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, current_dir)
-print(f"🔍 Current directory: {current_dir}")
-print(f"🔍 Python path: {sys.path[:3]}...")  # Show first 3 paths
-
-# Load environment variables
-load_dotenv()
-print("🔍 Environment variables loaded")
+# Import database initialization
+try:
+    from app.utils.database import init_db, test_database_connection
+    print("Database utilities imported successfully")
+except ImportError as e:
+    try:
+        from config.database import init_db, test_database_connection
+        print("Database utilities imported from config")
+    except ImportError as e2:
+        print(f"Database import failed: {e}")
+        print(f"Config database import failed: {e2}")
+        # Create fallback functions
+        def init_db(app=None):
+            print("Database initialization not available")
+            return None
+        
+        def test_database_connection():
+            print("Database connection test not available")
+            return False
 
 # Configure logging
+os.makedirs('logs', exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('logs/app.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
+def safe_import_blueprint(module_path, blueprint_name, url_prefix, description):
+    """Safely import and register a blueprint"""
+    try:
+        logger.debug(f"Trying import: {module_path}")
+        module = __import__(module_path, fromlist=[blueprint_name])
+        blueprint = getattr(module, blueprint_name)
+        return blueprint, True
+    except ImportError as e:
+        logger.warning(f"Import failed for {module_path}: {e}")
+        return None, False
+    except AttributeError as e:
+        logger.warning(f"Blueprint not found in {module_path}: {e}")
+        return None, False
+    except Exception as e:
+        logger.error(f"Unexpected error importing {module_path}: {e}")
+        return None, False
+
 def create_app():
-    """Application factory pattern"""
-    print("🔍 Creating Flask app...")
+    """Create and configure Flask application"""
+    
+    logger.info("Starting app creation...")
+    
+    # Create Flask app
     app = Flask(__name__)
     
-    # Configuration
-    app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-    app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
-    app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'uploads/temp')
-    app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
-    app.config['MONGODB_URI'] = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/velocitypost')
-    print("🔍 Flask app configuration set")
+    # App configuration
+    app.config.update(
+        SECRET_KEY=os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production'),
+        JWT_SECRET_KEY=os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production'),
+        JWT_ACCESS_TOKEN_EXPIRES=3600,  # 1 hour
+        MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB max file size
+        UPLOAD_FOLDER=os.path.join(os.getcwd(), 'uploads', 'temp')
+    )
     
-    # CORS Configuration
-    allowed_origins = [
-        'http://localhost:3000',
-        'http://127.0.0.1:3000', 
-        'http://localhost:5173',  # Vite dev server
-        'http://127.0.0.1:5173'
-    ]
-    
-    if os.getenv('FRONTEND_URL'):
-        allowed_origins.append(os.getenv('FRONTEND_URL'))
-    
-    CORS(app, origins=allowed_origins, supports_credentials=True)
-    print("🔍 CORS configured")
+    # CORS configuration
+    CORS(app, 
+         origins=["http://localhost:3000", "http://localhost:5173", "https://velocitypost.ai"],
+         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    )
     
     # Initialize database
-    print("🔍 Attempting to initialize database...")
     try:
-        from config.database import db_instance
-        db_instance.init_app(app)
-        print("✅ Database initialized successfully")
-    except ImportError as e:
-        print(f"⚠️ Database import failed: {str(e)}")
+        init_db(app)
+        logger.info("Database initialized successfully")
     except Exception as e:
-        print(f"⚠️ Database initialization warning: {str(e)}")
-        # Continue without database for development
+        logger.error(f"Database initialization failed: {e}")
     
     # Register blueprints
-    print("🔍 Starting blueprint registration...")
-    registered_blueprints = register_blueprints(app)
-    
-    # Register error handlers
-    register_error_handlers(app)
-    
-    # Create upload directories
-    upload_dir = app.config['UPLOAD_FOLDER']
-    os.makedirs(upload_dir, exist_ok=True)
-    print(f"🔍 Upload directory created: {upload_dir}")
-    
-    print(f"✅ App creation complete. Registered blueprints: {registered_blueprints}")
-    
-    return app
-
-def register_blueprints(app):
-    """Register all application blueprints"""
     registered_blueprints = []
     
-    # Check if routes directory exists
-    routes_dir = os.path.join(os.path.dirname(__file__), 'routes')
-    print(f"🔍 Checking routes directory: {routes_dir}")
-    print(f"🔍 Routes directory exists: {os.path.exists(routes_dir)}")
-    
-    if os.path.exists(routes_dir):
-        files_in_routes = os.listdir(routes_dir)
-        print(f"🔍 Files in routes directory: {files_in_routes}")
-    
-    # Try to register auth blueprint
-    print("🔍 Attempting to register auth blueprint...")
-    try:
-        # Try different import patterns
-        import_attempts = [
-            'app.routes.auth',
-            'routes.auth', 
-            '.routes.auth'
-        ]
-        
-        auth_bp = None
-        for import_path in import_attempts:
-            try:
-                print(f"🔍 Trying import: {import_path}")
-                if import_path.startswith('.'):
-                    from .routes.auth import auth_bp
-                else:
-                    module = __import__(import_path, fromlist=['auth_bp'])
-                    auth_bp = getattr(module, 'auth_bp')
-                print(f"✅ Successfully imported from: {import_path}")
-                break
-            except ImportError as e:
-                print(f"❌ Import failed for {import_path}: {e}")
-                continue
-            except AttributeError as e:
-                print(f"❌ Blueprint not found in {import_path}: {e}")
-                continue
-        
-        if auth_bp:
-            app.register_blueprint(auth_bp, url_prefix='/api/auth')
-            registered_blueprints.append('auth_bp')
-            print("✅ Auth blueprint registered successfully")
-        else:
-            print("❌ Could not import auth blueprint from any path")
-            
-    except Exception as e:
-        print(f"❌ Unexpected error with auth blueprint: {e}")
-    
-    # Try to register content generator blueprint
-    print("🔍 Attempting to register content generator blueprint...")
-    try:
-        import_attempts = [
-            'app.routes.content_generator',
-            'routes.content_generator', 
-            '.routes.content_generator'
-        ]
-        
-        content_generator_bp = None
-        for import_path in import_attempts:
-            try:
-                print(f"🔍 Trying import: {import_path}")
-                if import_path.startswith('.'):
-                    from .routes.content_generator import content_generator_bp
-                else:
-                    module = __import__(import_path, fromlist=['content_generator_bp'])
-                    content_generator_bp = getattr(module, 'content_generator_bp')
-                print(f"✅ Successfully imported from: {import_path}")
-                break
-            except ImportError as e:
-                print(f"❌ Import failed for {import_path}: {e}")
-                continue
-            except AttributeError as e:
-                print(f"❌ Blueprint not found in {import_path}: {e}")
-                continue
-        
-        if content_generator_bp:
-            app.register_blueprint(content_generator_bp, url_prefix='/api/content-generator')
-            registered_blueprints.append('content_generator_bp')
-            print("✅ Content generator blueprint registered successfully")
-        else:
-            print("❌ Could not import content generator blueprint from any path")
-            
-    except Exception as e:
-        print(f"❌ Unexpected error with content generator blueprint: {e}")
-    
-    # Future blueprints (create these later)
-    future_blueprints = [
-        ('app.routes.oauth', 'oauth_bp', '/api/oauth'),
-        ('app.routes.platforms', 'platforms_bp', '/api/platforms'),
-        ('app.routes.posts', 'posts_bp', '/api/posts'),
-        ('app.routes.analytics', 'analytics_bp', '/api/analytics'),
-        ('app.routes.billing', 'billing_bp', '/api/billing'),
-        ('app.routes.automation', 'automation_bp', '/api/automation'),
+    # Define blueprint configurations
+    blueprint_configs = [
+        {
+            'module_path': 'app.routes.auth',
+            'blueprint_name': 'auth_bp',
+            'url_prefix': '/api/auth',
+            'description': 'Authentication'
+        },
+        {
+            'module_path': 'app.routes.oauth',
+            'blueprint_name': 'oauth_bp',
+            'url_prefix': '/api/oauth',
+            'description': 'OAuth Platform Management'
+        },
+        {
+            'module_path': 'app.routes.automation',
+            'blueprint_name': 'automation_bp',
+            'url_prefix': '/api/automation',
+            'description': 'Auto-Posting Automation'
+        },
+        {
+            'module_path': 'app.routes.content_generator',
+            'blueprint_name': 'content_generator_bp',
+            'url_prefix': '/api/content-generator',
+            'description': 'AI Content Generation'
+        }
     ]
     
-    print("🔍 Checking for future blueprints...")
-    for module_path, blueprint_name, url_prefix in future_blueprints:
-        try:
-            module = __import__(module_path, fromlist=[blueprint_name])
-            blueprint = getattr(module, blueprint_name)
-            app.register_blueprint(blueprint, url_prefix=url_prefix)
-            registered_blueprints.append(blueprint_name)
-            print(f"✅ Registered {blueprint_name}")
-        except ImportError:
-            print(f"ℹ️ {blueprint_name} not available yet (will be created later)")
-        except Exception as e:
-            print(f"⚠️ Error with {blueprint_name}: {e}")
+    # Track successful registrations
+    auth_registered = False
+    oauth_registered = False
+    automation_registered = False
+    content_registered = False
     
-    # Health check endpoint
-    @app.route('/api/health')
-    def health_check():
-        print("🔍 Health check endpoint called")
-        try:
-            # Test database connection
-            db_status = 'unknown'
+    # Register each blueprint
+    for config in blueprint_configs:
+        logger.info(f"Attempting to register {config['description']} blueprint...")
+        
+        blueprint, success = safe_import_blueprint(
+            config['module_path'],
+            config['blueprint_name'],
+            config['url_prefix'],
+            config['description']
+        )
+        
+        if success and blueprint:
             try:
-                from config.database import db_instance
-                db_health = db_instance.health_check()
-                db_status = db_health.get('status', 'unknown')
-                print(f"🔍 Database status: {db_status}")
+                app.register_blueprint(blueprint, url_prefix=config['url_prefix'])
+                registered_blueprints.append(config['blueprint_name'])
+                logger.info(f"{config['description']} blueprint registered successfully")
+                
+                # Track specific blueprints
+                if config['blueprint_name'] == 'auth_bp':
+                    auth_registered = True
+                elif config['blueprint_name'] == 'oauth_bp':
+                    oauth_registered = True
+                elif config['blueprint_name'] == 'automation_bp':
+                    automation_registered = True
+                elif config['blueprint_name'] == 'content_generator_bp':
+                    content_registered = True
+                
             except Exception as e:
-                db_status = 'not-configured'
-                print(f"🔍 Database health check failed: {e}")
-            
-            health_data = {
-                'status': 'healthy',
-                'timestamp': datetime.utcnow().isoformat(),
-                'version': '1.0.0',
-                'database': db_status,
-                'redis': 'not-configured',
-                'registered_blueprints': registered_blueprints,
-                'config_loaded': os.getenv('FLASK_ENV', 'development'),
-                'features': [
-                    'AI Content Generation',
-                    'File Processing', 
-                    'User Authentication',
-                    'Multi-Platform Support'
-                ]
-            }
-            print(f"🔍 Health check response: {health_data}")
-            return jsonify(health_data)
-        except Exception as e:
-            print(f"❌ Health check failed: {str(e)}")
-            return jsonify({
-                'status': 'partial',
-                'timestamp': datetime.utcnow().isoformat(),
-                'error': 'Some services unavailable',
-                'registered_blueprints': registered_blueprints
-            }), 200
+                logger.error(f"Failed to register {config['description']} blueprint: {e}")
+        else:
+            logger.info(f"{config['description']} blueprint not available")
     
-    # Root endpoint
-    @app.route('/')
-    def root():
-        print("🔍 Root endpoint called")
-        return jsonify({
-            'message': 'VelocityPost.ai API Server',
-            'version': '1.0.0',
-            'status': 'operational',
-            'environment': os.getenv('FLASK_ENV', 'development'),
-            'docs': '/api/docs',
-            'health': '/api/health'
-        })
+    logger.info(f"Blueprint registration complete. Total registered: {len(registered_blueprints)}")
     
-    # API documentation endpoint
-    @app.route('/api/docs')
-    def api_docs():
-        """API documentation"""
-        print("🔍 API docs endpoint called")
-        return jsonify({
-            'api_version': '1.0.0',
-            'base_url': request.host_url + 'api',
-            'authentication': 'Bearer token required for protected endpoints',
-            'endpoints': {
-                'system': {
-                    'GET /': 'API information',
-                    'GET /api/health': 'Health check',
-                    'GET /api/docs': 'API documentation'
-                },
-                'authentication': {
-                    'POST /api/auth/register': 'Register new user',
-                    'POST /api/auth/login': 'User login',
-                    'GET /api/auth/profile': 'Get user profile (Protected)',
-                    'PUT /api/auth/profile': 'Update user profile (Protected)',
-                    'POST /api/auth/change-password': 'Change password (Protected)',
-                    'POST /api/auth/forgot-password': 'Request password reset',
-                    'POST /api/auth/reset-password': 'Reset password with token',
-                    'POST /api/auth/verify-token': 'Verify token validity (Protected)',
-                    'POST /api/auth/logout': 'Logout user (Protected)',
-                    'DELETE /api/auth/delete-account': 'Delete account (Protected)'
-                },
-                'content_generation': {
-                    'GET /api/content-generator/domains': 'Get content domains',
-                    'GET /api/content-generator/platforms': 'Get supported platforms',
-                    'POST /api/content-generator/generate': 'Generate AI content (Protected)',
-                    'POST /api/content-generator/generate-variants': 'Generate content variants (Pro+)',
-                    'GET /api/content-generator/usage-stats': 'Get usage statistics (Protected)',
-                    'GET /api/content-generator/templates': 'Get content templates',
-                    'GET /api/content-generator/history': 'Get generation history (Protected)'
-                }
-            },
-            'request_format': {
-                'authentication_header': 'Authorization: Bearer <token>',
-                'content_type': 'application/json'
-            },
-            'response_format': {
-                'success': 'true/false',
-                'message': 'Human readable message',
-                'data': 'Response data (optional)',
-                'timestamp': 'ISO timestamp',
-                'status_code': 'HTTP status code'
-            },
-            'error_codes': {
-                '400': 'Bad Request - Invalid input',
-                '401': 'Unauthorized - Authentication required',
-                '403': 'Forbidden - Insufficient permissions',
-                '404': 'Not Found - Resource not found',
-                '422': 'Validation Error - Input validation failed',
-                '429': 'Rate Limited - Too many requests',
-                '500': 'Server Error - Internal error'
-            }
-        })
-    
-    print(f"🔍 Blueprint registration complete. Total registered: {len(registered_blueprints)}")
-    return registered_blueprints
-
-def register_error_handlers(app):
-    """Register error handlers"""
-    print("🔍 Registering error handlers...")
-    
-    @app.errorhandler(400)
-    def bad_request(error):
-        return jsonify({
-            'success': False,
-            'message': 'Bad request',
-            'error': 'The request was invalid or malformed',
-            'status_code': 400,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 400
-    
-    @app.errorhandler(401)
-    def unauthorized(error):
-        return jsonify({
-            'success': False,
-            'message': 'Unauthorized',
-            'error': 'Authentication required',
-            'status_code': 401,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 401
-    
-    @app.errorhandler(403)
-    def forbidden(error):
-        return jsonify({
-            'success': False,
-            'message': 'Forbidden',
-            'error': 'Insufficient permissions',
-            'status_code': 403,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 403
-    
+    # Register error handlers
     @app.errorhandler(404)
     def not_found(error):
         return jsonify({
             'success': False,
-            'message': 'Not found',
+            'message': 'Endpoint not found',
             'error': 'The requested resource was not found',
-            'status_code': 404,
-            'timestamp': datetime.utcnow().isoformat()
+            'available_endpoints': [
+                '/api/health',
+                '/api/docs',
+                '/api/auth/*' if auth_registered else None,
+                '/api/oauth/*' if oauth_registered else None,
+                '/api/automation/*' if automation_registered else None,
+                '/api/content-generator/*' if content_registered else None,
+            ]
         }), 404
-    
-    @app.errorhandler(413)
-    def payload_too_large(error):
-        return jsonify({
-            'success': False,
-            'message': 'File too large',
-            'error': 'Maximum file size exceeded (50MB)',
-            'status_code': 413,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 413
-    
-    @app.errorhandler(422)
-    def unprocessable_entity(error):
-        return jsonify({
-            'success': False,
-            'message': 'Validation error',
-            'error': 'Input validation failed',
-            'status_code': 422,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 422
-    
-    @app.errorhandler(429)
-    def rate_limit_exceeded(error):
-        return jsonify({
-            'success': False,
-            'message': 'Rate limit exceeded',
-            'error': 'Too many requests - please try again later',
-            'status_code': 429,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 429
     
     @app.errorhandler(500)
     def internal_error(error):
@@ -392,71 +186,198 @@ def register_error_handlers(app):
         return jsonify({
             'success': False,
             'message': 'Internal server error',
-            'error': 'Something went wrong on our end',
-            'status_code': 500,
-            'timestamp': datetime.utcnow().isoformat()
+            'error': 'An unexpected error occurred'
         }), 500
     
-    @app.errorhandler(Exception)
-    def handle_exception(error):
-        logger.error(f"Unhandled exception: {str(error)}")
-        
-        # Don't reveal internal errors in production
-        error_message = str(error) if app.debug else 'An unexpected error occurred'
-        
+    @app.errorhandler(405)
+    def method_not_allowed(error):
         return jsonify({
             'success': False,
-            'message': 'An unexpected error occurred',
-            'error': error_message,
-            'status_code': 500,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 500
+            'message': 'Method not allowed',
+            'error': f'The method is not allowed for the requested URL'
+        }), 405
     
-    print("✅ Error handlers registered")
+    @app.errorhandler(HTTPException)
+    def handle_exception(e):
+        return jsonify({
+            'success': False,
+            'message': e.name,
+            'error': e.description
+        }), e.code
+    
+    # Create upload directories
+    upload_dir = app.config.get('UPLOAD_FOLDER')
+    if upload_dir:
+        os.makedirs(upload_dir, exist_ok=True)
+        logger.info(f"Upload directory created: {upload_dir}")
+    
+    # Root route
+    @app.route('/')
+    def index():
+        available_endpoints = {
+            'health': '/api/health',
+            'docs': '/api/docs'
+        }
+        
+        if auth_registered:
+            available_endpoints['auth'] = '/api/auth'
+        if oauth_registered:
+            available_endpoints['oauth'] = '/api/oauth'
+        if automation_registered:
+            available_endpoints['automation'] = '/api/automation'
+        if content_registered:
+            available_endpoints['content_generator'] = '/api/content-generator'
+        
+        return jsonify({
+            'message': 'Welcome to VelocityPost.ai API',
+            'version': '1.0.0',
+            'status': 'running',
+            'endpoints': available_endpoints,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    
+    # Health check endpoint
+    @app.route('/api/health')
+    def health_check():
+        # Test database connection
+        db_status = "error"
+        try:
+            db_status = "connected" if test_database_connection() else "disconnected"
+        except Exception as e:
+            logger.error(f"Database health check failed: {e}")
+            db_status = "error"
+        
+        # Test Redis connection
+        redis_status = "not-configured"
+        try:
+            import redis
+            redis_client = redis.Redis(
+                host=os.getenv('REDIS_HOST', 'localhost'), 
+                port=int(os.getenv('REDIS_PORT', 6379)), 
+                db=int(os.getenv('REDIS_DB', 0)),
+                socket_timeout=2
+            )
+            redis_client.ping()
+            redis_status = "connected"
+        except Exception:
+            redis_status = "disconnected"
+        
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.utcnow().isoformat(),
+            'version': '1.0.0',
+            'database': db_status,
+            'redis': redis_status,
+            'registered_blueprints': registered_blueprints,
+            'config_loaded': app.config.get('ENV', 'development'),
+            'features_available': {
+                'authentication': auth_registered,
+                'oauth_platforms': oauth_registered,
+                'automation': automation_registered,
+                'content_generation': content_registered
+            }
+        })
+    
+    # API Documentation
+    @app.route('/api/docs')
+    def api_docs():
+        endpoints = {}
+        
+        if auth_registered:
+            endpoints['authentication'] = {
+                'base_url': '/api/auth',
+                'description': 'User authentication and profile management',
+                'endpoints': [
+                    'POST /register - Register new user',
+                    'POST /login - User login',
+                    'GET /profile - Get user profile',
+                    'PUT /profile - Update user profile',
+                    'POST /change-password - Change password',
+                    'POST /forgot-password - Request password reset',
+                    'POST /reset-password - Reset password with token',
+                    'POST /verify-token - Verify JWT token',
+                    'POST /logout - User logout',
+                    'DELETE /delete-account - Delete user account'
+                ]
+            }
+        
+        if oauth_registered:
+            endpoints['oauth'] = {
+                'base_url': '/api/oauth',
+                'description': 'Social media platform OAuth management',
+                'endpoints': [
+                    'GET /platforms - Get supported platforms',
+                    'POST /auth-url/<platform> - Generate OAuth URL',
+                    'GET /callback/<platform> - OAuth callback (redirect)',
+                    'POST /callback/<platform> - OAuth callback (API)',
+                    'GET /connected-accounts - Get connected accounts',
+                    'DELETE /disconnect/<platform> - Disconnect platform'
+                ]
+            }
+        
+        if automation_registered:
+            endpoints['automation'] = {
+                'base_url': '/api/automation',
+                'description': 'AI-powered auto-posting automation',
+                'endpoints': [
+                    'GET /status - Get automation status',
+                    'POST /start - Start automation',
+                    'POST /pause - Pause automation',
+                    'POST /stop - Stop automation',
+                    'GET /settings - Get automation settings',
+                    'PUT /settings - Update automation settings',
+                    'POST /generate-optimal-times - Generate optimal posting times',
+                    'GET /recent-posts - Get recent automated posts',
+                    'GET /queue - Get posting queue',
+                    'GET /analytics - Get automation analytics'
+                ]
+            }
+        
+        if content_registered:
+            endpoints['content_generator'] = {
+                'base_url': '/api/content-generator',
+                'description': 'AI content generation and management',
+                'endpoints': [
+                    'GET /domains - Get content domains',
+                    'GET /platforms - Get supported platforms',
+                    'POST /generate - Generate AI content',
+                    'POST /generate-variants - Generate content variants',
+                    'GET /templates - Get content templates',
+                    'GET /history - Get generation history',
+                    'GET /usage-stats - Get usage statistics'
+                ]
+            }
+        
+        return jsonify({
+            'title': 'VelocityPost.ai API Documentation',
+            'version': '1.0.0',
+            'description': 'AI-powered social media automation platform',
+            'base_url': 'http://localhost:5000',
+            'authentication': 'Bearer token required for protected endpoints',
+            'endpoints': endpoints,
+            'registered_blueprints': registered_blueprints
+        })
+    
+    logger.info(f"App creation complete. Registered blueprints: {registered_blueprints}")
+    
+    return app
 
 # Create the Flask app
-print("🔍 Starting app creation...")
 app = create_app()
-print("✅ App created successfully")
-
-# Add request/response logging middleware
-@app.before_request
-def log_request_info():
-    """Log request information"""
-    if app.debug:
-        print(f"🔍 Request: {request.method} {request.url}")
-
-@app.after_request
-def log_response_info(response):
-    """Log response information and add headers"""
-    if app.debug:
-        print(f"🔍 Response: {response.status_code}")
-    
-    # Add security headers
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    
-    return response
 
 if __name__ == '__main__':
-    # Development server
-    port = int(os.getenv('PORT', 5000))
-    debug = os.getenv('FLASK_ENV') == 'development'
+    logger.info("Starting VelocityPost.ai server...")
+    logger.info(f"Environment: {os.getenv('FLASK_ENV', 'development')}")
+    logger.info("Server: http://localhost:5000")
+    logger.info("Health check: http://localhost:5000/api/health")
+    logger.info("API docs: http://localhost:5000/api/docs")
     
-    print("🚀 Starting VelocityPost.ai server...")
-    print(f"📊 Environment: {os.getenv('FLASK_ENV', 'development')}")
-    print(f"🔗 Server: http://localhost:{port}")
-    print(f"📝 Debug mode: {debug}")
-    print(f"🏥 Health check: http://localhost:{port}/api/health")
-    print(f"📚 API docs: http://localhost:{port}/api/docs")
-    print("-" * 50)
-    
-    logger.info(f"Starting VelocityPost.ai API server on port {port}")
-    
-    app.run(
-        host='0.0.0.0',
-        port=port,
-        debug=debug,
-        threaded=True
-    )
+    try:
+        app.run(
+            host='0.0.0.0',
+            port=int(os.getenv('PORT', 5000)),
+            debug=os.getenv('FLASK_ENV') == 'development'
+        )
+    except Exception as e:
+        logger.error(f"Server failed to start: {e}")
+        sys.exit(1)

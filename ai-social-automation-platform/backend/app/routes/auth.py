@@ -9,14 +9,13 @@ import re
 import secrets
 import logging
 from datetime import datetime, timedelta
+from functools import wraps
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 from bson.objectid import ObjectId
-from functools import wraps
 
-# Import from the correct path
-from app.utils.database import get_collection
+from config.database import get_collection
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +25,18 @@ auth_bp = Blueprint('auth', __name__)
 # Configuration
 JWT_SECRET = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
 JWT_ALGORITHM = 'HS256'
-JWT_EXPIRY_HOURS = 24  # 24 hours
-REFRESH_TOKEN_EXPIRY_DAYS = 30  # 30 days
+JWT_EXPIRY_HOURS = 24
 
-# Password requirements
-PASSWORD_MIN_LENGTH = 8
-
+# Utility Functions
 def validate_email(email):
     """Validate email format"""
-    email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+    email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
     return bool(email_pattern.match(email))
 
 def validate_password(password):
     """Validate password strength"""
-    if len(password) < PASSWORD_MIN_LENGTH:
-        return False, f"Password must be at least {PASSWORD_MIN_LENGTH} characters long"
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
     
     if not re.search(r'[a-z]', password):
         return False, "Password must contain at least one lowercase letter"
@@ -57,11 +53,8 @@ def validate_password(password):
     return True, "Password is valid"
 
 def generate_jwt_token(user_id, email, token_type='access'):
-    """Generate JWT access or refresh token"""
-    if token_type == 'refresh':
-        exp_delta = timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS)
-    else:
-        exp_delta = timedelta(hours=JWT_EXPIRY_HOURS)
+    """Generate JWT access token"""
+    exp_delta = timedelta(hours=JWT_EXPIRY_HOURS)
     
     payload = {
         'user_id': str(user_id),
@@ -106,7 +99,6 @@ def require_auth(f):
                 'error': 'Authentication failed'
             }), 401
         
-        # Add user info to request
         request.user_id = payload['user_id']
         request.user_email = payload['email']
         
@@ -114,13 +106,14 @@ def require_auth(f):
     
     return decorated_function
 
+# Authentication Routes
+
 @auth_bp.route('/register', methods=['POST'])
 def register():
     """Register a new user"""
     try:
         data = request.get_json()
         
-        # Validate input
         if not data:
             return jsonify({
                 'success': False,
@@ -157,7 +150,7 @@ def register():
         
         # Check if user already exists
         users_collection = get_collection('users')
-        if not users_collection:
+        if users_collection is None:  # FIXED: Proper None comparison
             return jsonify({
                 'success': False,
                 'message': 'Database unavailable',
@@ -200,7 +193,7 @@ def register():
         # Generate access token
         access_token = generate_jwt_token(user_id, email)
         
-        # Return user data (without password)
+        # Return user data
         user_data = {
             'id': str(user_id),
             'name': name,
@@ -219,10 +212,12 @@ def register():
         return jsonify({
             'success': True,
             'message': 'User registered successfully',
-            'access_token': access_token,
-            'token_type': 'Bearer',
-            'expires_in': JWT_EXPIRY_HOURS * 3600,
-            'user': user_data
+            'data': {
+                'access_token': access_token,
+                'token_type': 'Bearer',
+                'expires_in': JWT_EXPIRY_HOURS * 3600,
+                'user': user_data
+            }
         }), 201
         
     except Exception as e:
@@ -258,7 +253,7 @@ def login():
         
         # Find user
         users_collection = get_collection('users')
-        if not users_collection:
+        if users_collection is None:  # FIXED: Proper None comparison
             return jsonify({
                 'success': False,
                 'message': 'Database unavailable',
@@ -285,12 +280,10 @@ def login():
         # Update last login
         users_collection.update_one(
             {'_id': user['_id']},
-            {
-                '$set': {
-                    'last_login': datetime.utcnow(),
-                    'updated_at': datetime.utcnow()
-                }
-            }
+            {'$set': {
+                'last_login': datetime.utcnow(),
+                'updated_at': datetime.utcnow()
+            }}
         )
         
         # Generate access token
@@ -316,10 +309,12 @@ def login():
         return jsonify({
             'success': True,
             'message': 'Login successful',
-            'access_token': access_token,
-            'token_type': 'Bearer',
-            'expires_in': JWT_EXPIRY_HOURS * 3600,
-            'user': user_data
+            'data': {
+                'access_token': access_token,
+                'token_type': 'Bearer',
+                'expires_in': JWT_EXPIRY_HOURS * 3600,
+                'user': user_data
+            }
         }), 200
         
     except Exception as e:
@@ -336,7 +331,7 @@ def get_profile():
     """Get user profile"""
     try:
         users_collection = get_collection('users')
-        if not users_collection:
+        if users_collection is None:  # FIXED: Proper None comparison
             return jsonify({
                 'success': False,
                 'message': 'Database unavailable',
@@ -355,7 +350,7 @@ def get_profile():
         # Get connected platforms count
         social_accounts = get_collection('social_accounts')
         connected_count = 0
-        if social_accounts:
+        if social_accounts is not None:  # FIXED: Proper None comparison
             connected_count = social_accounts.count_documents({
                 'user_id': ObjectId(request.user_id),
                 'is_active': True
@@ -364,7 +359,7 @@ def get_profile():
         # Get recent posts count
         posts_collection = get_collection('posts')
         recent_posts = 0
-        if posts_collection:
+        if posts_collection is not None:  # FIXED: Proper None comparison
             thirty_days_ago = datetime.utcnow() - timedelta(days=30)
             recent_posts = posts_collection.count_documents({
                 'user_id': ObjectId(request.user_id),
@@ -392,7 +387,7 @@ def get_profile():
         return jsonify({
             'success': True,
             'message': 'Profile retrieved successfully',
-            'user': user_data
+            'data': {'user': user_data}
         }), 200
         
     except Exception as e:
@@ -411,9 +406,8 @@ def update_profile():
         current_user_id = request.user_id
         data = request.get_json()
         
-        # Get user
         users_collection = get_collection('users')
-        if not users_collection:
+        if users_collection is None:  # FIXED: Proper None comparison
             return jsonify({
                 'success': False,
                 'message': 'Database unavailable',
@@ -434,37 +428,31 @@ def update_profile():
         
         for field in allowed_fields:
             if field in data:
-                update_data[field] = data[field]
-        
-        # Validate name if provided
-        if 'name' in update_data:
-            if not update_data['name'] or len(update_data['name'].strip()) < 2:
-                return jsonify({
-                    'success': False,
-                    'message': 'Invalid name',
-                    'error': 'Name must be at least 2 characters long'
-                }), 400
-            update_data['name'] = update_data['name'].strip()
-        
-        # Validate preferences if provided
-        if 'preferences' in update_data:
-            allowed_prefs = ['timezone', 'email_notifications', 'auto_posting_enabled']
-            preferences = {}
-            for pref in allowed_prefs:
-                if pref in update_data['preferences']:
-                    preferences[pref] = update_data['preferences'][pref]
-            update_data['preferences'] = {**user.get('preferences', {}), **preferences}
+                if field == 'name':
+                    name = data[field].strip()
+                    if len(name) < 2:
+                        return jsonify({
+                            'success': False,
+                            'message': 'Invalid name',
+                            'error': 'Name must be at least 2 characters long'
+                        }), 400
+                    update_data[field] = name
+                elif field == 'preferences':
+                    current_prefs = user.get('preferences', {})
+                    new_prefs = data[field]
+                    if isinstance(new_prefs, dict):
+                        current_prefs.update(new_prefs)
+                        update_data[field] = current_prefs
         
         if not update_data:
             return jsonify({
                 'success': False,
                 'message': 'No data to update',
-                'error': 'Please provide data to update'
+                'error': 'Please provide valid data to update'
             }), 400
         
         # Update user
         update_data['updated_at'] = datetime.utcnow()
-        
         result = users_collection.update_one(
             {'_id': ObjectId(current_user_id)},
             {'$set': update_data}
@@ -494,7 +482,7 @@ def update_profile():
         return jsonify({
             'success': True,
             'message': 'Profile updated successfully',
-            'user': user_data
+            'data': {'user': user_data}
         }), 200
         
     except Exception as e:
@@ -513,21 +501,28 @@ def change_password():
         current_user_id = request.user_id
         data = request.get_json()
         
-        required_fields = ['current_password', 'new_password']
-        for field in required_fields:
-            if not data.get(field):
-                return jsonify({
-                    'success': False,
-                    'message': f'{field} is required',
-                    'error': f'Please provide {field}'
-                }), 400
+        if not data.get('current_password') or not data.get('new_password'):
+            return jsonify({
+                'success': False,
+                'message': 'Missing required fields',
+                'error': 'Both current_password and new_password are required'
+            }), 400
         
         current_password = data['current_password']
         new_password = data['new_password']
         
+        # Validate new password
+        is_valid, errors = validate_password(new_password)
+        if not is_valid:
+            return jsonify({
+                'success': False,
+                'message': 'Password validation failed',
+                'error': errors
+            }), 400
+        
         # Get user
         users_collection = get_collection('users')
-        if not users_collection:
+        if users_collection is None:  # FIXED: Proper None comparison
             return jsonify({
                 'success': False,
                 'message': 'Database unavailable',
@@ -550,15 +545,6 @@ def change_password():
                 'error': 'Current password is incorrect'
             }), 400
         
-        # Validate new password
-        is_valid, password_message = validate_password(new_password)
-        if not is_valid:
-            return jsonify({
-                'success': False,
-                'message': 'Password validation failed',
-                'error': password_message
-            }), 400
-        
         # Check if new password is different
         if current_password == new_password:
             return jsonify({
@@ -569,7 +555,6 @@ def change_password():
         
         # Update password
         new_password_hash = generate_password_hash(new_password)
-        
         users_collection.update_one(
             {'_id': ObjectId(current_user_id)},
             {'$set': {
@@ -610,7 +595,7 @@ def forgot_password():
         
         # Check if user exists
         users_collection = get_collection('users')
-        if not users_collection:
+        if users_collection is None:  # FIXED: Proper None comparison
             return jsonify({
                 'success': False,
                 'message': 'Database unavailable',
@@ -618,35 +603,38 @@ def forgot_password():
             }), 503
         
         user = users_collection.find_one({'email': email})
-        if not user:
-            # Don't reveal if email exists or not (security best practice)
-            return jsonify({
-                'success': True,
-                'message': 'If an account with this email exists, you will receive password reset instructions.'
-            }), 200
         
-        # Generate reset token
-        reset_token = secrets.token_urlsafe(32)
-        reset_expires = datetime.utcnow() + timedelta(hours=1)  # 1 hour expiry
+        # Always return success message for security
+        success_message = 'If an account with this email exists, you will receive password reset instructions.'
         
-        # Save reset token to database
-        users_collection.update_one(
-            {'_id': user['_id']},
-            {'$set': {
-                'password_reset_token': reset_token,
-                'password_reset_expires': reset_expires,
-                'updated_at': datetime.utcnow()
-            }}
-        )
-        
-        # In production, send actual email here
-        # For development, just log the token
-        logger.info(f"Password reset token for {email}: {reset_token}")
+        if user:
+            # Generate reset token
+            reset_token = secrets.token_urlsafe(32)
+            reset_expires = datetime.utcnow() + timedelta(hours=1)
+            
+            # Save reset token to database
+            users_collection.update_one(
+                {'_id': user['_id']},
+                {'$set': {
+                    'password_reset_token': reset_token,
+                    'password_reset_expires': reset_expires,
+                    'updated_at': datetime.utcnow()
+                }}
+            )
+            
+            logger.info(f"Password reset requested for: {email}")
+            
+            # In development, return the token for testing
+            if os.getenv('FLASK_ENV') == 'development':
+                return jsonify({
+                    'success': True,
+                    'message': success_message,
+                    'data': {'reset_token': reset_token}
+                }), 200
         
         return jsonify({
             'success': True,
-            'message': 'If an account with this email exists, you will receive password reset instructions.',
-            'reset_token': reset_token  # Remove this in production
+            'message': success_message
         }), 200
         
     except Exception as e:
@@ -663,30 +651,28 @@ def reset_password():
     try:
         data = request.get_json()
         
-        required_fields = ['token', 'new_password']
-        for field in required_fields:
-            if not data.get(field):
-                return jsonify({
-                    'success': False,
-                    'message': f'{field} is required',
-                    'error': f'Please provide {field}'
-                }), 400
+        if not data.get('token') or not data.get('new_password'):
+            return jsonify({
+                'success': False,
+                'message': 'Missing required fields',
+                'error': 'Both token and new_password are required'
+            }), 400
         
         token = data['token']
         new_password = data['new_password']
         
         # Validate new password
-        is_valid, password_message = validate_password(new_password)
+        is_valid, errors = validate_password(new_password)
         if not is_valid:
             return jsonify({
                 'success': False,
                 'message': 'Password validation failed',
-                'error': password_message
+                'error': errors
             }), 400
         
         # Find user with valid reset token
         users_collection = get_collection('users')
-        if not users_collection:
+        if users_collection is None:  # FIXED: Proper None comparison
             return jsonify({
                 'success': False,
                 'message': 'Database unavailable',
@@ -707,19 +693,21 @@ def reset_password():
         
         # Update password and remove reset token
         new_password_hash = generate_password_hash(new_password)
-        
         users_collection.update_one(
             {'_id': user['_id']},
-            {'$set': {
-                'password': new_password_hash,
-                'updated_at': datetime.utcnow()
-            }, '$unset': {
-                'password_reset_token': '',
-                'password_reset_expires': ''
-            }}
+            {
+                '$set': {
+                    'password': new_password_hash,
+                    'updated_at': datetime.utcnow()
+                },
+                '$unset': {
+                    'password_reset_token': '',
+                    'password_reset_expires': ''
+                }
+            }
         )
         
-        logger.info(f"Password reset successful for user: {user['email']}")
+        logger.info(f"Password reset completed for user: {user['email']}")
         
         return jsonify({
             'success': True,
@@ -743,7 +731,7 @@ def verify_token():
         
         # Get user to ensure they still exist and are active
         users_collection = get_collection('users')
-        if not users_collection:
+        if users_collection is None:  # FIXED: Proper None comparison
             return jsonify({
                 'success': False,
                 'message': 'Database unavailable',
@@ -760,27 +748,26 @@ def verify_token():
         
         return jsonify({
             'success': True,
-            'valid': True,
-            'user_id': current_user_id,
-            'email': user['email']
+            'data': {
+                'valid': True,
+                'user_id': current_user_id,
+                'email': user['email']
+            }
         }), 200
         
     except Exception as e:
         logger.error(f"Token verification error: {str(e)}")
         return jsonify({
             'success': False,
-            'valid': False,
+            'data': {'valid': False},
             'error': 'Token verification failed'
         }), 401
 
 @auth_bp.route('/logout', methods=['POST'])
 @require_auth
 def logout():
-    """Logout user (client-side token invalidation)"""
+    """Logout user"""
     try:
-        # In a production app, you might want to blacklist the token
-        # For now, we'll rely on client-side token removal
-        
         return jsonify({
             'success': True,
             'message': 'Logout successful'
@@ -803,7 +790,7 @@ def delete_account():
         
         # Get user
         users_collection = get_collection('users')
-        if not users_collection:
+        if users_collection is None:  # FIXED: Proper None comparison
             return jsonify({
                 'success': False,
                 'message': 'Database unavailable',
@@ -818,7 +805,7 @@ def delete_account():
                 'error': 'User not found'
             }), 404
         
-        # Soft delete - deactivate account instead of deleting
+        # Soft delete - deactivate account
         users_collection.update_one(
             {'_id': ObjectId(current_user_id)},
             {'$set': {
@@ -830,7 +817,7 @@ def delete_account():
         
         # Deactivate all social accounts
         social_accounts_collection = get_collection('social_accounts')
-        if social_accounts_collection:
+        if social_accounts_collection is not None:  # FIXED: Proper None comparison
             social_accounts_collection.update_many(
                 {'user_id': ObjectId(current_user_id)},
                 {'$set': {'is_active': False, 'updated_at': datetime.utcnow()}}
@@ -851,7 +838,7 @@ def delete_account():
             'error': 'An unexpected error occurred'
         }), 500
 
-# Error handlers specific to auth blueprint
+# Error handlers for the blueprint
 @auth_bp.errorhandler(400)
 def bad_request(error):
     return jsonify({
@@ -868,10 +855,27 @@ def unauthorized(error):
         'error': 'Authentication required'
     }), 401
 
-@auth_bp.errorhandler(422)
-def unprocessable_entity(error):
+@auth_bp.errorhandler(403)
+def forbidden(error):
     return jsonify({
         'success': False,
-        'message': 'Unprocessable entity',
-        'error': 'The request contains semantic errors'
-    }), 422
+        'message': 'Forbidden',
+        'error': 'Access denied'
+    }), 403
+
+@auth_bp.errorhandler(404)
+def not_found(error):
+    return jsonify({
+        'success': False,
+        'message': 'Not found',
+        'error': 'Resource not found'
+    }), 404
+
+@auth_bp.errorhandler(500)
+def internal_server_error(error):
+    logger.error(f"Internal server error in auth routes: {error}")
+    return jsonify({
+        'success': False,
+        'message': 'Internal server error',
+        'error': 'An unexpected error occurred'
+    }), 500

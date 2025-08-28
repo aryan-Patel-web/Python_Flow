@@ -1,80 +1,91 @@
+#!/usr/bin/env python3
 """
 Main application runner for development and production
 """
 import os
 import sys
+import logging
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Print initial debug info
-print("🔍 Starting run.py...")
-print(f"🔍 Current working directory: {os.getcwd()}")
-print(f"🔍 Script location: {os.path.abspath(__file__)}")
+# Configure logging early
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+logger.info("Starting run.py...")
+logger.info(f"Current working directory: {os.getcwd()}")
+logger.info(f"Script location: {os.path.abspath(__file__)}")
 
 # Add current directory to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
-print(f"🔍 Added to Python path: {current_dir}")
+logger.info(f"Added to Python path: {current_dir}")
 
 # Load environment variables
-load_dotenv()
-print("🔍 Environment variables loaded")
+try:
+    load_dotenv()
+    logger.info("Environment variables loaded")
+except Exception as e:
+    logger.warning(f"Could not load .env file: {e}")
 
 # Try to import app
-print("🔍 Attempting to import app...")
+logger.info("Attempting to import app...")
 try:
     from app import create_app
-    print("✅ Successfully imported create_app from app.py")
+    logger.info("Successfully imported create_app from app.py")
 except ImportError as e:
-    print(f"❌ Failed to import create_app: {e}")
+    logger.warning(f"Failed to import create_app: {e}")
     # Try alternative import
     try:
         import app as app_module
         create_app = app_module.create_app
-        print("✅ Successfully imported app module")
+        logger.info("Successfully imported app module")
     except ImportError as e2:
-        print(f"❌ Failed to import app module: {e2}")
+        logger.error(f"Failed to import app module: {e2}")
         sys.exit(1)
 
 def create_application():
     """Create and configure the Flask application"""
-    print("🔍 Creating Flask application...")
+    logger.info("Creating Flask application...")
     
     config_name = os.getenv('FLASK_ENV', 'development')
-    print(f"🔍 Config name: {config_name}")
+    logger.info(f"Config name: {config_name}")
     
     try:
         app = create_app()
-        print("✅ Flask app created successfully")
+        logger.info("Flask app created successfully")
         
         with app.app_context():
-            print("🔍 Inside app context...")
+            logger.info("Inside app context...")
             try:
                 # Try to initialize database if available
-                print("🔍 Attempting database initialization...")
+                logger.info("Attempting database initialization...")
                 
                 # Check if we can import database utilities
                 try:
                     from config.database import get_collection
-                    print("✅ Database config available")
+                    logger.info("Database config available")
                     
                     # Test database connection
                     users_collection = get_collection('users')
                     if users_collection:
                         user_count = users_collection.count_documents({})
-                        print(f"✅ Database connected. User count: {user_count}")
+                        logger.info(f"Database connected. User count: {user_count}")
                     else:
-                        print("⚠️ Database collection unavailable")
+                        logger.warning("Database collection unavailable")
                         
                 except ImportError as e:
-                    print(f"⚠️ Database config not available: {e}")
+                    logger.warning(f"Database config not available: {e}")
                 except Exception as e:
-                    print(f"⚠️ Database connection issue: {e}")
+                    logger.warning(f"Database connection issue: {e}")
                 
                 # Try to create default admin user
                 try:
                     admin_email = os.getenv('ADMIN_EMAIL', 'admin@velocitypost.ai')
-                    print(f"🔍 Checking for admin user: {admin_email}")
+                    logger.info(f"Checking for admin user: {admin_email}")
                     
                     # This is optional - only if database is available
                     from config.database import get_collection
@@ -98,42 +109,42 @@ def create_application():
                             }
                             
                             result = users_collection.insert_one(admin_doc)
-                            print(f"✅ Admin user created: {admin_email} (ID: {result.inserted_id})")
+                            logger.info(f"Admin user created: {admin_email} (ID: {result.inserted_id})")
                         else:
-                            print(f"✅ Admin user already exists: {admin_email}")
+                            logger.info(f"Admin user already exists: {admin_email}")
                     else:
-                        print("⚠️ Cannot create admin user - database unavailable")
+                        logger.warning("Cannot create admin user - database unavailable")
                         
                 except Exception as e:
-                    print(f"⚠️ Admin user setup failed: {str(e)}")
+                    logger.warning(f"Admin user setup failed: {str(e)}")
                     
             except Exception as e:
-                print(f"⚠️ App context setup warning: {str(e)}")
+                logger.warning(f"App context setup warning: {str(e)}")
         
         return app
         
     except Exception as e:
-        print(f"❌ Failed to create Flask app: {e}")
+        logger.error(f"Failed to create Flask app: {e}")
         raise
 
 def run_development():
     """Run the application in development mode"""
-    print("🔍 Starting development server...")
+    logger.info("Starting development server...")
     
     try:
         app = create_application()
-        print("✅ Application created for development")
+        logger.info("Application created for development")
         
         port = int(os.getenv('PORT', 5000))
         
         print("\n" + "="*50)
-        print("🚀 VelocityPost.ai Development Server Starting...")
-        print(f"📊 Environment: Development")
-        print(f"🔗 Access at: http://localhost:{port}")
-        print(f"🏥 Health check: http://localhost:{port}/api/health")
-        print(f"📚 API docs: http://localhost:{port}/api/docs")
-        print(f"📝 Debug mode: ON")
-        print(f"💡 Auto-reload: ON")
+        print("VelocityPost.ai Development Server Starting...")
+        print(f"Environment: Development")
+        print(f"Access at: http://localhost:{port}")
+        print(f"Health check: http://localhost:{port}/api/health")
+        print(f"API docs: http://localhost:{port}/api/docs")
+        print(f"Debug mode: ON")
+        print(f"Auto-reload: ON")
         print("="*50 + "\n")
         
         app.run(
@@ -144,29 +155,29 @@ def run_development():
         )
         
     except Exception as e:
-        print(f"❌ Development server failed to start: {e}")
+        logger.error(f"Development server failed to start: {e}")
         sys.exit(1)
 
 def run_production():
     """Run the application in production mode with Gunicorn"""
-    print("🔍 Starting production server...")
+    logger.info("Starting production server...")
     
     try:
         app = create_application()
-        print("✅ Application created for production")
+        logger.info("Application created for production")
         
         print("\n" + "="*50)
-        print("🚀 VelocityPost.ai Production Server Starting...")
-        print("📊 Environment: Production")
-        print("📝 Debug mode: OFF")
+        print("VelocityPost.ai Production Server Starting...")
+        print("Environment: Production")
+        print("Debug mode: OFF")
         print("="*50 + "\n")
         
         # Import Gunicorn
         try:
             import gunicorn.app.base
-            print("✅ Gunicorn available")
+            logger.info("Gunicorn available")
         except ImportError:
-            print("❌ Gunicorn not installed. Install with: pip install gunicorn")
+            logger.error("Gunicorn not installed. Install with: pip install gunicorn")
             sys.exit(1)
         
         class StandaloneApplication(gunicorn.app.base.BaseApplication):
@@ -196,27 +207,27 @@ def run_production():
             'max_requests_jitter': 100,
         }
         
-        print(f"🔍 Gunicorn options: {options}")
+        logger.info(f"Gunicorn options: {options}")
         StandaloneApplication(app, options).run()
         
     except Exception as e:
-        print(f"❌ Production server failed to start: {e}")
+        logger.error(f"Production server failed to start: {e}")
         sys.exit(1)
 
 def setup_database():
     """Setup database with initial data"""
-    print("🔍 Starting database setup...")
+    logger.info("Starting database setup...")
     
     try:
         app = create_application()
-        print("✅ Application created for database setup")
+        logger.info("Application created for database setup")
         
         with app.app_context():
-            print("🗄️ Setting up database...")
+            logger.info("Setting up database...")
             
             # Reset database if requested
             if '--reset' in sys.argv:
-                print("⚠️ Resetting database...")
+                logger.warning("Resetting database...")
                 try:
                     from config.database import get_collection
                     
@@ -226,34 +237,34 @@ def setup_database():
                         collection = get_collection(collection_name)
                         if collection:
                             collection.drop()
-                            print(f"✅ Dropped collection: {collection_name}")
+                            logger.info(f"Dropped collection: {collection_name}")
                         else:
-                            print(f"⚠️ Collection not available: {collection_name}")
+                            logger.warning(f"Collection not available: {collection_name}")
                     
                 except Exception as e:
-                    print(f"⚠️ Database reset warning: {e}")
+                    logger.warning(f"Database reset warning: {e}")
             
-            print("✅ Database setup complete!")
+            logger.info("Database setup complete!")
             
     except Exception as e:
-        print(f"❌ Database setup failed: {e}")
+        logger.error(f"Database setup failed: {e}")
         sys.exit(1)
 
 def run_tests():
     """Run the test suite"""
-    print("🔍 Starting test suite...")
+    logger.info("Starting test suite...")
     
     try:
         import unittest
-        print("✅ unittest module available")
+        logger.info("unittest module available")
         
         # Check if tests directory exists
         test_dir = os.path.join(os.path.dirname(__file__), 'tests')
-        print(f"🔍 Looking for tests in: {test_dir}")
+        logger.info(f"Looking for tests in: {test_dir}")
         
         if not os.path.exists(test_dir):
-            print(f"⚠️ Tests directory not found: {test_dir}")
-            print("Creating basic test structure...")
+            logger.warning(f"Tests directory not found: {test_dir}")
+            logger.info("Creating basic test structure...")
             os.makedirs(test_dir, exist_ok=True)
             
             # Create a basic test file
@@ -272,7 +283,7 @@ class BasicTest(unittest.TestCase):
             from app import create_app
             app = create_app()
             self.assertTrue(app is not None)
-            print("✅ App import test passed")
+            print("App import test passed")
         except Exception as e:
             self.fail(f"App import failed: {e}")
 
@@ -281,7 +292,7 @@ if __name__ == '__main__':
 '''
             with open(os.path.join(test_dir, 'test_basic.py'), 'w') as f:
                 f.write(basic_test)
-            print("✅ Created basic test file")
+            logger.info("Created basic test file")
         
         # Discover and run tests
         loader = unittest.TestLoader()
@@ -291,34 +302,34 @@ if __name__ == '__main__':
         result = runner.run(suite)
         
         if result.wasSuccessful():
-            print("✅ All tests passed!")
+            logger.info("All tests passed!")
             return True
         else:
-            print(f"❌ {len(result.failures)} test(s) failed, {len(result.errors)} error(s)")
+            logger.error(f"{len(result.failures)} test(s) failed, {len(result.errors)} error(s)")
             return False
             
     except ImportError:
-        print("❌ unittest not available")
+        logger.error("unittest not available")
         return False
     except Exception as e:
-        print(f"❌ Test execution failed: {e}")
+        logger.error(f"Test execution failed: {e}")
         return False
 
 def create_env_file():
     """Create .env file from template"""
-    print("🔍 Creating .env file...")
+    logger.info("Creating .env file...")
     
     if os.path.exists('.env'):
-        print("✅ .env file already exists")
+        logger.info(".env file already exists")
         return
     
     if os.path.exists('.env.example'):
         import shutil
         shutil.copy('.env.example', '.env')
-        print("✅ .env file created from template")
-        print("⚠️ Please edit .env file with your API keys")
+        logger.info(".env file created from template")
+        print("Please edit .env file with your API keys")
     else:
-        print("⚠️ .env.example not found, creating basic .env file...")
+        logger.warning(".env.example not found, creating basic .env file...")
         
         # Create a basic .env file
         basic_env_content = """# VelocityPost.ai Environment Configuration
@@ -350,12 +361,12 @@ REDIS_URL=redis://localhost:6379/0
         
         with open('.env', 'w') as f:
             f.write(basic_env_content)
-        print("✅ Basic .env file created")
-        print("⚠️ Please edit .env file with your actual API keys and configuration")
+        logger.info("Basic .env file created")
+        print("Please edit .env file with your actual API keys and configuration")
 
 def check_dependencies():
     """Check if all required dependencies are installed"""
-    print("🔍 Checking dependencies...")
+    logger.info("Checking dependencies...")
     
     required_packages = [
         ('flask', 'Flask'),
@@ -374,10 +385,10 @@ def check_dependencies():
         try:
             __import__(package_import.replace('-', '_'))
             available_packages.append(package_name)
-            print(f"✅ {package_name}")
+            logger.info(f"{package_name} - available")
         except ImportError:
             missing_packages.append(package_name)
-            print(f"❌ {package_name}")
+            logger.warning(f"{package_name} - missing")
     
     # Check optional packages
     optional_packages = [
@@ -386,32 +397,32 @@ def check_dependencies():
         ('gunicorn', 'Gunicorn')
     ]
     
-    print("\n🔍 Checking optional dependencies...")
+    logger.info("Checking optional dependencies...")
     for package_import, package_name in optional_packages:
         try:
             __import__(package_import.replace('-', '_'))
-            print(f"✅ {package_name} (optional)")
+            logger.info(f"{package_name} (optional) - available")
         except ImportError:
-            print(f"⚠️ {package_name} (optional - not installed)")
+            logger.info(f"{package_name} (optional) - not installed")
     
-    print(f"\n📊 Summary:")
-    print(f"✅ Available: {len(available_packages)}/{len(required_packages)} required packages")
+    logger.info(f"Summary:")
+    logger.info(f"Available: {len(available_packages)}/{len(required_packages)} required packages")
     
     if missing_packages:
-        print(f"❌ Missing packages: {', '.join(missing_packages)}")
+        logger.error(f"Missing packages: {', '.join(missing_packages)}")
         print("Install with: pip install -r requirements.txt")
         print("Or install individually:")
         for package in missing_packages:
             print(f"  pip install {package}")
         return False
     
-    print("✅ All required dependencies satisfied")
+    logger.info("All required dependencies satisfied")
     return True
 
 def show_help():
     """Show help information"""
     help_text = """
-🚀 VelocityPost.ai - Application Runner
+VelocityPost.ai - Application Runner
 
 USAGE:
     python run.py [COMMAND]
@@ -443,7 +454,7 @@ QUICK SETUP:
 
 TROUBLESHOOTING:
     - If imports fail, make sure you're in the correct directory
-    - Check that all files are in place: app.py, routes/auth.py, routes/content_generator.py
+    - Check that all files are in place: app.py, app/routes/auth.py, etc.
     - Run 'python run.py check-deps' to verify dependencies
     - Check the console output for detailed error messages
 
@@ -453,55 +464,57 @@ For more information, visit: https://docs.velocitypost.ai
 
 def check_file_structure():
     """Check if required files exist"""
-    print("🔍 Checking file structure...")
+    logger.info("Checking file structure...")
     
     required_files = [
         'app.py',
-        'routes/auth.py',
-        'routes/content_generator.py',
-        'config/database.py'
+        'app/routes/auth.py',
+        'app/utils/database.py',
+        'app/utils/auth_helpers.py'
     ]
     
     optional_files = [
         '.env',
         'requirements.txt',
-        'config/__init__.py',
-        'routes/__init__.py'
+        'app/__init__.py',
+        'app/routes/__init__.py',
+        'app/utils/__init__.py',
+        'config/database.py'
     ]
     
     current_dir = os.path.dirname(__file__)
     
-    print("Required files:")
+    logger.info("Required files:")
     all_required_exist = True
     for file_path in required_files:
         full_path = os.path.join(current_dir, file_path)
         if os.path.exists(full_path):
-            print(f"✅ {file_path}")
+            logger.info(f"{file_path} - exists")
         else:
-            print(f"❌ {file_path} (MISSING)")
+            logger.error(f"{file_path} - MISSING")
             all_required_exist = False
     
-    print("\nOptional files:")
+    logger.info("Optional files:")
     for file_path in optional_files:
         full_path = os.path.join(current_dir, file_path)
         if os.path.exists(full_path):
-            print(f"✅ {file_path}")
+            logger.info(f"{file_path} - exists")
         else:
-            print(f"⚠️ {file_path} (not found)")
+            logger.info(f"{file_path} - not found")
     
     if not all_required_exist:
-        print("\n❌ Some required files are missing!")
+        logger.error("Some required files are missing!")
         print("Make sure all files are in the correct locations.")
         return False
     
-    print("\n✅ All required files found")
+    logger.info("All required files found")
     return True
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
         command = sys.argv[1].lower()
         
-        print(f"🔍 Running command: {command}")
+        logger.info(f"Running command: {command}")
         
         if command == 'dev':
             if check_file_structure():
@@ -540,7 +553,7 @@ if __name__ == '__main__':
             show_help()
             
         else:
-            print(f"❌ Unknown command: {command}")
+            logger.error(f"Unknown command: {command}")
             print("Use 'python run.py help' for available commands")
             sys.exit(1)
     else:
@@ -551,6 +564,6 @@ if __name__ == '__main__':
         if check_file_structure():
             run_development()
         else:
-            print("\n❌ Cannot start - missing required files")
+            logger.error("Cannot start - missing required files")
             print("Run 'python run.py check-files' to see what's missing")
             sys.exit(1)

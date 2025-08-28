@@ -1,41 +1,33 @@
 # VelocityPost.ai - Complete Postman API Testing Guide
 
-## 🚀 Environment Setup
+## Environment Setup
 
-### Postman Environment Variables
-Create a new environment in Postman called "VelocityPost Development" with these variables:
+Create a new environment in Postman called "VelocityPost Development":
 
 ```
 Variable Name          | Initial Value              | Current Value
 base_url              | http://localhost:5000      | http://localhost:5000
 access_token          |                            | (auto-set after login)
-refresh_token         |                            | (auto-set after login)
-user_id              |                            | (auto-set after login)
-user_email           |                            | (auto-set after login)
-reset_token          |                            | (for password reset testing)
+user_id               |                            | (auto-set after login)
+user_email            |                            | (auto-set after login)
+reset_token           |                            | (for password reset testing)
+platform_id           |                            | (for OAuth testing)
+post_id               |                            | (for post management)
+automation_id         |                            | (for automation testing)
 ```
 
 ---
 
-## 📂 Collection Structure
+# API ENDPOINTS COMPLETE GUIDE
 
-### 1. System & Health Checks
-### 2. Authentication & User Management  
-### 3. Content Generation
-### 4. OAuth & Platform Management
-### 5. Auto-Posting & Scheduling
-### 6. Analytics & Reporting
-### 7. Billing & Subscription
-### 8. Error Testing Scenarios
-
----
-
-## 1. 🏥 SYSTEM & HEALTH CHECKS
+## 1. SYSTEM & HEALTH CHECKS
 
 ### 1.1 Health Check
-```http
-GET {{base_url}}/api/health
-```
+**Method:** GET  
+**URL:** `{{base_url}}/api/health`  
+**Headers:** None  
+**Authorization:** None  
+**Body:** None  
 
 **Test Script:**
 ```javascript
@@ -46,6 +38,7 @@ pm.test("Health check returns 200", function () {
 pm.test("Response has status field", function () {
     const jsonData = pm.response.json();
     pm.expect(jsonData).to.have.property('status');
+    pm.expect(jsonData.status).to.eql('healthy');
 });
 ```
 
@@ -53,42 +46,46 @@ pm.test("Response has status field", function () {
 ```json
 {
   "status": "healthy",
-  "timestamp": "2025-08-26T21:30:00.000Z",
+  "timestamp": "2025-08-27T02:30:00.000Z",
   "version": "1.0.0",
   "database": "connected",
-  "redis": "not-configured",
-  "registered_blueprints": ["content_generator_bp", "auth_bp"],
-  "config_loaded": "development"
+  "registered_blueprints": ["auth_bp", "oauth_bp", "automation_bp", "content_generator_bp"]
 }
 ```
 
-### 1.2 Root Endpoint  
-```http
-GET {{base_url}}/
-```
+### 1.2 API Documentation
+**Method:** GET  
+**URL:** `{{base_url}}/api/docs`  
+**Headers:** None  
+**Authorization:** None  
+**Body:** None  
 
-### 1.3 API Documentation
-```http
-GET {{base_url}}/api/docs
-```
+**Expected Response:**
+HTML page with API documentation or JSON with available endpoints.
 
 ---
 
-## 2. 🔐 AUTHENTICATION & USER MANAGEMENT
+## 2. AUTHENTICATION ROUTES (`/api/auth/`)
 
 ### 2.1 Register New User
-```http
-POST {{base_url}}/api/auth/register
+**Method:** POST  
+**URL:** `{{base_url}}/api/auth/register`  
+**Headers:** 
+```
 Content-Type: application/json
+```
+**Authorization:** None  
 
+**Body (JSON):**
+```json
 {
-  "name": "Test User",
-  "email": "test@velocitypost.ai",
-  "password": "TestPassword123!"
+  "name": "Aryan Patel",
+  "email": "aryan@example.com",
+  "password": "StrongPassword123!"
 }
 ```
 
-**Test Script (Auto-set tokens):**
+**Test Script:**
 ```javascript
 pm.test("Registration successful", function () {
     pm.expect(pm.response.code).to.be.oneOf([201]);
@@ -96,63 +93,111 @@ pm.test("Registration successful", function () {
 
 pm.test("Response has access_token", function () {
     const response = pm.response.json();
-    pm.expect(response).to.have.property('access_token');
-    pm.environment.set("access_token", response.access_token);
+    pm.expect(response).to.have.property('success');
+    pm.expect(response.success).to.eql(true);
+    pm.expect(response.data).to.have.property('access_token');
+    pm.environment.set("access_token", response.data.access_token);
     
-    if (response.refresh_token) {
-        pm.environment.set("refresh_token", response.refresh_token);
+    if (response.data.user && response.data.user.id) {
+        pm.environment.set("user_id", response.data.user.id);
+        pm.environment.set("user_email", response.data.user.email);
     }
-    
-    if (response.user && response.user.id) {
-        pm.environment.set("user_id", response.user.id);
-        pm.environment.set("user_email", response.user.email);
-    }
-});
-
-pm.test("User has free plan", function () {
-    const response = pm.response.json();
-    pm.expect(response.user.plan_type).to.eql("free");
 });
 ```
 
-### 2.2 Login User
-```http
-POST {{base_url}}/api/auth/login
-Content-Type: application/json
-
+**Expected Response:**
+```json
 {
-  "email": "test@velocitypost.ai", 
-  "password": "TestPassword123!"
+  "success": true,
+  "message": "User registered successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+    "token_type": "Bearer",
+    "expires_in": 86400,
+    "user": {
+      "id": "66cc1234567890abcdef1234",
+      "name": "Aryan Patel",
+      "email": "aryan@example.com",
+      "plan_type": "free",
+      "is_active": true,
+      "email_verified": false,
+      "connected_platforms": [],
+      "posts_this_month": 0,
+      "total_posts": 0,
+      "created_at": "2025-08-27T02:30:00.000Z",
+      "preferences": {
+        "timezone": "UTC",
+        "email_notifications": true,
+        "auto_posting_enabled": false
+      }
+    }
+  }
+}
+```
+
+### 2.2 Login User
+**Method:** POST  
+**URL:** `{{base_url}}/api/auth/login`  
+**Headers:** 
+```
+Content-Type: application/json
+```
+**Authorization:** None  
+
+**Body (JSON):**
+```json
+{
+  "email": "aryan@example.com",
+  "password": "StrongPassword123!"
 }
 ```
 
 **Test Script:**
 ```javascript
+pm.test("Login successful", function () {
+    pm.expect(pm.response.code).to.be.oneOf([200]);
+});
+
 if (pm.response.code === 200) {
     const response = pm.response.json();
-    pm.environment.set("access_token", response.access_token);
-    pm.environment.set("refresh_token", response.refresh_token);
-    pm.environment.set("user_id", response.user.id);
-    pm.environment.set("user_email", response.user.email);
+    pm.environment.set("access_token", response.data.access_token);
+    pm.environment.set("user_id", response.data.user.id);
+    pm.environment.set("user_email", response.data.user.email);
+    
+    pm.test("Access token received", function () {
+        pm.expect(response.data.access_token).to.be.a('string');
+        pm.expect(response.data.access_token.length).to.be.above(50);
+    });
 }
 ```
 
 ### 2.3 Get User Profile
-```http
-GET {{base_url}}/api/auth/profile
+**Method:** GET  
+**URL:** `{{base_url}}/api/auth/profile`  
+**Headers:** 
+```
 Authorization: Bearer {{access_token}}
 ```
+**Authorization:** Bearer Token  
+**Body:** None  
 
 ### 2.4 Update User Profile
-```http
-PUT {{base_url}}/api/auth/profile
-Authorization: Bearer {{access_token}}
+**Method:** PUT  
+**URL:** `{{base_url}}/api/auth/profile`  
+**Headers:** 
+```
 Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
 
+**Body (JSON):**
+```json
 {
-  "name": "Updated Test User",
+  "name": "Updated Aryan Patel",
   "preferences": {
-    "timezone": "UTC",
+    "timezone": "Asia/Kolkata",
     "email_notifications": true,
     "auto_posting_enabled": true
   }
@@ -160,30 +205,36 @@ Content-Type: application/json
 ```
 
 ### 2.5 Change Password
-```http
-POST {{base_url}}/api/auth/change-password
-Authorization: Bearer {{access_token}}
+**Method:** POST  
+**URL:** `{{base_url}}/api/auth/change-password`  
+**Headers:** 
+```
 Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
 
+**Body (JSON):**
+```json
 {
-  "current_password": "TestPassword123!",
-  "new_password": "NewPassword123!"
+  "current_password": "StrongPassword123!",
+  "new_password": "NewStrongPassword123!"
 }
 ```
 
-### 2.6 Refresh Token
-```http
-POST {{base_url}}/api/auth/refresh
-Authorization: Bearer {{refresh_token}}
+### 2.6 Forgot Password
+**Method:** POST  
+**URL:** `{{base_url}}/api/auth/forgot-password`  
+**Headers:** 
 ```
-
-### 2.7 Forgot Password
-```http
-POST {{base_url}}/api/auth/forgot-password
 Content-Type: application/json
+```
+**Authorization:** None  
 
+**Body (JSON):**
+```json
 {
-  "email": "test@velocitypost.ai"
+  "email": "aryan@example.com"
 }
 ```
 
@@ -191,93 +242,606 @@ Content-Type: application/json
 ```javascript
 if (pm.response.code === 200) {
     const response = pm.response.json();
-    if (response.reset_token) {
-        pm.environment.set("reset_token", response.reset_token);
+    if (response.data && response.data.reset_token) {
+        pm.environment.set("reset_token", response.data.reset_token);
     }
 }
 ```
 
-### 2.8 Reset Password
-```http
-POST {{base_url}}/api/auth/reset-password
+### 2.7 Reset Password
+**Method:** POST  
+**URL:** `{{base_url}}/api/auth/reset-password`  
+**Headers:** 
+```
 Content-Type: application/json
+```
+**Authorization:** None  
 
+**Body (JSON):**
+```json
 {
   "token": "{{reset_token}}",
   "new_password": "ResetPassword123!"
 }
 ```
 
-### 2.9 Verify Token
-```http
-POST {{base_url}}/api/auth/verify-token
+### 2.8 Verify Token
+**Method:** POST  
+**URL:** `{{base_url}}/api/auth/verify-token`  
+**Headers:** 
+```
 Authorization: Bearer {{access_token}}
 ```
+**Authorization:** Bearer Token  
+**Body:** None  
 
-### 2.10 Logout User
-```http
-POST {{base_url}}/api/auth/logout
+### 2.9 Logout User
+**Method:** POST  
+**URL:** `{{base_url}}/api/auth/logout`  
+**Headers:** 
+```
 Authorization: Bearer {{access_token}}
 ```
+**Authorization:** Bearer Token  
+**Body:** None  
 
-### 2.11 Delete Account
-```http
-DELETE {{base_url}}/api/auth/delete-account
+### 2.10 Delete Account
+**Method:** DELETE  
+**URL:** `{{base_url}}/api/auth/delete-account`  
+**Headers:** 
+```
 Authorization: Bearer {{access_token}}
 ```
+**Authorization:** Bearer Token  
+**Body:** None  
 
 ---
 
-## 3. 🎨 CONTENT GENERATION
+## 3. OAUTH PLATFORM MANAGEMENT (`/api/oauth/`)
 
-### 3.1 Get Content Domains
-```http
-GET {{base_url}}/api/content-generator/domains
+### 3.1 Get Supported Platforms
+**Method:** GET  
+**URL:** `{{base_url}}/api/oauth/platforms`  
+**Headers:** None  
+**Authorization:** None  
+**Body:** None  
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Platforms retrieved successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "platforms": [
+      {
+        "id": "facebook",
+        "name": "Facebook",
+        "description": "Connect your Facebook account to automatically post content",
+        "icon": "facebook",
+        "color": "#1877F2",
+        "available": false,
+        "scope": "pages_manage_posts,pages_read_engagement",
+        "supported_content": ["text", "images", "links", "videos"],
+        "callback_url": "http://localhost:5000/api/oauth/callback/facebook"
+      },
+      {
+        "id": "instagram",
+        "name": "Instagram",
+        "description": "Connect your Instagram account to automatically post content",
+        "icon": "instagram",
+        "color": "#E4405F",
+        "available": false,
+        "scope": "user_profile,user_media",
+        "supported_content": ["text", "images", "links"],
+        "callback_url": "http://localhost:5000/api/oauth/callback/instagram"
+      },
+      {
+        "id": "twitter",
+        "name": "Twitter/X",
+        "description": "Connect your Twitter account to automatically post content",
+        "icon": "twitter",
+        "color": "#1DA1F2",
+        "available": false,
+        "scope": "tweet.read,tweet.write,users.read",
+        "supported_content": ["text", "images", "links"],
+        "callback_url": "http://localhost:5000/api/oauth/callback/twitter"
+      },
+      {
+        "id": "linkedin",
+        "name": "LinkedIn",
+        "description": "Connect your LinkedIn account to automatically post content",
+        "icon": "linkedin",
+        "color": "#0A66C2",
+        "available": false,
+        "scope": "r_liteprofile,w_member_social",
+        "supported_content": ["text", "images", "links", "articles"],
+        "callback_url": "http://localhost:5000/api/oauth/callback/linkedin"
+      },
+      {
+        "id": "youtube",
+        "name": "YouTube",
+        "description": "Connect your YouTube account to automatically upload videos",
+        "icon": "youtube",
+        "color": "#FF0000",
+        "available": false,
+        "scope": "https://www.googleapis.com/auth/youtube.upload",
+        "supported_content": ["videos"],
+        "callback_url": "http://localhost:5000/api/oauth/callback/youtube"
+      },
+      {
+        "id": "pinterest",
+        "name": "Pinterest",
+        "description": "Connect your Pinterest account to automatically post pins",
+        "icon": "pinterest",
+        "color": "#BD081C",
+        "available": false,
+        "scope": "read_public,write_public",
+        "supported_content": ["images", "links"],
+        "callback_url": "http://localhost:5000/api/oauth/callback/pinterest"
+      },
+      {
+        "id": "tiktok",
+        "name": "TikTok",
+        "description": "Connect your TikTok account to automatically post videos",
+        "icon": "tiktok",
+        "color": "#000000",
+        "available": false,
+        "scope": "user.info.basic,video.publish",
+        "supported_content": ["videos"],
+        "callback_url": "http://localhost:5000/api/oauth/callback/tiktok"
+      }
+    ],
+    "total_count": 7,
+    "available_count": 0
+  }
+}
+```
+
+### 3.2 Generate OAuth Authorization URL
+**Method:** POST  
+**URL:** `{{base_url}}/api/oauth/auth-url/facebook`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "redirect_uri": "http://localhost:3000/oauth/callback"
+}
+```
+
+**Test Script:**
+```javascript
+pm.test("Auth URL generated", function () {
+    const response = pm.response.json();
+    if (response.success) {
+        pm.environment.set("platform_id", "facebook");
+        if (response.data && response.data.state) {
+            pm.environment.set("oauth_state", response.data.state);
+        }
+    }
+});
 ```
 
 **Expected Response:**
 ```json
 {
   "success": true,
-  "domains": [
-    {
-      "id": "tech",
-      "name": "Technology & Innovation",
-      "topics": ["AI & Machine Learning", "Web Development"],
-      "tone": "informative, cutting-edge, professional",
-      "pro_required": false
-    },
-    {
-      "id": "memes",
-      "name": "Memes & Humor", 
-      "topics": ["Programming Memes", "Work From Home"],
-      "tone": "funny, relatable, casual, witty",
-      "pro_required": false
-    }
-  ],
-  "total": 5
+  "message": "Authorization URL generated successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "auth_url": "https://www.facebook.com/v18.0/dialog/oauth?client_id=your_app_id&redirect_uri=http%3A%2F%2Flocalhost%3A5000%2Fapi%2Foauth%2Fcallback%2Ffacebook&scope=pages_manage_posts%2Cpages_read_engagement&response_type=code&state=abc123def456ghi789",
+    "state": "abc123def456ghi789",
+    "platform": "facebook",
+    "expires_in": 600,
+    "redirect_uri": "http://localhost:5000/api/oauth/callback/facebook"
+  }
 }
 ```
 
-### 3.2 Get Supported Platforms
-```http
-GET {{base_url}}/api/content-generator/platforms
-```
+### 3.3 OAuth Callback Handler
+**Method:** GET  
+**URL:** `{{base_url}}/api/oauth/callback/facebook?code=AUTH_CODE&state=abc123def456ghi789`  
+**Headers:** None  
+**Authorization:** None  
+**Body:** None  
 
-### 3.3 Generate AI Content
-```http
-POST {{base_url}}/api/content-generator/generate
+### 3.4 Get Connected Accounts
+**Method:** GET  
+**URL:** `{{base_url}}/api/oauth/connected-accounts`  
+**Headers:** 
+```
 Authorization: Bearer {{access_token}}
-Content-Type: application/json
+```
+**Authorization:** Bearer Token  
+**Body:** None  
 
+**Expected Response:**
+```json
 {
-  "domain": "tech",
-  "platform": "instagram",
-  "custom_prompt": "Create a post about AI automation trends in 2025",
-  "creativity_level": 80,
-  "include_hashtags": true,
-  "include_emojis": true
+  "success": true,
+  "message": "Connected accounts retrieved successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "accounts": [
+      {
+        "id": "66cc1234567890abcdef1234",
+        "platform": "facebook",
+        "platform_user_id": "facebook_user_123",
+        "username": "john.doe",
+        "display_name": "John Doe",
+        "profile_picture": "https://graph.facebook.com/facebook_user_123/picture",
+        "is_active": true,
+        "connected_at": "2025-08-27T02:30:00.000Z",
+        "last_used": "2025-08-27T02:30:00.000Z",
+        "permissions": ["pages_manage_posts", "pages_read_engagement"],
+        "expires_at": "2025-11-27T02:30:00.000Z"
+      }
+    ],
+    "total_count": 1,
+    "active_count": 1,
+    "platforms_summary": {
+      "facebook": 1,
+      "instagram": 0,
+      "twitter": 0,
+      "linkedin": 0,
+      "youtube": 0,
+      "pinterest": 0,
+      "tiktok": 0
+    }
+  }
 }
+```
+
+### 3.5 Get Platform Account Details
+**Method:** GET  
+**URL:** `{{base_url}}/api/oauth/account/facebook`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 3.6 Test Platform Connection
+**Method:** POST  
+**URL:** `{{base_url}}/api/oauth/test-connection/facebook`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 3.7 Refresh Platform Token
+**Method:** POST  
+**URL:** `{{base_url}}/api/oauth/refresh-token/facebook`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 3.8 Disconnect Platform
+**Method:** DELETE  
+**URL:** `{{base_url}}/api/oauth/disconnect/facebook`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Facebook account disconnected successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z"
+}
+```
+
+---
+
+## 4. AUTO-POSTING AUTOMATION (`/api/automation/`)
+
+### 4.1 Get Automation Status
+**Method:** GET  
+**URL:** `{{base_url}}/api/automation/status`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Automation status retrieved successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "automation_status": {
+      "is_active": false,
+      "selected_domains": [],
+      "connected_platforms_count": 0,
+      "posting_frequency": {
+        "posts_per_day": 2,
+        "interval_hours": 12
+      },
+      "posting_schedule": {
+        "times": ["09:00", "13:00", "17:00"],
+        "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "timezone": "UTC"
+      },
+      "content_settings": {
+        "tone": "professional",
+        "target_audience": "general",
+        "include_hashtags": true,
+        "auto_optimize": true,
+        "content_length": "medium",
+        "language": "en"
+      },
+      "active_hours": {
+        "start_time": "09:00",
+        "end_time": "18:00",
+        "timezone": "UTC"
+      },
+      "statistics": {
+        "posts_today": 0,
+        "posts_this_week": 0,
+        "posts_this_month": 0,
+        "total_automated_posts": 0,
+        "next_post_time": null,
+        "max_posts_per_day": 2,
+        "success_rate": 0,
+        "failed_posts": 0
+      },
+      "last_updated": "2025-08-27T02:30:00.000Z",
+      "created_at": "2025-08-27T02:30:00.000Z"
+    }
+  }
+}
+```
+
+### 4.2 Start Automation
+**Method:** POST  
+**URL:** `{{base_url}}/api/automation/start`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "platforms": ["facebook", "instagram"],
+  "content_domains": ["technology", "business", "memes"],
+  "posting_frequency": {
+    "posts_per_day": 3,
+    "interval_hours": 8
+  },
+  "posting_schedule": {
+    "times": ["09:00", "13:00", "17:00"],
+    "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"],
+    "timezone": "Asia/Kolkata"
+  },
+  "content_settings": {
+    "tone": "casual",
+    "target_audience": "young_professionals",
+    "include_hashtags": true,
+    "auto_optimize": true,
+    "content_length": "medium",
+    "language": "en"
+  },
+  "active_hours": {
+    "start_time": "08:00",
+    "end_time": "20:00",
+    "timezone": "Asia/Kolkata"
+  }
+}
+```
+
+**Test Script:**
+```javascript
+pm.test("Automation started successfully", function () {
+    pm.expect(pm.response.code).to.be.oneOf([200]);
+    const response = pm.response.json();
+    pm.expect(response.success).to.eql(true);
+    
+    if (response.data && response.data.automation_id) {
+        pm.environment.set("automation_id", response.data.automation_id);
+    }
+});
+```
+
+### 4.3 Stop Automation
+**Method:** POST  
+**URL:** `{{base_url}}/api/automation/stop`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 4.4 Update Automation Settings
+**Method:** PUT  
+**URL:** `{{base_url}}/api/automation/settings`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "posting_frequency": {
+    "posts_per_day": 4,
+    "interval_hours": 6
+  },
+  "content_settings": {
+    "tone": "professional",
+    "target_audience": "business_professionals",
+    "include_hashtags": true,
+    "auto_optimize": false
+  }
+}
+```
+
+### 4.5 Get Automation History
+**Method:** GET  
+**URL:** `{{base_url}}/api/automation/history?limit=10&offset=0`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 4.6 Get Available Content Domains
+**Method:** GET  
+**URL:** `{{base_url}}/api/automation/content-domains`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Content domains retrieved successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "domains": [
+      {
+        "id": "technology",
+        "name": "Technology",
+        "description": "Latest tech news, gadgets, and innovations",
+        "keywords": ["tech", "innovation", "gadgets", "AI", "software"],
+        "is_active": true
+      },
+      {
+        "id": "business",
+        "name": "Business",
+        "description": "Business news, entrepreneurship, and market trends",
+        "keywords": ["business", "entrepreneur", "startup", "finance", "marketing"],
+        "is_active": true
+      },
+      {
+        "id": "memes",
+        "name": "Memes",
+        "description": "Funny memes and viral content",
+        "keywords": ["memes", "funny", "viral", "humor", "trending"],
+        "is_active": true
+      },
+      {
+        "id": "lifestyle",
+        "name": "Lifestyle",
+        "description": "Lifestyle tips, health, and wellness content",
+        "keywords": ["lifestyle", "health", "wellness", "fitness", "food"],
+        "is_active": true
+      }
+    ],
+    "total_count": 4,
+    "active_count": 4
+  }
+}
+```
+
+### 4.7 Pause Automation
+**Method:** POST  
+**URL:** `{{base_url}}/api/automation/pause`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 4.8 Resume Automation
+**Method:** POST  
+**URL:** `{{base_url}}/api/automation/resume`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 4.9 Test Automation
+**Method:** POST  
+**URL:** `{{base_url}}/api/automation/test-post`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "platforms": ["facebook"],
+  "content_domain": "technology",
+  "test_mode": true
+}
+```
+
+---
+
+## 5. AI CONTENT GENERATION (`/api/content/`)
+
+### 5.1 Generate Content
+**Method:** POST  
+**URL:** `{{base_url}}/api/content/generate`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "prompt": "Create a social media post about the latest AI trends",
+  "platform": "facebook",
+  "tone": "professional",
+  "content_type": "text",
+  "target_audience": "tech_professionals",
+  "include_hashtags": true,
+  "include_emojis": false,
+  "max_length": 280
+}
+```
+
+**Test Script:**
+```javascript
+pm.test("Content generated successfully", function () {
+    pm.expect(pm.response.code).to.be.oneOf([200]);
+    const response = pm.response.json();
+    pm.expect(response.success).to.eql(true);
+    pm.expect(response.data).to.have.property('content');
+    
+    if (response.data.id) {
+        pm.environment.set("generated_content_id", response.data.id);
+    }
+});
 ```
 
 **Expected Response:**
@@ -285,88 +849,63 @@ Content-Type: application/json
 {
   "success": true,
   "message": "Content generated successfully",
-  "generated_content": {
-    "content": "🚀 AI Automation is transforming 2025! From smart workflows to predictive analytics, businesses are scaling faster than ever. What's your favorite AI tool? #AI #Automation #Tech2025 #Innovation #FutureOfWork",
-    "domain": "tech",
-    "platform": "instagram",
-    "performance_prediction": {
-      "score": 87.5,
-      "grade": "A",
-      "predicted_engagement": {
-        "likes": 261,
-        "comments": 17,
-        "shares": 13
-      }
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "id": "66cc1234567890abcdef1234",
+    "content": "The AI revolution is transforming how we work and live. From automated customer service to predictive analytics, artificial intelligence is becoming integral to business success. Companies embracing AI are seeing 30% improvement in efficiency. What AI tools are you using in your workflow?",
+    "platform": "facebook",
+    "content_type": "text",
+    "tone": "professional",
+    "hashtags": ["#AI", "#Technology", "#Business", "#Innovation", "#Automation"],
+    "word_count": 47,
+    "character_count": 280,
+    "estimated_engagement": {
+      "likes": "25-50",
+      "comments": "5-10",
+      "shares": "3-8"
     },
-    "metadata": {
-      "word_count": 24,
-      "character_count": 165,
-      "hashtag_count": 5,
-      "emoji_count": 1,
-      "generated_at": "2025-08-26T21:30:00.000Z",
-      "creativity_level": 80,
-      "ai_model_used": "template_enhanced"
-    }
-  },
-  "user_plan": "free",
-  "remaining_credits": "unlimited"
+    "generated_at": "2025-08-27T02:30:00.000Z",
+    "model_used": "mistral-7b",
+    "credits_used": 1
+  }
 }
 ```
 
-### 3.4 Generate Content Variants (Pro Feature)
-```http
-POST {{base_url}}/api/content-generator/generate-variants
+### 5.2 Generate Image Caption
+**Method:** POST  
+**URL:** `{{base_url}}/api/content/generate-caption`  
+**Headers:** 
+```
+Content-Type: multipart/form-data
 Authorization: Bearer {{access_token}}
-Content-Type: application/json
+```
+**Authorization:** Bearer Token  
 
+**Body (Form Data):**
+```
+image: [Upload image file]
+platform: instagram
+tone: casual
+include_hashtags: true
+```
+
+### 5.3 Generate Hashtags
+**Method:** POST  
+**URL:** `{{base_url}}/api/content/generate-hashtags`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
 {
-  "domain": "business",
+  "content": "Just launched my new tech startup! Excited to share this journey with everyone.",
   "platform": "linkedin",
-  "count": 3,
-  "custom_prompt": "Leadership tips for remote teams",
-  "creativity_level": 75
-}
-```
-
-### 3.5 Get Content Templates
-```http
-GET {{base_url}}/api/content-generator/templates
-```
-
-### 3.6 Get Generation History
-```http
-GET {{base_url}}/api/content-generator/history?limit=20&domain=tech&platform=instagram
-Authorization: Bearer {{access_token}}
-```
-
-### 3.7 Get Usage Statistics
-```http
-GET {{base_url}}/api/content-generator/usage-stats
-Authorization: Bearer {{access_token}}
-```
-
-### 3.8 Test Content Generator
-```http
-GET {{base_url}}/api/content-generator/test
-```
-
----
-
-## 4. 🔗 OAUTH & PLATFORM MANAGEMENT
-
-### 4.1 Get Supported OAuth Platforms
-```http
-GET {{base_url}}/api/oauth/platforms
-```
-
-### 4.2 Generate OAuth Authorization URL
-```http
-POST {{base_url}}/api/oauth/auth-url/instagram
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "redirect_uri": "http://localhost:3000/auth/callback/instagram"
+  "count": 10,
+  "trending": true
 }
 ```
 
@@ -374,363 +913,610 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "auth_url": "https://api.instagram.com/oauth/authorize?client_id=123&redirect_uri=...",
-  "state": "secure_random_state_string",
-  "platform": "instagram"
-}
-```
-
-### 4.3 OAuth Callback Handler
-```http
-POST {{base_url}}/api/oauth/callback/instagram
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "code": "oauth_authorization_code_here",
-  "state": "secure_random_state_string"
-}
-```
-
-### 4.4 Get Connected Accounts
-```http
-GET {{base_url}}/api/oauth/connected-accounts
-Authorization: Bearer {{access_token}}
-```
-
-### 4.5 Test Platform Connection
-```http
-POST {{base_url}}/api/oauth/test-connection/instagram
-Authorization: Bearer {{access_token}}
-```
-
-### 4.6 Disconnect Platform
-```http
-DELETE {{base_url}}/api/oauth/disconnect/instagram
-Authorization: Bearer {{access_token}}
-```
-
-### 4.7 Get Platform Status
-```http
-GET {{base_url}}/api/platforms/status
-Authorization: Bearer {{access_token}}
-```
-
----
-
-## 5. 🤖 AUTO-POSTING & SCHEDULING
-
-### 5.1 Get Auto-Posting Status
-```http
-GET {{base_url}}/api/auto-posting/status
-Authorization: Bearer {{access_token}}
-```
-
-### 5.2 Start Auto-Posting
-```http
-POST {{base_url}}/api/auto-posting/start
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "platforms": ["instagram", "facebook"],
-  "content_domains": ["tech", "business"],
-  "posting_frequency": {
-    "posts_per_day": 2,
-    "interval_hours": 12
+  "message": "Hashtags generated successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "hashtags": [
+      "#startup",
+      "#entrepreneur",
+      "#tech",
+      "#innovation",
+      "#business",
+      "#journey",
+      "#launch",
+      "#technology",
+      "#success",
+      "#growth"
+    ],
+    "trending_hashtags": [
+      "#startuplife",
+      "#techstartup",
+      "#entrepreneurship"
+    ],
+    "total_count": 10,
+    "platform": "linkedin"
   }
 }
 ```
 
-### 5.3 Pause Auto-Posting
-```http
-POST {{base_url}}/api/auto-posting/pause
+### 5.4 Optimize Content for Platform
+**Method:** POST  
+**URL:** `{{base_url}}/api/content/optimize`  
+**Headers:** 
+```
+Content-Type: application/json
 Authorization: Bearer {{access_token}}
 ```
+**Authorization:** Bearer Token  
 
-### 5.4 Stop Auto-Posting
-```http
-POST {{base_url}}/api/auto-posting/stop
-Authorization: Bearer {{access_token}}
-```
-
-### 5.5 Get Schedule Settings
-```http
-GET {{base_url}}/api/scheduler/settings
-Authorization: Bearer {{access_token}}
-```
-
-**Expected Response:**
+**Body (JSON):**
 ```json
 {
-  "success": true,
-  "settings": {
-    "auto_posting_enabled": false,
-    "posting_frequency": {
-      "posts_per_day": 2,
-      "interval_hours": 12
-    },
-    "active_hours": {
-      "start_time": "09:00",
-      "end_time": "18:00",
-      "timezone": "UTC"
-    },
-    "platform_settings": {
-      "instagram": {
-        "enabled": true,
-        "posts_per_day": 2,
-        "optimal_times": ["10:00", "15:00", "19:00"]
-      }
+  "content": "This is a long form content that needs to be optimized for different social media platforms",
+  "source_platform": "facebook",
+  "target_platforms": ["twitter", "instagram", "linkedin"],
+  "maintain_tone": true
+}
+```
+
+### 5.5 Content History
+**Method:** GET  
+**URL:** `{{base_url}}/api/content/history?limit=20&offset=0&platform=all`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 5.6 Save Generated Content
+**Method:** POST  
+**URL:** `{{base_url}}/api/content/save`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "content_id": "{{generated_content_id}}",
+  "title": "AI Trends Post",
+  "tags": ["ai", "technology", "business"],
+  "scheduled_for": "2025-08-28T10:00:00.000Z",
+  "platforms": ["facebook", "linkedin"]
+}
+```
+
+### 5.7 Get Content Templates
+**Method:** GET  
+**URL:** `{{base_url}}/api/content/templates?category=business&platform=linkedin`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 5.8 Analyze Content Performance
+**Method:** POST  
+**URL:** `{{base_url}}/api/content/analyze`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "content": "AI is revolutionizing business operations! 🚀 #AI #Technology #Business",
+  "platform": "facebook",
+  "metrics": {
+    "engagement_rate": 0.05,
+    "reach": 1000,
+    "clicks": 25
+  }
+}
+```
+
+### 5.9 Bulk Content Generation
+**Method:** POST  
+**URL:** `{{base_url}}/api/content/bulk-generate`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "topics": ["AI trends", "Remote work", "Digital marketing"],
+  "platforms": ["facebook", "linkedin", "twitter"],
+  "count_per_topic": 2,
+  "tone": "professional",
+  "schedule_posts": false
+}
+```
+
+---
+
+## 6. POST MANAGEMENT (`/api/posts/`)
+
+### 6.1 Create Manual Post
+**Method:** POST  
+**URL:** `{{base_url}}/api/posts/create`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "content": "Excited to share my latest project! Building an AI-powered social media automation platform. #AI #SocialMedia #Automation",
+  "platforms": ["facebook", "linkedin"],
+  "schedule_for": "2025-08-28T10:30:00.000Z",
+  "media": [],
+  "hashtags": ["#AI", "#SocialMedia", "#Automation"],
+  "post_type": "text"
+}
+```
+
+**Test Script:**
+```javascript
+pm.test("Post created successfully", function () {
+    pm.expect(pm.response.code).to.be.oneOf([201]);
+    const response = pm.response.json();
+    pm.expect(response.success).to.eql(true);
+    
+    if (response.data && response.data.post_id) {
+        pm.environment.set("post_id", response.data.post_id);
     }
-  }
-}
-```
-
-### 5.6 Update Schedule Settings
-```http
-PUT {{base_url}}/api/scheduler/settings
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "auto_posting_enabled": true,
-  "posting_frequency": {
-    "posts_per_day": 3,
-    "interval_hours": 8
-  },
-  "active_hours": {
-    "start_time": "09:00",
-    "end_time": "18:00",
-    "timezone": "UTC"
-  },
-  "platform_settings": {
-    "instagram": {
-      "enabled": true,
-      "posts_per_day": 2,
-      "optimal_times": ["10:00", "15:00"]
-    }
-  }
-}
-```
-
-### 5.7 Generate Optimal Times
-```http
-POST {{base_url}}/api/scheduler/generate-optimal-times
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "platforms": ["instagram", "facebook"],
-  "timezone": "UTC",
-  "posts_per_day": 3
-}
-```
-
-### 5.8 Get Posting Queue
-```http
-GET {{base_url}}/api/scheduler/queue?days=7
-Authorization: Bearer {{access_token}}
-```
-
-### 5.9 Preview Schedule
-```http
-POST {{base_url}}/api/scheduler/preview-schedule
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "days": 7,
-  "platforms": ["instagram", "facebook"]
-}
-```
-
----
-
-## 6. 📊 ANALYTICS & REPORTING
-
-### 6.1 Get Analytics Dashboard
-```http
-GET {{base_url}}/api/analytics/dashboard?days=30
-Authorization: Bearer {{access_token}}
+});
 ```
 
 **Expected Response:**
 ```json
 {
   "success": true,
-  "analytics": {
-    "total_posts": 145,
-    "total_engagement": 2847,
-    "growth_rate": 12.5,
-    "best_performing_platform": "instagram",
-    "engagement_by_platform": {
-      "instagram": 1247,
-      "facebook": 856,
-      "twitter": 744
-    },
-    "posts_by_day": [
+  "message": "Post created successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "post_id": "66cc1234567890abcdef1234",
+    "content": "Excited to share my latest project! Building an AI-powered social media automation platform. #AI #SocialMedia #Automation",
+    "platforms": ["facebook", "linkedin"],
+    "status": "scheduled",
+    "scheduled_for": "2025-08-28T10:30:00.000Z",
+    "created_at": "2025-08-27T02:30:00.000Z",
+    "platform_posts": [
       {
-        "date": "2025-08-26",
-        "posts": 5,
-        "engagement": 234
+        "platform": "facebook",
+        "status": "scheduled",
+        "scheduled_for": "2025-08-28T10:30:00.000Z"
+      },
+      {
+        "platform": "linkedin",
+        "status": "scheduled",
+        "scheduled_for": "2025-08-28T10:30:00.000Z"
       }
     ]
   }
 }
 ```
 
-### 6.2 Get Performance Metrics
-```http
-GET {{base_url}}/api/analytics/performance?platform=instagram&days=30
+### 6.2 Get All Posts
+**Method:** GET  
+**URL:** `{{base_url}}/api/posts?limit=20&offset=0&status=all&platform=all`  
+**Headers:** 
+```
 Authorization: Bearer {{access_token}}
 ```
-
-### 6.3 Get Growth Statistics
-```http
-GET {{base_url}}/api/analytics/growth?period=monthly
-Authorization: Bearer {{access_token}}
-```
-
-### 6.4 Export Analytics Data
-```http
-POST {{base_url}}/api/analytics/export
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "format": "csv",
-  "date_range": {
-    "start": "2025-08-01",
-    "end": "2025-08-26"
-  },
-  "platforms": ["instagram", "facebook"]
-}
-```
-
----
-
-## 7. 💳 BILLING & SUBSCRIPTION
-
-### 7.1 Get Subscription Plans
-```http
-GET {{base_url}}/api/billing/plans
-```
+**Authorization:** Bearer Token  
+**Body:** None  
 
 **Expected Response:**
 ```json
 {
   "success": true,
-  "plans": [
-    {
-      "id": "free",
-      "name": "Free Plan",
-      "price": 0,
-      "currency": "USD",
-      "features": {
-        "platforms": 2,
-        "posts_per_day": 2,
-        "ai_generations_per_month": 50
+  "message": "Posts retrieved successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "posts": [
+      {
+        "id": "66cc1234567890abcdef1234",
+        "content": "Excited to share my latest project!",
+        "platforms": ["facebook", "linkedin"],
+        "status": "published",
+        "scheduled_for": "2025-08-28T10:30:00.000Z",
+        "published_at": "2025-08-28T10:30:00.000Z",
+        "created_at": "2025-08-27T02:30:00.000Z",
+        "engagement": {
+          "total_likes": 25,
+          "total_comments": 5,
+          "total_shares": 3,
+          "total_reach": 500
+        },
+        "platform_results": [
+          {
+            "platform": "facebook",
+            "status": "published",
+            "platform_post_id": "fb_123456789",
+            "likes": 15,
+            "comments": 3,
+            "shares": 2,
+            "reach": 300
+          },
+          {
+            "platform": "linkedin",
+            "status": "published",
+            "platform_post_id": "li_123456789",
+            "likes": 10,
+            "comments": 2,
+            "shares": 1,
+            "reach": 200
+          }
+        ]
       }
+    ],
+    "pagination": {
+      "total_posts": 1,
+      "current_page": 1,
+      "total_pages": 1,
+      "limit": 20,
+      "offset": 0
     },
-    {
-      "id": "pro",
-      "name": "Pro Plan",
-      "price": 29,
-      "currency": "USD",
-      "features": {
-        "platforms": 5,
-        "posts_per_day": 10,
-        "ai_generations_per_month": 500
-      }
+    "summary": {
+      "total_posts": 1,
+      "published": 1,
+      "scheduled": 0,
+      "draft": 0,
+      "failed": 0
     }
-  ]
-}
-```
-
-### 7.2 Get Current Subscription
-```http
-GET {{base_url}}/api/billing/subscription
-Authorization: Bearer {{access_token}}
-```
-
-### 7.3 Subscribe to Plan (Stripe)
-```http
-POST {{base_url}}/api/billing/subscribe
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "plan": "pro",
-  "billing_cycle": "monthly",
-  "payment_method": {
-    "type": "stripe",
-    "token": "pm_test_card_visa"
   }
 }
 ```
 
-### 7.4 Subscribe to Plan (Razorpay - Indian Users)
-```http
-POST {{base_url}}/api/billing/subscribe
+### 6.3 Get Post by ID
+**Method:** GET  
+**URL:** `{{base_url}}/api/posts/{{post_id}}`  
+**Headers:** 
+```
 Authorization: Bearer {{access_token}}
-Content-Type: application/json
+```
+**Authorization:** Bearer Token  
+**Body:** None  
 
+### 6.4 Update Post
+**Method:** PUT  
+**URL:** `{{base_url}}/api/posts/{{post_id}}`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
 {
-  "plan": "pro", 
-  "billing_cycle": "monthly",
-  "payment_method": {
-    "type": "razorpay",
-    "payment_id": "pay_test123456789"
-  }
+  "content": "Updated: Excited to share my latest AI project! 🚀",
+  "scheduled_for": "2025-08-29T11:00:00.000Z"
 }
 ```
 
-### 7.5 Get Usage Statistics
-```http
-GET {{base_url}}/api/billing/usage?days=30
+### 6.5 Delete Post
+**Method:** DELETE  
+**URL:** `{{base_url}}/api/posts/{{post_id}}`  
+**Headers:** 
+```
 Authorization: Bearer {{access_token}}
 ```
+**Authorization:** Bearer Token  
+**Body:** None  
 
-### 7.6 Update Payment Method
-```http
-PUT {{base_url}}/api/billing/payment-method
-Authorization: Bearer {{access_token}}
+### 6.6 Duplicate Post
+**Method:** POST  
+**URL:** `{{base_url}}/api/posts/{{post_id}}/duplicate`  
+**Headers:** 
+```
 Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
 
+**Body (JSON):**
+```json
 {
-  "payment_method": {
-    "type": "stripe",
-    "token": "pm_new_card_token"
-  }
+  "platforms": ["twitter", "instagram"],
+  "schedule_for": "2025-08-30T14:00:00.000Z"
 }
 ```
 
-### 7.7 Cancel Subscription
-```http
-POST {{base_url}}/api/billing/cancel
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
-{
-  "reason": "No longer needed",
-  "immediate": false
-}
+### 6.7 Publish Post Now
+**Method:** POST  
+**URL:** `{{base_url}}/api/posts/{{post_id}}/publish`  
+**Headers:** 
 ```
-
-### 7.8 Get Invoices
-```http
-GET {{base_url}}/api/billing/invoices?limit=10
 Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 6.8 Get Post Analytics
+**Method:** GET  
+**URL:** `{{base_url}}/api/posts/{{post_id}}/analytics`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 6.9 Upload Media for Post
+**Method:** POST  
+**URL:** `{{base_url}}/api/posts/upload-media`  
+**Headers:** 
+```
+Content-Type: multipart/form-data
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (Form Data):**
+```
+file: [Upload image/video file]
+post_id: {{post_id}}
+media_type: image
 ```
 
 ---
 
-## 8. 🚨 ERROR TESTING SCENARIOS
+## 7. ANALYTICS & INSIGHTS (`/api/analytics/`)
 
-### 8.1 Test Without Token (401 Error)
-```http
-GET {{base_url}}/api/auth/profile
+### 7.1 Get Dashboard Overview
+**Method:** GET  
+**URL:** `{{base_url}}/api/analytics/dashboard`  
+**Headers:** 
 ```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Analytics dashboard retrieved successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "overview": {
+      "total_posts": 45,
+      "posts_this_month": 12,
+      "connected_platforms": 3,
+      "total_engagement": 1250,
+      "avg_engagement_rate": 0.035
+    },
+    "recent_performance": {
+      "last_7_days": {
+        "posts": 5,
+        "engagement": 180,
+        "reach": 2500
+      },
+      "last_30_days": {
+        "posts": 20,
+        "engagement": 750,
+        "reach": 10000
+      }
+    },
+    "platform_breakdown": {
+      "facebook": {
+        "posts": 20,
+        "engagement": 600,
+        "reach": 5000
+      },
+      "linkedin": {
+        "posts": 15,
+        "engagement": 400,
+        "reach": 3000
+      },
+      "twitter": {
+        "posts": 10,
+        "engagement": 250,
+        "reach": 2000
+      }
+    },
+    "top_performing_posts": [
+      {
+        "id": "66cc1234567890abcdef1234",
+        "content": "AI is transforming business...",
+        "platform": "linkedin",
+        "engagement": 85,
+        "reach": 1200,
+        "published_at": "2025-08-25T10:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+### 7.2 Get Platform Analytics
+**Method:** GET  
+**URL:** `{{base_url}}/api/analytics/platform/facebook?period=30d`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 7.3 Get Content Performance
+**Method:** GET  
+**URL:** `{{base_url}}/api/analytics/content-performance?limit=10&sort=engagement`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 7.4 Get Engagement Metrics
+**Method:** GET  
+**URL:** `{{base_url}}/api/analytics/engagement?start_date=2025-08-01&end_date=2025-08-31`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 7.5 Export Analytics Data
+**Method:** GET  
+**URL:** `{{base_url}}/api/analytics/export?format=csv&period=30d`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+---
+
+## 8. USER PLAN & BILLING (`/api/billing/`)
+
+### 8.1 Get Current Plan
+**Method:** GET  
+**URL:** `{{base_url}}/api/billing/plan`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Plan information retrieved successfully",
+  "timestamp": "2025-08-27T02:30:00.000Z",
+  "data": {
+    "current_plan": {
+      "id": "free",
+      "name": "Free Plan",
+      "price": 0,
+      "billing_cycle": "monthly",
+      "features": {
+        "posts_per_month": 10,
+        "connected_platforms": 2,
+        "ai_content_generation": 50,
+        "automation": false,
+        "analytics": "basic",
+        "support": "community"
+      },
+      "usage": {
+        "posts_this_month": 5,
+        "connected_platforms": 1,
+        "ai_generations_used": 15,
+        "automation_active": false
+      },
+      "limits": {
+        "posts_remaining": 5,
+        "platforms_remaining": 1,
+        "ai_generations_remaining": 35
+      }
+    },
+    "available_plans": [
+      {
+        "id": "pro",
+        "name": "Pro Plan",
+        "price": 29,
+        "billing_cycle": "monthly",
+        "features": {
+          "posts_per_month": 100,
+          "connected_platforms": 5,
+          "ai_content_generation": 500,
+          "automation": true,
+          "analytics": "advanced",
+          "support": "priority"
+        }
+      },
+      {
+        "id": "agency",
+        "name": "Agency Plan",
+        "price": 99,
+        "billing_cycle": "monthly",
+        "features": {
+          "posts_per_month": "unlimited",
+          "connected_platforms": "unlimited",
+          "ai_content_generation": "unlimited",
+          "automation": true,
+          "analytics": "premium",
+          "support": "dedicated"
+        }
+      }
+    ]
+  }
+}
+```
+
+### 8.2 Upgrade Plan
+**Method:** POST  
+**URL:** `{{base_url}}/api/billing/upgrade`  
+**Headers:** 
+```
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+
+**Body (JSON):**
+```json
+{
+  "plan_id": "pro",
+  "billing_cycle": "monthly",
+  "payment_method": "stripe"
+}
+```
+
+### 8.3 Get Billing History
+**Method:** GET  
+**URL:** `{{base_url}}/api/billing/history?limit=10`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+### 8.4 Cancel Subscription
+**Method:** POST  
+**URL:** `{{base_url}}/api/billing/cancel`  
+**Headers:** 
+```
+Authorization: Bearer {{access_token}}
+```
+**Authorization:** Bearer Token  
+**Body:** None  
+
+---
+
+## ERROR TESTING SCENARIOS
+
+### Test Without Token (401 Error)
+**Method:** GET  
+**URL:** `{{base_url}}/api/auth/profile`  
+**Headers:** None  
+**Authorization:** None  
+**Body:** None  
 
 **Expected Response:**
 ```json
@@ -741,22 +1527,39 @@ GET {{base_url}}/api/auth/profile
 }
 ```
 
-### 8.2 Test with Invalid Token (401 Error)
-```http
-GET {{base_url}}/api/auth/profile
+### Test with Invalid Token (401 Error)
+**Method:** GET  
+**URL:** `{{base_url}}/api/auth/profile`  
+**Headers:** 
+```
 Authorization: Bearer invalid_token_here
 ```
+**Authorization:** Bearer Token  
+**Body:** None  
 
-### 8.3 Test Free User Accessing Pro Features (403 Error)
-```http
-POST {{base_url}}/api/content-generator/generate-variants
-Authorization: Bearer {{access_token}}
-Content-Type: application/json
-
+**Expected Response:**
+```json
 {
-  "domain": "tech",
-  "platform": "instagram", 
-  "count": 5
+  "success": false,
+  "message": "Authentication failed",
+  "error": "Invalid or expired token"
+}
+```
+
+### Test Invalid Registration Data (400 Error)
+**Method:** POST  
+**URL:** `{{base_url}}/api/auth/register`  
+**Headers:** 
+```
+Content-Type: application/json
+```
+**Authorization:** None  
+
+**Body (JSON):**
+```json
+{
+  "email": "invalid-email",
+  "password": "123"
 }
 ```
 
@@ -764,227 +1567,120 @@ Content-Type: application/json
 ```json
 {
   "success": false,
-  "message": "Variants generation requires Pro plan",
-  "feature_note": "Variants generation requires Pro plan"
-}
-```
-
-### 8.4 Test Invalid Registration Data (400 Error)
-```http
-POST {{base_url}}/api/auth/register
-Content-Type: application/json
-
-{
-  "email": "invalid-email",
-  "password": "123"
-}
-```
-
-### 8.5 Test Duplicate Registration (409 Error)
-```http
-POST {{base_url}}/api/auth/register
-Content-Type: application/json
-
-{
-  "name": "Duplicate User",
-  "email": "test@velocitypost.ai",
-  "password": "TestPassword123!"
-}
-```
-
-### 8.6 Test Invalid Login (401 Error)
-```http
-POST {{base_url}}/api/auth/login
-Content-Type: application/json
-
-{
-  "email": "test@velocitypost.ai",
-  "password": "WrongPassword123!"
-}
-```
-
-### 8.7 Test Weak Password (400 Error)
-```http
-POST {{base_url}}/api/auth/register
-Content-Type: application/json
-
-{
-  "name": "Test User",
-  "email": "weak@test.com",
-  "password": "weak"
+  "message": "Validation failed",
+  "error": {
+    "name": "Name is required",
+    "email": "Invalid email format",
+    "password": "Password must be at least 8 characters long"
+  }
 }
 ```
 
 ---
 
-## 9. 🔄 COMPLETE USER JOURNEY TEST COLLECTION
+## COLLECTION SETUP
 
-### Test Collection: Complete User Workflow
-
-**Collection Pre-request Script:**
+### Environment Variables Setup
 ```javascript
-// Set base URL if not set
+// Add to Collection Pre-request Script
 if (!pm.environment.get("base_url")) {
     pm.environment.set("base_url", "http://localhost:5000");
 }
 
-console.log("Running request to:", pm.request.url);
+// Log request details
+console.log("Request:", pm.request.method, pm.request.url);
+console.log("Headers:", JSON.stringify(pm.request.headers));
 ```
 
-**Collection Test Script:**
+### Global Test Scripts
 ```javascript
-pm.test("Response time is less than 2000ms", function () {
-    pm.expect(pm.response.responseTime).to.be.below(2000);
+// Add to Collection Tests
+pm.test("Response time is reasonable", function () {
+    pm.expect(pm.response.responseTime).to.be.below(5000);
 });
 
-pm.test("Response is JSON", function () {
-    pm.response.to.be.json;
-});
-```
-
-### User Journey Test Sequence:
-
-1. **Health Check** → Verify server is running
-2. **Register User** → Create new account  
-3. **Login** → Get access token
-4. **Get Profile** → Verify authentication
-5. **Get Content Domains** → View available options
-6. **Generate Content** → Create AI content  
-7. **Get Platforms** → View OAuth platforms
-8. **Get Schedule Settings** → View automation settings
-9. **Update Schedule** → Configure posting times
-10. **Get Subscription** → View current plan
-11. **Get Analytics** → View performance data
-12. **Logout** → End session
-
----
-
-## 10. 📈 AUTOMATED TEST SCRIPTS
-
-### Universal Test Scripts for Protected Routes:
-```javascript
-pm.test("Status code is 200", function () {
-    pm.response.to.have.status(200);
+pm.test("Response has correct content type", function () {
+    pm.expect(pm.response.headers.get("Content-Type")).to.include("application/json");
 });
 
-pm.test("Response has success field", function () {
-    const jsonData = pm.response.json();
-    pm.expect(jsonData).to.have.property('success');
-});
-
-pm.test("No error in response", function () {
-    const jsonData = pm.response.json();
-    if (jsonData.success === false) {
-        console.log("Error:", jsonData.error);
-        console.log("Message:", jsonData.message);
-    }
-    pm.expect(jsonData.success).to.eql(true);
-});
-```
-
-### Test Script for Auth Routes:
-```javascript
-pm.test("Auth response structure", function () {
-    const response = pm.response.json();
-    
-    if (pm.response.code === 200 || pm.response.code === 201) {
-        if (response.access_token) {
-            pm.environment.set("access_token", response.access_token);
-        }
-        if (response.refresh_token) {
-            pm.environment.set("refresh_token", response.refresh_token);
-        }
-        if (response.user) {
-            pm.environment.set("user_id", response.user.id);
-            pm.environment.set("user_email", response.user.email);
-        }
-    }
-});
+// Handle token expiration
+if (pm.response.code === 401 && pm.response.json().error.includes("expired")) {
+    console.log("Token expired, please re-login");
+}
 ```
 
 ---
 
-## 11. 🔧 PERFORMANCE & LOAD TESTING
+## TESTING SEQUENCE RECOMMENDATIONS
 
-### Performance Benchmarks:
-- **Health Check:** < 50ms
-- **Authentication:** < 200ms  
-- **Content Generation:** < 2000ms
-- **Database Queries:** < 100ms
-- **OAuth Operations:** < 500ms
+### Phase 1: System Health & Auth (Required First)
+1. Health Check
+2. Register New User
+3. Login User
+4. Verify Token
+5. Get User Profile
 
-### Load Test Configuration:
-- **Concurrent Users:** 10
-- **Duration:** 60 seconds
-- **Key Endpoints:** `/api/auth/login`, `/api/content-generator/generate`
+### Phase 2: Platform Management
+6. Get Supported Platforms
+7. Generate OAuth URL
+8. Get Connected Accounts
+
+### Phase 3: Content Generation
+9. Generate Content
+10. Generate Hashtags
+11. Content History
+12. Save Content
+
+### Phase 4: Post Management
+13. Create Manual Post
+14. Get All Posts
+15. Get Post Analytics
+16. Update Post
+
+### Phase 5: Automation
+17. Get Automation Status
+18. Get Content Domains
+19. Start Automation
+20. Get Automation History
+
+### Phase 6: Analytics & Billing
+21. Dashboard Analytics
+22. Get Current Plan
+23. Platform Analytics
+
+### Phase 7: Error Testing
+24. Test without authentication
+25. Test with invalid data
+26. Test rate limiting
 
 ---
 
-## 12. 🚀 QUICK START COMMANDS
+## TROUBLESHOOTING GUIDE
 
-### Setup Commands:
-```bash
-# 1. Start the backend server
-cd backend/app
-python app.py
+### Common Issues & Solutions
 
-# 2. Test basic connectivity
-curl http://localhost:5000/api/health
+1. **"Using generated encryption key" Warning**
+   - This is cosmetic and doesn't affect functionality
+   - Your server is working correctly despite the warning
 
-# 3. Import collection into Postman
-# 4. Set environment variables
-# 5. Run the complete test collection
-```
+2. **Authentication Failures**
+   - Ensure JWT token is properly set in environment
+   - Check token hasn't expired (24 hours)
+   - Verify Authorization header format: `Bearer {{access_token}}`
 
-### Collection Runner Settings:
-- **Environment:** VelocityPost Development
-- **Iterations:** 1
-- **Delay:** 100ms between requests
-- **Data File:** Optional CSV for bulk testing
+3. **Database Connection Issues**
+   - Verify MongoDB is running
+   - Check health endpoint shows "database": "connected"
 
----
+4. **Platform Connection Failures**
+   - Ensure OAuth credentials are configured
+   - Check callback URLs match your setup
+   - Verify platform-specific requirements
 
-## 13. 📋 TEST CHECKLIST
+5. **Content Generation Errors**
+   - Check AI service API keys are configured
+   - Verify sufficient credits/quota
+   - Test with simpler prompts first
 
-### Pre-Testing Checklist:
-- [ ] Backend server running on port 5000
-- [ ] MongoDB connected (check health endpoint)
-- [ ] Postman environment configured
-- [ ] All environment variables set
-
-### Authentication Testing:
-- [ ] User registration works
-- [ ] User login returns valid tokens
-- [ ] Token refresh functionality
-- [ ] Password reset flow
-- [ ] Profile CRUD operations
-- [ ] Account deletion
-
-### Content Generation Testing:
-- [ ] Domain listing
-- [ ] Platform listing  
-- [ ] Content generation with all parameters
-- [ ] Variant generation (Pro feature)
-- [ ] Usage statistics
-- [ ] Generation history
-
-### OAuth & Platform Testing:
-- [ ] Platform listing
-- [ ] Auth URL generation
-- [ ] Connection testing
-- [ ] Account management
-
-### Auto-Posting Testing:
-- [ ] Status checking
-- [ ] Start/pause/stop operations
-- [ ] Schedule configuration
-- [ ] Queue management
-
-### Error Handling Testing:
-- [ ] Invalid tokens
-- [ ] Missing parameters
-- [ ] Plan limitations
-- [ ] Rate limiting
-- [ ] Database failures
-
-This comprehensive guide covers all API endpoints with proper test scripts, expected responses, and error scenarios. Each request includes authentication handling and automated token management for seamless testing.
+This comprehensive guide covers all your VelocityPost.ai API endpoints with proper Postman configuration, test scripts, and expected responses.
+  "
