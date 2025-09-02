@@ -626,15 +626,18 @@ def generate_ai_content(domain, domain_info, platform, platform_info, custom_pro
         import random
         
         # Get base content for domain
+
         content_options = base_content.get(domain, base_content['tech'])
         base_text = random.choice(content_options)
         
         # Adjust for platform requirements
+
         max_length = platform_info['max_length']
         if len(base_text) > max_length:
             base_text = base_text[:max_length-3] + "..."
         
         # Add hashtags if platform supports them
+
         hashtags = []
         if platform_info['supports_hashtags']:
             hashtags = domain_info['hashtags'][:platform_info['optimal_hashtags']]
@@ -642,6 +645,7 @@ def generate_ai_content(domain, domain_info, platform, platform_info, custom_pro
                 base_text += " " + " ".join(hashtags)
         
         # Generate performance prediction (simplified)
+
         performance_score = random.randint(65, 95)  # Mock performance score
         
         return {
@@ -655,6 +659,7 @@ def generate_ai_content(domain, domain_info, platform, platform_info, custom_pro
         
     except Exception as e:
         logger.error(f"AI content generation error: {e}")
+        
         # Return fallback content
         return {
             'text': f"Check out the latest in {domain}! 🚀",
