@@ -8,6 +8,8 @@ import logging
 logger = logging.getLogger(__name__)
 analytics_bp = Blueprint('analytics', __name__)
 
+
+
 @analytics_bp.route('/overview', methods=['GET'])
 @jwt_required()
 def get_analytics_overview():
@@ -15,10 +17,14 @@ def get_analytics_overview():
     try:
         user_id = get_jwt_identity()
         
+
+
         # Get date range from query params
         days = int(request.args.get('days', 30))
         start_date = datetime.utcnow() - timedelta(days=days)
         
+
+
         # Total posts count
         total_posts = current_app.db.posts.count_documents({
             'user_id': ObjectId(user_id),
@@ -37,7 +43,9 @@ def get_analytics_overview():
             }}
         ]))
         
+
         # Posts by domain
+
         posts_by_domain = list(current_app.db.posts.aggregate([
             {'$match': {
                 'user_id': ObjectId(user_id),
@@ -49,6 +57,7 @@ def get_analytics_overview():
             }}
         ]))
         
+
         # Recent activity (last 7 days)
         week_start = datetime.utcnow() - timedelta(days=7)
         recent_posts = list(current_app.db.posts.aggregate([
@@ -61,6 +70,7 @@ def get_analytics_overview():
                     'year': {'$year': '$created_at'},
                     'month': {'$month': '$created_at'},
                     'day': {'$dayOfMonth': '$created_at'}
+               
                 },
                 'count': {'$sum': 1}
             }},
@@ -68,6 +78,7 @@ def get_analytics_overview():
         ]))
         
         # Success rate
+        
         successful_posts = current_app.db.posts.count_documents({
             'user_id': ObjectId(user_id),
             'status': 'posted',
