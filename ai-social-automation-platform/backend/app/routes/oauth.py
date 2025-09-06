@@ -234,6 +234,9 @@ def disconnect_platform(platform):
             'message': f'{platform_name} disconnected successfully'
         })
         
+        
+
+        
     except Exception as e:
         logger.error(f"Error disconnecting {platform}: {str(e)}")
         return jsonify({

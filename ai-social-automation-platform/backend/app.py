@@ -300,6 +300,7 @@ def create_app():
                     'DELETE /delete-account - Delete user account'
                 ]
             }
+            
         
         if oauth_registered:
             endpoints['oauth'] = {
@@ -363,6 +364,7 @@ def create_app():
     return app
 
 # Create the Flask app
+
 app = create_app()
 
 if __name__ == '__main__':
