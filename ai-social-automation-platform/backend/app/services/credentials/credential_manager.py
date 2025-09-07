@@ -17,6 +17,10 @@ class CredentialManager:
             import base64
             key = base64.urlsafe_b64encode(encryption_key.encode()[:32])
         else:
+
+
+
+            
             # Assume it's already a valid Fernet key
             key = encryption_key.encode()
         

@@ -83,4 +83,6 @@ def test():
         'timestamp': datetime.utcnow().isoformat()
     }), 200
 
+
+
 print("✅ Platforms blueprint loaded successfully")

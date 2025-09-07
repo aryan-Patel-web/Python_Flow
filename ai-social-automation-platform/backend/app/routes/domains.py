@@ -18,6 +18,7 @@ def get_available_domains():
             'domains': domains
         }), 200
         
+        
     except Exception as e:
         logger.error(f"Get domains error: {str(e)}")
         return jsonify({'error': 'Failed to fetch domains'}), 500

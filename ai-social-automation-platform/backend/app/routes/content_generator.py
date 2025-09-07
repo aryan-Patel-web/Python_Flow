@@ -657,6 +657,8 @@ def generate_ai_content(domain, domain_info, platform, platform_info, custom_pro
             'tone': tone or domain_info['tone']
         }
         
+
+        
     except Exception as e:
         logger.error(f"AI content generation error: {e}")
         
