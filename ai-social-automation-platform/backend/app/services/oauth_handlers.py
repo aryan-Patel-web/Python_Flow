@@ -12,8 +12,6 @@ from flask import current_app
 
 
 
-
-
 class BaseOAuthHandler(ABC):
     """Base class for OAuth handlers"""
     

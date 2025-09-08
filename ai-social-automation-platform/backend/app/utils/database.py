@@ -872,6 +872,16 @@ def get_database_health():
             'error': str(e)
         }
 
+
+
+
+
+
+
+
+
+
+
 if __name__ == '__main__':
     try:
         init_db()
