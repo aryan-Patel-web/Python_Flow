@@ -12,6 +12,7 @@ import hashlib
 
 
 
+
 logger = logging.getLogger(__name__)
 
 class RateLimiter:
@@ -29,6 +30,7 @@ class RateLimiter:
             decode_responses=True
         )
         self.prefix = prefix
+    
     
     def _get_key(self, identifier: str, window: str) -> str:
         """Generate Redis key for rate limiting"""
