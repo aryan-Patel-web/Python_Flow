@@ -99,12 +99,12 @@ class AIService:
             except Exception as e:
                 logger.error(f"Failed to initialize voice engine: {e}")
         
-        # Platform-specific prompts
+        # Platform-specific prompts - FIXED: Added missing _get_reddit_answer_prompt
         self.platform_prompts = {
             "reddit": {
                 "post": self._get_reddit_post_prompt,
                 "comment": self._get_reddit_comment_prompt,
-                "answer": self._get_reddit_answer_prompt
+                "answer": self._get_reddit_answer_prompt  # This was missing - FIXED
             },
             "twitter": {
                 "tweet": self._get_twitter_tweet_prompt,
@@ -120,6 +120,35 @@ class AIService:
                 "advice": self._get_webmd_advice_prompt
             }
         }
+        
+        # Domain-specific content templates for Indian businesses
+        self.domain_templates = {
+            "education": {
+                "reddit_subreddits": ["india", "JEE", "NEET", "IndianStudents", "StudyTips", "AskIndia"],
+                "content_themes": ["exam_preparation", "study_tips", "career_guidance", "course_recommendations"],
+                "keywords": ["JEE", "NEET", "board_exams", "competitive_exams", "study_abroad", "engineering", "medical"]
+            },
+            "restaurant": {
+                "reddit_subreddits": ["india", "bangalore", "mumbai", "delhi", "food", "IndianFood", "pune"],
+                "content_themes": ["food_reviews", "recipe_sharing", "restaurant_updates", "local_cuisine"],
+                "keywords": ["indian_food", "street_food", "home_delivery", "restaurant", "recipe", "spices"]
+            },
+            "tech": {
+                "reddit_subreddits": ["india", "bangalore", "developersIndia", "programming", "coding", "IndianStartups"],
+                "content_themes": ["tech_tutorials", "job_market", "startup_news", "programming_tips"],
+                "keywords": ["programming", "software", "development", "startup", "tech_jobs", "coding"]
+            },
+            "health": {
+                "reddit_subreddits": ["india", "fitness", "HealthyFood", "mentalhealth", "AskDocs"],
+                "content_themes": ["health_tips", "fitness_advice", "nutrition", "mental_wellness"],
+                "keywords": ["health", "fitness", "yoga", "ayurveda", "nutrition", "wellness", "exercise"]
+            },
+            "business": {
+                "reddit_subreddits": ["india", "entrepreneur", "IndiaInvestments", "business", "IndianStartups"],
+                "content_themes": ["business_tips", "investment_advice", "startup_stories", "market_insights"],
+                "keywords": ["business", "entrepreneur", "investment", "startup", "finance", "marketing"]
+            }
+        }
     
     async def generate_platform_content(
         self,
@@ -129,10 +158,11 @@ class AIService:
         tone: str = "professional",
         language: str = "en",
         target_audience: str = "general",
-        additional_context: str = ""
+        additional_context: str = "",
+        domain: str = None
     ) -> Dict[str, Any]:
         """
-        Generate platform-specific content using AI
+        Generate platform-specific content using AI with domain expertise
         
         Args:
             platform: Target platform (reddit, twitter, stackoverflow, webmd)
@@ -142,6 +172,7 @@ class AIService:
             language: Target language
             target_audience: Target audience description
             additional_context: Additional context or requirements
+            domain: Business domain (education, restaurant, tech, health, business)
             
         Returns:
             Dictionary containing generated content and metadata
@@ -152,20 +183,21 @@ class AIService:
             if not prompt_generator:
                 raise ValueError(f"Unsupported platform/content_type: {platform}/{content_type}")
             
-            # Generate prompt
+            # Generate prompt with domain context
             prompt = prompt_generator(
                 topic=topic,
                 tone=tone,
                 language=language,
                 target_audience=target_audience,
-                additional_context=additional_context
+                additional_context=additional_context,
+                domain=domain
             )
             
             # Generate content using AI
             content = await self._generate_with_fallback(prompt, platform, language)
             
             # Post-process content
-            processed_content = self._post_process_content(content, platform, language)
+            processed_content = self._post_process_content(content, platform, language, domain)
             
             return {
                 "success": True,
@@ -173,6 +205,7 @@ class AIService:
                 "platform": platform,
                 "content_type": content_type,
                 "language": language,
+                "domain": domain,
                 "word_count": len(processed_content.split()),
                 "character_count": len(processed_content),
                 "generated_at": datetime.now().isoformat(),
@@ -187,16 +220,96 @@ class AIService:
                 "message": "Failed to generate content"
             }
     
+    async def generate_reddit_domain_content(
+        self,
+        domain: str,
+        business_type: str,
+        target_audience: str = "indian_users",
+        language: str = "en",
+        content_style: str = "engaging"
+    ) -> Dict[str, Any]:
+        """
+        Generate domain-specific Reddit content for Indian businesses
+        
+        Args:
+            domain: Business domain (education, restaurant, tech, health, business)
+            business_type: Specific business type within domain
+            target_audience: Target audience specification
+            language: Content language
+            content_style: Style of content (engaging, informative, promotional)
+            
+        Returns:
+            Dictionary containing generated Reddit content
+        """
+        try:
+            domain_config = self.domain_templates.get(domain, {})
+            if not domain_config:
+                raise ValueError(f"Unsupported domain: {domain}")
+            
+            # Create domain-specific prompt
+            prompt = f"""
+            Create engaging Reddit content for a {business_type} in the {domain} sector targeting {target_audience}.
+            
+            Domain Context: {domain}
+            Business Type: {business_type}
+            Target Audience: {target_audience}
+            Language: {language}
+            Content Style: {content_style}
+            
+            Requirements:
+            - Create both a compelling title and body content
+            - Make it relevant to Indian market and culture
+            - Include appropriate keywords: {', '.join(domain_config.get('keywords', []))}
+            - Suitable for subreddits: {', '.join(domain_config.get('reddit_subreddits', []))}
+            - Tone should be helpful and authentic, not overly promotional
+            - Include call-to-action that encourages discussion
+            - Consider regional preferences and cultural nuances
+            
+            Content Themes to consider: {', '.join(domain_config.get('content_themes', []))}
+            
+            Format as:
+            TITLE: [Engaging Reddit post title]
+            BODY: [Main post content with appropriate formatting]
+            SUGGESTED_SUBREDDITS: [Best subreddits for this content]
+            """
+            
+            content = await self._generate_with_fallback(prompt, "reddit", language)
+            
+            # Parse the generated content
+            parsed_content = self._parse_reddit_content(content)
+            
+            return {
+                "success": True,
+                "title": parsed_content.get("title", ""),
+                "body": parsed_content.get("body", ""),
+                "suggested_subreddits": parsed_content.get("subreddits", domain_config.get('reddit_subreddits', [])),
+                "domain": domain,
+                "business_type": business_type,
+                "language": language,
+                "keywords": domain_config.get('keywords', []),
+                "generated_at": datetime.now().isoformat(),
+                "message": "Domain-specific Reddit content generated successfully"
+            }
+            
+        except Exception as e:
+            logger.error(f"Reddit domain content generation failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to generate Reddit domain content"
+            }
+    
     async def generate_qa_answer(
         self,
         platform: str,
         question: str,
         context: str = "",
         language: str = "en",
-        expertise_level: str = "intermediate"
+        expertise_level: str = "intermediate",
+        domain: str = None
     ) -> Dict[str, Any]:
         """
-        Generate Q&A answer for educational platforms
+        Generate Q&A answer for educational platforms with domain expertise
         
         Args:
             platform: Platform name (stackoverflow, webmd, reddit)
@@ -204,25 +317,27 @@ class AIService:
             context: Additional context about the question
             language: Response language
             expertise_level: Level of technical detail (beginner, intermediate, advanced)
+            domain: Business domain for specialized answers
             
         Returns:
             Dictionary containing generated answer
         """
         try:
-            # Create specialized Q&A prompt
+            # Create specialized Q&A prompt with domain context
             prompt = self._get_qa_prompt(
                 platform=platform,
                 question=question,
                 context=context,
                 language=language,
-                expertise_level=expertise_level
+                expertise_level=expertise_level,
+                domain=domain
             )
             
             # Generate answer
             answer = await self._generate_with_fallback(prompt, platform, language)
             
             # Add platform-specific formatting and disclaimers
-            formatted_answer = self._format_qa_answer(answer, platform, language)
+            formatted_answer = self._format_qa_answer(answer, platform, language, domain)
             
             return {
                 "success": True,
@@ -230,6 +345,7 @@ class AIService:
                 "platform": platform,
                 "language": language,
                 "expertise_level": expertise_level,
+                "domain": domain,
                 "word_count": len(formatted_answer.split()),
                 "generated_at": datetime.now().isoformat(),
                 "message": "Answer generated successfully"
@@ -241,6 +357,98 @@ class AIService:
                 "success": False,
                 "error": str(e),
                 "message": "Failed to generate answer"
+            }
+    
+    async def monitor_and_reply_questions(
+        self,
+        domain: str,
+        subreddits: List[str],
+        keywords: List[str],
+        user_expertise: str,
+        language: str = "en",
+        max_replies: int = 5
+    ) -> Dict[str, Any]:
+        """
+        Monitor Reddit questions and generate domain-specific replies
+        
+        Args:
+            domain: User's domain expertise
+            subreddits: Subreddits to monitor
+            keywords: Keywords to filter questions
+            user_expertise: User's expertise level in domain
+            language: Reply language
+            max_replies: Maximum number of replies to generate
+            
+        Returns:
+            Dictionary containing generated replies
+        """
+        try:
+            # This would integrate with your Reddit monitoring functionality
+            # For now, providing the structure for generating replies
+            
+            generated_replies = []
+            
+            # Simulate finding relevant questions (integrate with actual Reddit monitoring)
+            sample_questions = [
+                {
+                    "id": "sample_1",
+                    "title": "Best way to prepare for JEE Main?",
+                    "content": "I'm in 12th grade and need guidance on JEE preparation strategy.",
+                    "subreddit": "JEE",
+                    "score": 15,
+                    "num_comments": 3
+                }
+            ]
+            
+            for question in sample_questions[:max_replies]:
+                # Generate domain-specific reply
+                reply_prompt = f"""
+                As an expert in {domain}, provide a helpful answer to this question:
+                
+                Question: {question['title']}
+                Context: {question['content']}
+                Subreddit: r/{question['subreddit']}
+                
+                Your expertise level: {user_expertise}
+                Target language: {language}
+                
+                Requirements:
+                - Provide practical, actionable advice
+                - Draw from {domain} domain expertise
+                - Be helpful and encouraging
+                - Include specific tips or resources
+                - Keep it conversational and authentic
+                - Consider Indian context and cultural nuances
+                
+                Format as a natural Reddit comment that adds genuine value.
+                """
+                
+                reply_content = await self._generate_with_fallback(reply_prompt, "reddit", language)
+                
+                generated_replies.append({
+                    "question_id": question["id"],
+                    "question_title": question["title"],
+                    "subreddit": question["subreddit"],
+                    "generated_reply": reply_content,
+                    "word_count": len(reply_content.split()),
+                    "domain": domain
+                })
+            
+            return {
+                "success": True,
+                "replies_generated": len(generated_replies),
+                "replies": generated_replies,
+                "domain": domain,
+                "language": language,
+                "message": f"Generated {len(generated_replies)} domain-specific replies"
+            }
+            
+        except Exception as e:
+            logger.error(f"Monitor and reply failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to generate replies"
             }
     
     async def speech_to_text(
@@ -532,6 +740,16 @@ class AIService:
     
     def _get_reddit_post_prompt(self, **kwargs) -> str:
         """Generate Reddit post prompt"""
+        domain_context = ""
+        if kwargs.get('domain'):
+            domain_config = self.domain_templates.get(kwargs['domain'], {})
+            domain_context = f"""
+            Domain: {kwargs['domain']}
+            Relevant keywords: {', '.join(domain_config.get('keywords', []))}
+            Target subreddits: {', '.join(domain_config.get('reddit_subreddits', []))}
+            Content themes: {', '.join(domain_config.get('content_themes', []))}
+            """
+        
         return f"""
         Create a Reddit post about {kwargs['topic']} for r/india or related Indian subreddits.
         
@@ -540,9 +758,11 @@ class AIService:
         - Language: {kwargs['language']} (use Hindi words where culturally appropriate)
         - Target audience: {kwargs['target_audience']}
         - Length: 100-300 words
-        - Include relevant hashtags
         - Make it engaging and discussion-worthy
         - Consider Indian cultural context and current trends
+        - Include relevant hashtags sparingly
+        
+        {domain_context}
         
         Additional context: {kwargs.get('additional_context', '')}
         
@@ -561,8 +781,36 @@ class AIService:
         - Be helpful and add value to the discussion
         - Include personal insight or experience if relevant
         - Use appropriate Reddit culture and etiquette
+        - Consider Indian context if applicable
         
         Make it sound natural and human-like.
+        """
+    
+    def _get_reddit_answer_prompt(self, **kwargs) -> str:
+        """Generate Reddit Q&A answer prompt - FIXED: This method was missing"""
+        domain_context = ""
+        if kwargs.get('domain'):
+            domain_config = self.domain_templates.get(kwargs['domain'], {})
+            domain_context = f"Drawing from {kwargs['domain']} domain expertise"
+        
+        return f"""
+        Create a comprehensive Reddit answer about {kwargs['topic']}.
+        
+        Requirements:
+        - Tone: {kwargs['tone']} but helpful and authoritative
+        - Language: {kwargs['language']}
+        - Length: 100-250 words
+        - Provide practical, actionable advice
+        - Include specific examples or steps where appropriate
+        - Be encouraging and supportive
+        - Consider Indian cultural context
+        - Use Reddit formatting (bold, lists, etc.)
+        
+        {domain_context}
+        
+        Additional context: {kwargs.get('additional_context', '')}
+        
+        Format as a helpful Reddit answer that genuinely helps the questioner.
         """
     
     def _get_twitter_tweet_prompt(self, **kwargs) -> str:
@@ -579,6 +827,36 @@ class AIService:
         - Consider Indian context and current trends
         
         Additional context: {kwargs.get('additional_context', '')}
+        """
+    
+    def _get_twitter_thread_prompt(self, **kwargs) -> str:
+        """Generate Twitter thread prompt"""
+        return f"""
+        Create a Twitter thread about {kwargs['topic']}.
+        
+        Requirements:
+        - Tone: {kwargs['tone']}
+        - Language: {kwargs['language']}
+        - 3-5 tweets in the thread
+        - Each tweet under 280 characters
+        - Progressive information flow
+        - Include relevant hashtags
+        - Consider Indian context
+        
+        Format as numbered tweets: 1/5, 2/5, etc.
+        """
+    
+    def _get_twitter_reply_prompt(self, **kwargs) -> str:
+        """Generate Twitter reply prompt"""
+        return f"""
+        Create a Twitter reply about {kwargs['topic']}.
+        
+        Requirements:
+        - Tone: {kwargs['tone']} but conversational
+        - Language: {kwargs['language']}
+        - Length: Under 280 characters
+        - Be engaging and add value
+        - Consider context of original tweet
         """
     
     def _get_stackoverflow_answer_prompt(self, **kwargs) -> str:
@@ -598,6 +876,20 @@ class AIService:
         Make it detailed enough to be helpful for other developers.
         """
     
+    def _get_stackoverflow_question_prompt(self, **kwargs) -> str:
+        """Generate Stack Overflow question prompt"""
+        return f"""
+        Create a well-structured Stack Overflow question about {kwargs['topic']}.
+        
+        Requirements:
+        - Clear, specific title
+        - Detailed problem description
+        - Include relevant code snippets
+        - Specify expected vs actual behavior
+        - Add relevant tags
+        - Follow SO best practices
+        """
+    
     def _get_webmd_answer_prompt(self, **kwargs) -> str:
         """Generate WebMD health answer prompt"""
         return f"""
@@ -614,425 +906,15 @@ class AIService:
         IMPORTANT: Always emphasize consulting qualified medical professionals.
         """
     
-    def _get_qa_prompt(self, **kwargs) -> str:
-        """Generate general Q&A prompt"""
-        platform_specific = {
-            "stackoverflow": "Provide a technical programming solution with code examples.",
-            "webmd": "Provide health information with appropriate medical disclaimers.",
-            "reddit": "Provide a helpful, conversational answer that adds value to the discussion."
-        }
-        
-        platform_instruction = platform_specific.get(kwargs['platform'], "Provide a helpful, accurate answer.")
-        
+    def _get_webmd_advice_prompt(self, **kwargs) -> str:
+        """Generate WebMD health advice prompt"""
         return f"""
-        Question: {kwargs['question']}
-        Context: {kwargs.get('context', '')}
-        
-        {platform_instruction}
+        Create general health advice about {kwargs['topic']}.
         
         Requirements:
-        - Language: {kwargs['language']}
-        - Expertise level: {kwargs['expertise_level']}
-        - Be accurate and helpful
-        - Include examples where appropriate
-        - Consider Indian context and audience
-        
-        Provide a comprehensive answer.
+        - Focus on prevention and wellness
+        - Include lifestyle recommendations
+        - Be culturally appropriate for Indian users
+        - Add strong medical disclaimers
+        - Suggest professional consultation
         """
-    
-    def _post_process_content(self, content: str, platform: str, language: str) -> str:
-        """Post-process generated content for platform specifics"""
-        # Remove excessive newlines
-        content = re.sub(r'\n{3,}', '\n\n', content)
-        
-        # Platform-specific processing
-        if platform == "twitter":
-            # Ensure under 280 characters
-            if len(content) > 280:
-                content = content[:277] + "..."
-        
-        elif platform == "reddit":
-            # Add Reddit-style formatting
-            content = content.replace("**", "**")  # Keep bold formatting
-            content = content.replace("*", "*")    # Keep italic formatting
-        
-        elif platform == "stackoverflow":
-            # Ensure proper code formatting
-            content = re.sub(r'```(\w+)?\n(.*?)\n```', r'```\1\n\2\n```', content, flags=re.DOTALL)
-        
-        # Language-specific processing
-        if language == "hi":
-            # Add appropriate Hindi greetings/closings
-            if not any(word in content.lower() for word in ['नमस्ते', 'धन्यवाद']):
-                content = "नमस्ते! " + content + " धन्यवाद!"
-        
-        return content.strip()
-    
-    def _format_qa_answer(self, answer: str, platform: str, language: str) -> str:
-        """Format Q&A answer with platform-specific disclaimers"""
-        formatted_answer = answer
-        
-        # Add platform-specific disclaimers
-        if platform == "webmd":
-            if language == "hi":
-                disclaimer = "\n\n⚠️ महत्वपूर्ण: यह केवल सामान्य जानकारी है। किसी भी स्वास्थ्य समस्या के लिए योग्य डॉक्टर से सलाह लें।"
-            else:
-                disclaimer = "\n\n⚠️ IMPORTANT: This is general health information only. Always consult with qualified healthcare professionals for medical advice specific to your condition."
-            formatted_answer += disclaimer
-        
-        elif platform == "stackoverflow":
-            formatted_answer += "\n\n*Hope this helps! Feel free to ask if you need clarification on any part.*"
-        
-        elif platform == "reddit":
-            if language == "hi":
-                formatted_answer += "\n\nकोई और सवाल हो तो पूछिए! 😊"
-            else:
-                formatted_answer += "\n\nFeel free to ask if you have more questions! 😊"
-        
-        return formatted_answer
-    
-    def _get_template_response(self, platform: str, language: str) -> str:
-        """Get template response when AI services fail"""
-        templates = {
-            "reddit": {
-                "en": "Thank you for your question! This is an interesting topic that deserves a detailed discussion. I'd be happy to help you explore this further.",
-                "hi": "आपके सवाल के लिए धन्यवाद! यह एक दिलचस्प विषय है जिस पर विस्तार से चर्चा की जा सकती है।"
-            },
-            "twitter": {
-                "en": "Sharing thoughts on this important topic. What's your perspective? #Discussion",
-                "hi": "इस महत्वपूर्ण विषय पर विचार साझा कर रहा हूं। आपका क्या नजरिया है? #चर्चा"
-            },
-            "stackoverflow": {
-                "en": "This is a great question that requires a detailed technical explanation. Let me break down the approach step by step.",
-                "hi": "यह एक बेहतरीन सवाल है जिसके लिए विस्तृत तकनीकी व्याख्या की आवश्यकता है।"
-            },
-            "webmd": {
-                "en": "Thank you for your health question. While I can provide general information, it's important to consult with healthcare professionals for personalized advice.",
-                "hi": "आपके स्वास्थ्य संबंधी प्रश्न के लिए धन्यवाद। व्यक्तिगत सलाह के लिए स्वास्थ्य विशेषज्ञों से संपर्क करना महत्वपूर्ण है।"
-            }
-        }
-        
-        return templates.get(platform, {}).get(language, templates.get(platform, {}).get("en", "Thank you for your question!"))
-    
-    def health_check(self) -> Dict[str, Any]:
-        """Check AI service health status"""
-        try:
-            services_status = {
-                "mistral": bool(self.mistral_client),
-                "groq": bool(self.groq_client),
-                "translator": bool(self.translator),
-                "voice_engine": bool(self.voice_engine),
-                "speech_recognition": bool(sr),
-                "text_to_speech": bool(gTTS)
-            }
-            
-            # Test basic functionality
-            test_results = {}
-            
-            # Test language detection
-            try:
-                if detect:
-                    test_lang = detect("Hello world")
-                    test_results["language_detection"] = True
-                else:
-                    test_results["language_detection"] = False
-            except:
-                test_results["language_detection"] = False
-            
-            # Test AI generation (simple test)
-            try:
-                if self.mistral_client or self.groq_client:
-                    test_results["ai_generation"] = True
-                else:
-                    test_results["ai_generation"] = False
-            except:
-                test_results["ai_generation"] = False
-            
-            overall_health = any([
-                services_status["mistral"],
-                services_status["groq"]
-            ])
-            
-            return {
-                "success": True,
-                "status": "healthy" if overall_health else "degraded",
-                "services": services_status,
-                "test_results": test_results,
-                "message": "AI service health check completed"
-            }
-            
-        except Exception as e:
-            logger.error(f"AI service health check failed: {e}")
-            return {
-                "success": False,
-                "status": "unhealthy",
-                "error": str(e),
-                "message": "AI service health check failed"
-            }
-    
-    async def generate_bulk_content(
-        self,
-        content_requests: List[Dict[str, Any]],
-        max_concurrent: int = 3
-    ) -> List[Dict[str, Any]]:
-        """
-        Generate multiple pieces of content concurrently
-        
-        Args:
-            content_requests: List of content generation requests
-            max_concurrent: Maximum concurrent generations
-            
-        Returns:
-            List of generation results
-        """
-        async def generate_single(request):
-            try:
-                return await self.generate_platform_content(**request)
-            except Exception as e:
-                logger.error(f"Bulk content generation failed for request: {e}")
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "request": request
-                }
-        
-        # Use semaphore to limit concurrent requests
-        semaphore = asyncio.Semaphore(max_concurrent)
-        
-        async def generate_with_semaphore(request):
-            async with semaphore:
-                return await generate_single(request)
-        
-        # Execute all requests concurrently
-        tasks = [generate_with_semaphore(request) for request in content_requests]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Process results
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                processed_results.append({
-                    "success": False,
-                    "error": str(result),
-                    "request_index": i
-                })
-            else:
-                processed_results.append(result)
-        
-        return processed_results
-    
-    async def optimize_content_for_engagement(
-        self,
-        content: str,
-        platform: str,
-        target_metrics: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Optimize content for better engagement based on platform best practices
-        
-        Args:
-            content: Original content
-            platform: Target platform
-            target_metrics: Desired engagement metrics
-            
-        Returns:
-            Dictionary containing optimized content and suggestions
-        """
-        try:
-            optimization_prompt = f"""
-            Optimize this {platform} content for maximum engagement:
-            
-            Original content: {content}
-            
-            Platform: {platform}
-            Target metrics: {target_metrics or 'general engagement'}
-            
-            Provide:
-            1. Optimized version of the content
-            2. Specific improvements made
-            3. Engagement predictions
-            4. Best time to post recommendations
-            5. Hashtag/keyword suggestions
-            
-            Consider {platform}-specific best practices and Indian audience preferences.
-            """
-            
-            optimized_response = await self._generate_with_fallback(
-                optimization_prompt, 
-                platform, 
-                "en"
-            )
-            
-            # Parse the response (in production, you'd want more structured parsing)
-            return {
-                "success": True,
-                "original_content": content,
-                "optimized_content": optimized_response,
-                "platform": platform,
-                "optimization_score": 8.5,  # Placeholder
-                "predicted_engagement": "high",  # Placeholder
-                "message": "Content optimized successfully"
-            }
-            
-        except Exception as e:
-            logger.error(f"Content optimization failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "original_content": content,
-                "message": "Content optimization failed"
-            }
-    
-    async def analyze_content_sentiment(
-        self,
-        content: str,
-        language: str = "en"
-    ) -> Dict[str, Any]:
-        """
-        Analyze sentiment and tone of content
-        
-        Args:
-            content: Content to analyze
-            language: Content language
-            
-        Returns:
-            Dictionary containing sentiment analysis
-        """
-        try:
-            analysis_prompt = f"""
-            Analyze the sentiment and tone of this content:
-            
-            Content: {content}
-            Language: {language}
-            
-            Provide:
-            1. Overall sentiment (positive/negative/neutral)
-            2. Emotional tone analysis
-            3. Appropriateness for professional platforms
-            4. Cultural sensitivity assessment
-            5. Improvement suggestions if needed
-            
-            Return analysis in structured format.
-            """
-            
-            analysis_response = await self._generate_with_fallback(
-                analysis_prompt,
-                "general",
-                language
-            )
-            
-            # Simple sentiment detection (in production, use specialized models)
-            positive_words = ["good", "great", "excellent", "amazing", "wonderful", "fantastic"]
-            negative_words = ["bad", "terrible", "awful", "horrible", "disappointing"]
-            
-            content_lower = content.lower()
-            positive_count = sum(1 for word in positive_words if word in content_lower)
-            negative_count = sum(1 for word in negative_words if word in content_lower)
-            
-            if positive_count > negative_count:
-                sentiment = "positive"
-                score = 0.7 + (positive_count * 0.1)
-            elif negative_count > positive_count:
-                sentiment = "negative"
-                score = 0.3 - (negative_count * 0.1)
-            else:
-                sentiment = "neutral"
-                score = 0.5
-            
-            return {
-                "success": True,
-                "content": content,
-                "sentiment": sentiment,
-                "sentiment_score": min(max(score, 0.0), 1.0),
-                "analysis": analysis_response,
-                "language": language,
-                "word_count": len(content.split()),
-                "message": "Sentiment analysis completed"
-            }
-            
-        except Exception as e:
-            logger.error(f"Sentiment analysis failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "sentiment": "neutral",
-                "sentiment_score": 0.5,
-                "message": "Sentiment analysis failed"
-            }
-    
-    def get_content_suggestions(
-        self,
-        platform: str,
-        industry: str,
-        language: str = "en"
-    ) -> Dict[str, Any]:
-        """
-        Get content suggestions based on platform and industry
-        
-        Args:
-            platform: Target platform
-            industry: User's industry/niche
-            language: Content language
-            
-        Returns:
-            Dictionary containing content suggestions
-        """
-        try:
-            # Industry-specific content suggestions
-            suggestions_db = {
-                "education": {
-                    "reddit": ["Study tips", "Career guidance", "Exam preparation", "Learning resources"],
-                    "twitter": ["Educational quotes", "Quick tips", "Industry news", "Student motivation"],
-                    "stackoverflow": ["Programming tutorials", "Code reviews", "Best practices"],
-                    "webmd": ["Student health", "Stress management", "Nutrition for studying"]
-                },
-                "healthcare": {
-                    "reddit": ["Health awareness", "Medical myths", "Preventive care", "Wellness tips"],
-                    "twitter": ["Health facts", "Medical news", "Wellness quotes", "Prevention tips"],
-                    "webmd": ["Common conditions", "Symptom explanations", "Treatment options", "Health education"]
-                },
-                "technology": {
-                    "reddit": ["Tech trends", "Product reviews", "Industry insights", "Career advice"],
-                    "twitter": ["Tech news", "Innovation updates", "Quick tutorials", "Industry thoughts"],
-                    "stackoverflow": ["Code solutions", "Framework discussions", "Best practices", "Tool reviews"]
-                },
-                "business": {
-                    "reddit": ["Entrepreneurship", "Business strategies", "Market insights", "Success stories"],
-                    "twitter": ["Business tips", "Industry updates", "Motivational content", "Quick insights"],
-                    "stackoverflow": ["Business automation", "Tool recommendations", "Workflow optimization"]
-                }
-            }
-            
-            platform_suggestions = suggestions_db.get(industry, {}).get(platform, [
-                "General tips and advice",
-                "Industry insights",
-                "Helpful resources",
-                "Community engagement"
-            ])
-            
-            # Add trending topics (placeholder - in production, fetch from APIs)
-            trending_topics = [
-                "AI and automation",
-                "Digital transformation",
-                "Sustainable practices",
-                "Remote work trends",
-                "Indian startup ecosystem"
-            ]
-            
-            return {
-                "success": True,
-                "platform": platform,
-                "industry": industry,
-                "language": language,
-                "content_suggestions": platform_suggestions,
-                "trending_topics": trending_topics,
-                "message": "Content suggestions generated successfully"
-            }
-            
-        except Exception as e:
-            logger.error(f"Content suggestions failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to generate content suggestions"
-            }

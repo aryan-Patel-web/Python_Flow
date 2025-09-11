@@ -1,17 +1,20 @@
 """
 Reddit Integration Module for Multi-Platform Automation
 Handles Reddit OAuth, content posting, Q&A monitoring, and engagement tracking
+OAuth-only implementation for multi-user platform
 """
 
-import praw
+import requests
 import asyncio
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta
 import logging
-from fastapi import HTTPException
-import re
 from dataclasses import dataclass
 import json
+import secrets
+from urllib.parse import urlencode
+import base64
+from cryptography.fernet import Fernet
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,31 +45,54 @@ class RedditComment:
     post_id: str
     subreddit: str
 
-class RedditConnector:
+class RedditOAuthConnector:
     """
-    Production-ready Reddit API connector with comprehensive error handling,
-    rate limiting, and multi-language support
+    Production-ready Reddit OAuth connector for multi-user platform
     """
     
     def __init__(self, config: Dict[str, str]):
-        """
-        Initialize Reddit connector with configuration
-        
-        Args:
-            config: Dictionary containing Reddit API credentials
-        """
+        """Initialize Reddit OAuth connector"""
         self.client_id = config.get('REDDIT_CLIENT_ID')
         self.client_secret = config.get('REDDIT_CLIENT_SECRET')
-        self.user_agent = config.get('REDDIT_USER_AGENT')
-        self.username = config.get('REDDIT_USERNAME')
-        self.password = config.get('REDDIT_PASSWORD')
+        self.redirect_uri = config.get('REDDIT_REDIRECT_URI', 'http://localhost:8000/api/oauth/reddit/callback')
+        self.user_agent = config.get('REDDIT_USER_AGENT', 'IndianAutomationPlatform/1.0')
         
-        self.reddit = None
-        self.is_authenticated = False
+        # Validate required configuration
+        if not self.client_id or not self.client_secret:
+            logger.warning("Reddit OAuth credentials not configured properly")
+            self.is_configured = False
+        else:
+            self.is_configured = True
+            logger.info("Reddit OAuth connector initialized successfully")
+        
+        # OAuth URLs
+        self.auth_url = "https://www.reddit.com/api/v1/authorize"
+        self.token_url = "https://www.reddit.com/api/v1/access_token"
+        self.api_base = "https://oauth.reddit.com"
         
         # Rate limiting
         self.last_request_time = {}
         self.min_request_interval = 2  # seconds between requests
+        
+        # Encryption for token storage
+        self.encryption_key = config.get('TOKEN_ENCRYPTION_KEY')
+        if self.encryption_key:
+            try:
+                self.cipher = Fernet(self.encryption_key.encode())
+            except:
+                # Generate a new key if the provided one is invalid
+                self.cipher = Fernet(Fernet.generate_key())
+        else:
+            self.cipher = Fernet(Fernet.generate_key())
+        
+        # Domain-specific subreddit mapping
+        self.domain_subreddits = {
+            "education": ["india", "JEE", "NEET", "IndianStudents", "StudyTips", "AskIndia"],
+            "restaurant": ["india", "bangalore", "mumbai", "delhi", "food", "IndianFood"],
+            "tech": ["india", "bangalore", "developersIndia", "programming", "coding"],
+            "health": ["india", "fitness", "HealthyFood", "mentalhealth", "AskDocs"],
+            "business": ["india", "entrepreneur", "IndiaInvestments", "business"]
+        }
         
         # Indian subreddits for targeted content
         self.indian_subreddits = [
@@ -82,150 +108,345 @@ class RedditConnector:
             'HomeworkHelp', 'learnpython', 'learnjavascript', 'EngineeringStudents',
             'AskScience', 'AskHistorians', 'math', 'physics', 'chemistry'
         ]
-        
-        self._initialize_connection()
     
-    def _initialize_connection(self) -> None:
-        """Initialize Reddit API connection with proper error handling"""
-        try:
-            self.reddit = praw.Reddit(
-                client_id=self.client_id,
-                client_secret=self.client_secret,
-                user_agent=self.user_agent,
-                username=self.username,
-                password=self.password,
-                check_for_async=False
-            )
-            
-            # Test connection
-            self.reddit.user.me()
-            self.is_authenticated = True
-            logger.info("Reddit connection established successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize Reddit connection: {e}")
-            self.is_authenticated = False
-            raise HTTPException(status_code=500, detail=f"Reddit authentication failed: {e}")
-    
-    def _rate_limit_check(self, endpoint: str) -> None:
-        """Implement rate limiting to avoid Reddit API limits"""
-        current_time = datetime.now()
-        
-        if endpoint in self.last_request_time:
-            time_diff = (current_time - self.last_request_time[endpoint]).total_seconds()
-            if time_diff < self.min_request_interval:
-                sleep_time = self.min_request_interval - time_diff
-                asyncio.sleep(sleep_time)
-        
-        self.last_request_time[endpoint] = current_time
-    
-    async def authenticate_user(self, access_token: str = None) -> Dict[str, Any]:
+    def generate_oauth_url(self, state: str = None) -> Dict[str, str]:
         """
-        Authenticate Reddit user and return user information
+        Generate Reddit OAuth authorization URL
         
         Args:
-            access_token: Optional OAuth access token
+            state: CSRF protection token
             
         Returns:
-            Dictionary containing user information and authentication status
+            Dictionary with authorization URL and state
+        """
+        if not self.is_configured:
+            return {
+                "success": False,
+                "error": "Reddit OAuth not configured",
+                "message": "Please configure Reddit OAuth credentials"
+            }
+        
+        if not state:
+            state = secrets.token_urlsafe(32)
+        
+        params = {
+            "client_id": self.client_id,
+            "response_type": "code",
+            "state": state,
+            "redirect_uri": self.redirect_uri,
+            "duration": "permanent",
+            "scope": "identity read submit edit vote save subscribe privatemessages"
+        }
+        
+        auth_url = f"{self.auth_url}?{urlencode(params)}"
+        
+        return {
+            "success": True,
+            "authorization_url": auth_url,
+            "state": state
+        }
+    
+    async def exchange_code_for_token(self, authorization_code: str) -> Dict[str, Any]:
+        """
+        Exchange authorization code for access token
+        
+        Args:
+            authorization_code: Code from Reddit OAuth callback
+            
+        Returns:
+            Token information or error
         """
         try:
-            if not self.is_authenticated:
-                self._initialize_connection()
+            if not self.is_configured:
+                return {
+                    "success": False,
+                    "error": "Reddit OAuth not configured",
+                    "message": "Please configure Reddit OAuth credentials"
+                }
             
-            user = self.reddit.user.me()
-            user_info = {
-                "username": str(user),
-                "id": user.id if hasattr(user, 'id') else None,
-                "karma": {
-                    "comment": user.comment_karma if hasattr(user, 'comment_karma') else 0,
-                    "link": user.link_karma if hasattr(user, 'link_karma') else 0
-                },
-                "created_utc": user.created_utc if hasattr(user, 'created_utc') else None,
-                "is_verified": True,
-                "platform": "reddit"
+            # Prepare token exchange request
+            token_data = {
+                "grant_type": "authorization_code",
+                "code": authorization_code,
+                "redirect_uri": self.redirect_uri
             }
             
-            logger.info(f"Reddit user authenticated: {user_info['username']}")
-            return {
-                "success": True,
-                "user_info": user_info,
-                "message": "Reddit authentication successful"
+            # Basic authentication with client credentials
+            auth_string = f"{self.client_id}:{self.client_secret}"
+            auth_bytes = auth_string.encode('ascii')
+            auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+            
+            headers = {
+                "Authorization": f"Basic {auth_b64}",
+                "User-Agent": self.user_agent,
+                "Content-Type": "application/x-www-form-urlencoded"
             }
             
+            # Exchange code for token
+            response = requests.post(
+                self.token_url,
+                data=token_data,
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                token_info = response.json()
+                
+                # Get user information
+                user_info = await self.get_reddit_user_info(token_info["access_token"])
+                
+                return {
+                    "success": True,
+                    "access_token": token_info["access_token"],
+                    "refresh_token": token_info.get("refresh_token"),
+                    "expires_in": token_info.get("expires_in", 3600),
+                    "scope": token_info.get("scope", ""),
+                    "user_info": user_info,
+                    "message": "OAuth token exchange successful"
+                }
+            else:
+                error_data = response.json()
+                return {
+                    "success": False,
+                    "error": error_data.get("error", "Token exchange failed"),
+                    "error_description": error_data.get("error_description", ""),
+                    "message": "Failed to exchange code for token"
+                }
+                
         except Exception as e:
-            logger.error(f"Reddit authentication failed: {e}")
+            logger.error(f"OAuth token exchange failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "message": "Reddit authentication failed"
+                "message": "OAuth token exchange failed"
             }
     
-    async def post_content(
-        self, 
-        subreddit_name: str, 
-        title: str, 
-        content: str,
-        content_type: str = "text",
-        language: str = "en"
-    ) -> Dict[str, Any]:
+    async def get_reddit_user_info(self, access_token: str) -> Dict[str, Any]:
         """
-        Post content to Reddit with comprehensive error handling
+        Get Reddit user information using access token
         
         Args:
-            subreddit_name: Target subreddit name
-            title: Post title
-            content: Post content/body
-            content_type: Type of content (text, link, image)
-            language: Content language for cultural adaptation
+            access_token: Reddit OAuth access token
             
         Returns:
-            Dictionary containing post result and metadata
+            User information
+        """
+        try:
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "User-Agent": self.user_agent
+            }
+            
+            response = requests.get(
+                f"{self.api_base}/api/v1/me",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                user_data = response.json()
+                return {
+                    "username": user_data.get("name"),
+                    "user_id": user_data.get("id"),
+                    "created_utc": user_data.get("created_utc"),
+                    "comment_karma": user_data.get("comment_karma", 0),
+                    "link_karma": user_data.get("link_karma", 0),
+                    "is_verified": user_data.get("verified", False)
+                }
+            else:
+                logger.error(f"Failed to get user info: {response.status_code}")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"Get Reddit user info failed: {e}")
+            return {}
+    
+    def encrypt_token(self, token: str) -> str:
+        """Encrypt token for secure storage"""
+        if self.cipher and token:
+            return self.cipher.encrypt(token.encode()).decode()
+        return token
+    
+    def decrypt_token(self, encrypted_token: str) -> str:
+        """Decrypt token for API usage"""
+        if self.cipher and encrypted_token:
+            try:
+                return self.cipher.decrypt(encrypted_token.encode()).decode()
+            except:
+                return encrypted_token
+        return encrypted_token
+    
+    async def post_content_with_token(
+        self,
+        access_token: str,
+        subreddit_name: str,
+        title: str,
+        content: str,
+        content_type: str = "text"
+    ) -> Dict[str, Any]:
+        """
+        Post content to Reddit using OAuth token
+        
+        Args:
+            access_token: User's Reddit access token
+            subreddit_name: Target subreddit
+            title: Post title
+            content: Post content
+            content_type: Type of content (text, link)
+            
+        Returns:
+            Post result
         """
         try:
             self._rate_limit_check("post_content")
             
-            if not self.is_authenticated:
-                await self.authenticate_user()
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "User-Agent": self.user_agent,
+                "Content-Type": "application/x-www-form-urlencoded"
+            }
             
-            # Cultural adaptation for Indian content
-            if language in ['hi', 'hi-IN'] and subreddit_name in self.indian_subreddits:
-                title = self._adapt_for_indian_audience(title, language)
-                content = self._adapt_for_indian_audience(content, language)
-            
-            subreddit = self.reddit.subreddit(subreddit_name)
-            
-            # Post based on content type
+            # Prepare post data
             if content_type == "text":
-                submission = subreddit.submit(title=title, selftext=content)
+                post_data = {
+                    "sr": subreddit_name,
+                    "kind": "self",
+                    "title": title,
+                    "text": content,
+                    "api_type": "json"
+                }
             elif content_type == "link":
-                submission = subreddit.submit(title=title, url=content)
+                post_data = {
+                    "sr": subreddit_name,
+                    "kind": "link",
+                    "title": title,
+                    "url": content,
+                    "api_type": "json"
+                }
             else:
                 raise ValueError(f"Unsupported content type: {content_type}")
             
-            # Return comprehensive result
-            result = {
-                "success": True,
-                "post_id": submission.id,
-                "post_url": f"https://reddit.com{submission.permalink}",
-                "title": submission.title,
-                "subreddit": str(submission.subreddit),
-                "created_utc": submission.created_utc,
-                "score": submission.score,
-                "num_comments": submission.num_comments,
-                "platform": "reddit",
-                "message": "Content posted successfully to Reddit"
-            }
+            # Submit post
+            response = requests.post(
+                f"{self.api_base}/api/submit",
+                data=post_data,
+                headers=headers
+            )
             
-            logger.info(f"Reddit post created: {result['post_url']}")
-            return result
-            
+            if response.status_code == 200:
+                result_data = response.json()
+                
+                if result_data.get("json", {}).get("errors"):
+                    errors = result_data["json"]["errors"]
+                    return {
+                        "success": False,
+                        "error": f"Reddit API errors: {errors}",
+                        "message": "Failed to post content"
+                    }
+                
+                # Extract post information
+                post_info = result_data.get("json", {}).get("data", {})
+                post_url = post_info.get("url", "")
+                
+                return {
+                    "success": True,
+                    "post_id": post_info.get("id"),
+                    "post_url": post_url,
+                    "title": title,
+                    "subreddit": subreddit_name,
+                    "created_utc": datetime.now().timestamp(),
+                    "platform": "reddit",
+                    "message": "Content posted successfully to Reddit"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}",
+                    "message": "Failed to post content to Reddit"
+                }
+                
         except Exception as e:
-            logger.error(f"Reddit posting failed: {e}")
+            logger.error(f"Reddit posting with token failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
                 "message": "Failed to post content to Reddit"
+            }
+    
+    async def reply_to_post_with_token(
+        self,
+        access_token: str,
+        post_id: str,
+        reply_content: str
+    ) -> Dict[str, Any]:
+        """
+        Reply to a Reddit post using OAuth token
+        
+        Args:
+            access_token: User's Reddit access token
+            post_id: Reddit post ID to reply to
+            reply_content: Reply content
+            
+        Returns:
+            Reply result
+        """
+        try:
+            self._rate_limit_check("post_reply")
+            
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "User-Agent": self.user_agent,
+                "Content-Type": "application/x-www-form-urlencoded"
+            }
+            
+            reply_data = {
+                "thing_id": f"t3_{post_id}",  # t3_ prefix for posts
+                "text": reply_content,
+                "api_type": "json"
+            }
+            
+            response = requests.post(
+                f"{self.api_base}/api/comment",
+                data=reply_data,
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                result_data = response.json()
+                
+                if result_data.get("json", {}).get("errors"):
+                    errors = result_data["json"]["errors"]
+                    return {
+                        "success": False,
+                        "error": f"Reddit API errors: {errors}",
+                        "message": "Failed to post reply"
+                    }
+                
+                comment_info = result_data.get("json", {}).get("data", {}).get("things", [{}])[0]
+                comment_data = comment_info.get("data", {})
+                
+                return {
+                    "success": True,
+                    "comment_id": comment_data.get("id"),
+                    "comment_url": f"https://reddit.com{comment_data.get('permalink', '')}",
+                    "parent_post_id": post_id,
+                    "content": reply_content,
+                    "created_utc": datetime.now().timestamp(),
+                    "platform": "reddit",
+                    "message": "Reply posted successfully on Reddit"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}",
+                    "message": "Failed to post reply on Reddit"
+                }
+                
+        except Exception as e:
+            logger.error(f"Reddit reply with token failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to post reply on Reddit"
             }
     
     async def monitor_questions(
@@ -255,221 +476,70 @@ class RedditConnector:
             
             for subreddit_name in subreddits:
                 try:
-                    subreddit = self.reddit.subreddit(subreddit_name)
+                    # Get recent posts from subreddit
+                    response = requests.get(
+                        f"https://www.reddit.com/r/{subreddit_name}/new.json",
+                        headers={"User-Agent": self.user_agent},
+                        params={"limit": limit}
+                    )
                     
-                    # Get new posts
-                    for submission in subreddit.new(limit=limit):
-                        # Filter by keywords if provided
-                        if keywords:
-                            title_lower = submission.title.lower()
-                            if not any(keyword.lower() in title_lower for keyword in keywords):
-                                continue
+                    if response.status_code == 200:
+                        data = response.json()
+                        posts = data.get("data", {}).get("children", [])
                         
-                        # Check if it's a question or needs help
-                        if self._is_question_post(submission.title, submission.selftext):
-                            post = RedditPost(
-                                id=submission.id,
-                                title=submission.title,
-                                content=submission.selftext,
-                                subreddit=str(submission.subreddit),
-                                score=submission.score,
-                                num_comments=submission.num_comments,
-                                created_utc=submission.created_utc,
-                                url=f"https://reddit.com{submission.permalink}",
-                                author=str(submission.author) if submission.author else "[deleted]",
-                                is_self=submission.is_self
-                            )
-                            questions.append(post)
+                        for post_data in posts:
+                            post = post_data.get("data", {})
+                            
+                            # Check if it's a question
+                            if self._is_question_post(post.get("title", ""), post.get("selftext", "")):
+                                
+                                # Filter by keywords if provided
+                                if keywords:
+                                    title_lower = post.get("title", "").lower()
+                                    if not any(keyword.lower() in title_lower for keyword in keywords):
+                                        continue
+                                
+                                question = RedditPost(
+                                    id=post.get("id"),
+                                    title=post.get("title"),
+                                    content=post.get("selftext", ""),
+                                    subreddit=post.get("subreddit"),
+                                    score=post.get("score", 0),
+                                    num_comments=post.get("num_comments", 0),
+                                    created_utc=post.get("created_utc", 0),
+                                    url=f"https://reddit.com{post.get('permalink', '')}",
+                                    author=post.get("author", "[deleted]"),
+                                    is_self=post.get("is_self", True)
+                                )
+                                questions.append(question)
                 
                 except Exception as e:
                     logger.warning(f"Error monitoring subreddit {subreddit_name}: {e}")
                     continue
             
-            # Sort by creation time (newest first)
+            # Sort by creation time (newest first) and return limited results
             questions.sort(key=lambda x: x.created_utc, reverse=True)
             return questions[:limit]
             
         except Exception as e:
-            logger.error(f"Error monitoring Reddit questions: {e}")
+            logger.error(f"Monitor questions failed: {e}")
             return []
     
-    async def post_answer(
-        self, 
-        post_id: str, 
-        answer: str,
-        language: str = "en"
-    ) -> Dict[str, Any]:
+    def get_domain_subreddits(self, domain: str) -> List[str]:
         """
-        Post an answer/comment to a Reddit post
+        Get recommended subreddits for a business domain
         
         Args:
-            post_id: Reddit post ID to comment on
-            answer: Answer content
-            language: Response language
+            domain: Business domain (education, restaurant, tech, health, business)
             
         Returns:
-            Dictionary containing comment result
+            List of recommended subreddits
         """
-        try:
-            self._rate_limit_check("post_answer")
-            
-            if not self.is_authenticated:
-                await self.authenticate_user()
-            
-            submission = self.reddit.submission(id=post_id)
-            
-            # Format answer with appropriate tone for platform
-            formatted_answer = self._format_reddit_answer(answer, language)
-            
-            comment = submission.reply(formatted_answer)
-            
-            result = {
-                "success": True,
-                "comment_id": comment.id,
-                "comment_url": f"https://reddit.com{comment.permalink}",
-                "parent_post_id": post_id,
-                "content": formatted_answer,
-                "created_utc": comment.created_utc,
-                "platform": "reddit",
-                "message": "Answer posted successfully on Reddit"
-            }
-            
-            logger.info(f"Reddit comment posted: {result['comment_url']}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Failed to post Reddit answer: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to post answer on Reddit"
-            }
-    
-    async def get_user_stats(self, username: str = None) -> Dict[str, Any]:
-        """
-        Get comprehensive user statistics and engagement metrics
-        
-        Args:
-            username: Reddit username (uses authenticated user if None)
-            
-        Returns:
-            Dictionary containing user statistics
-        """
-        try:
-            if username:
-                user = self.reddit.redditor(username)
-            else:
-                user = self.reddit.user.me()
-            
-            # Calculate engagement metrics
-            recent_posts = list(user.submissions.new(limit=100))
-            recent_comments = list(user.comments.new(limit=100))
-            
-            total_post_karma = sum(post.score for post in recent_posts)
-            total_comment_karma = sum(comment.score for comment in recent_comments)
-            
-            avg_post_score = total_post_karma / len(recent_posts) if recent_posts else 0
-            avg_comment_score = total_comment_karma / len(recent_comments) if recent_comments else 0
-            
-            stats = {
-                "username": str(user),
-                "total_karma": {
-                    "link": user.link_karma,
-                    "comment": user.comment_karma,
-                    "total": user.link_karma + user.comment_karma
-                },
-                "recent_activity": {
-                    "posts_last_30_days": len(recent_posts),
-                    "comments_last_30_days": len(recent_comments),
-                    "avg_post_score": round(avg_post_score, 2),
-                    "avg_comment_score": round(avg_comment_score, 2)
-                },
-                "account_age_days": (datetime.now() - datetime.fromtimestamp(user.created_utc)).days,
-                "is_verified": user.is_employee if hasattr(user, 'is_employee') else False,
-                "platform": "reddit"
-            }
-            
-            return {
-                "success": True,
-                "stats": stats,
-                "message": "User statistics retrieved successfully"
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to get Reddit user stats: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to retrieve user statistics"
-            }
-    
-    async def search_relevant_discussions(
-        self, 
-        query: str, 
-        subreddits: List[str] = None,
-        time_filter: str = "week",
-        limit: int = 25
-    ) -> List[RedditPost]:
-        """
-        Search for relevant discussions based on query
-        
-        Args:
-            query: Search query
-            subreddits: List of subreddits to search in
-            time_filter: Time filter (hour, day, week, month, year, all)
-            limit: Maximum results to return
-            
-        Returns:
-            List of relevant RedditPost objects
-        """
-        try:
-            self._rate_limit_check("search_discussions")
-            
-            if subreddits is None:
-                subreddits = self.indian_subreddits + self.educational_subreddits
-            
-            all_results = []
-            
-            for subreddit_name in subreddits:
-                try:
-                    subreddit = self.reddit.subreddit(subreddit_name)
-                    
-                    search_results = subreddit.search(
-                        query=query,
-                        time_filter=time_filter,
-                        limit=limit//len(subreddits)
-                    )
-                    
-                    for submission in search_results:
-                        post = RedditPost(
-                            id=submission.id,
-                            title=submission.title,
-                            content=submission.selftext,
-                            subreddit=str(submission.subreddit),
-                            score=submission.score,
-                            num_comments=submission.num_comments,
-                            created_utc=submission.created_utc,
-                            url=f"https://reddit.com{submission.permalink}",
-                            author=str(submission.author) if submission.author else "[deleted]",
-                            is_self=submission.is_self
-                        )
-                        all_results.append(post)
-                
-                except Exception as e:
-                    logger.warning(f"Error searching subreddit {subreddit_name}: {e}")
-                    continue
-            
-            # Sort by relevance (score and recency)
-            all_results.sort(key=lambda x: (x.score, x.created_utc), reverse=True)
-            return all_results[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error searching Reddit discussions: {e}")
-            return []
+        return self.domain_subreddits.get(domain, self.indian_subreddits[:5])
     
     def _is_question_post(self, title: str, content: str) -> bool:
         """
-        Determine if a post is asking a question or seeking help
+        Determine if a post is asking a question
         
         Args:
             title: Post title
@@ -495,203 +565,34 @@ class RedditConnector:
         
         return any(indicator in text_to_check for indicator in all_indicators)
     
-    def _adapt_for_indian_audience(self, text: str, language: str) -> str:
-        """
-        Adapt content for Indian audience with cultural context
+    def _rate_limit_check(self, endpoint: str) -> None:
+        """Implement rate limiting to avoid Reddit API limits"""
+        current_time = datetime.now()
         
-        Args:
-            text: Original text
-            language: Target language
-            
-        Returns:
-            Culturally adapted text
-        """
-        # Add Indian context and cultural sensitivity
-        adaptations = {
-            'hi': {
-                'hello': 'नमस्ते',
-                'thank you': 'धन्यवाद',
-                'please': 'कृपया',
-                'good': 'अच्छा',
-                'help': 'मदद'
-            }
-        }
+        if endpoint in self.last_request_time:
+            time_diff = (current_time - self.last_request_time[endpoint]).total_seconds()
+            if time_diff < self.min_request_interval:
+                import time
+                sleep_time = self.min_request_interval - time_diff
+                time.sleep(sleep_time)
         
-        if language in adaptations:
-            for eng, hindi in adaptations[language].items():
-                text = re.sub(rf'\b{eng}\b', hindi, text, flags=re.IGNORECASE)
-        
-        return text
-    
-    def _format_reddit_answer(self, answer: str, language: str) -> str:
-        """
-        Format answer appropriately for Reddit platform
-        
-        Args:
-            answer: Raw answer content
-            language: Response language
-            
-        Returns:
-            Formatted answer with Reddit-appropriate styling
-        """
-        # Add Reddit-specific formatting
-        formatted = answer
-        
-        # Add helpful disclaimer for advice
-        if any(word in answer.lower() for word in ['advice', 'suggest', 'recommend']):
-            if language == 'hi':
-                disclaimer = "\n\n*यह केवल सामान्य जानकारी है। विशिष्ट सलाह के लिए विशेषज्ञ से संपर्क करें।*"
-            else:
-                disclaimer = "\n\n*This is general information only. Please consult with experts for specific advice.*"
-            formatted += disclaimer
-        
-        # Add helpful engagement
-        if language == 'hi':
-            formatted += "\n\nकोई और सवाल हो तो पूछिए! 😊"
-        else:
-            formatted += "\n\nFeel free to ask if you have more questions! 😊"
-        
-        return formatted
-    
-    async def get_trending_topics(self, subreddits: List[str] = None) -> Dict[str, Any]:
-        """
-        Get trending topics and discussions from specified subreddits
-        
-        Args:
-            subreddits: List of subreddits to analyze
-            
-        Returns:
-            Dictionary containing trending topics and keywords
-        """
-        try:
-            if subreddits is None:
-                subreddits = self.indian_subreddits[:5]  # Limit for performance
-            
-            trending_data = {}
-            
-            for subreddit_name in subreddits:
-                try:
-                    subreddit = self.reddit.subreddit(subreddit_name)
-                    hot_posts = list(subreddit.hot(limit=25))
-                    
-                    # Extract keywords from titles
-                    keywords = {}
-                    for post in hot_posts:
-                        words = re.findall(r'\b\w+\b', post.title.lower())
-                        for word in words:
-                            if len(word) > 3:  # Filter short words
-                                keywords[word] = keywords.get(word, 0) + post.score
-                    
-                    # Sort by weighted score
-                    top_keywords = sorted(keywords.items(), key=lambda x: x[1], reverse=True)[:10]
-                    
-                    trending_data[subreddit_name] = {
-                        "top_keywords": top_keywords,
-                        "hot_posts_count": len(hot_posts),
-                        "avg_score": sum(post.score for post in hot_posts) / len(hot_posts)
-                    }
-                
-                except Exception as e:
-                    logger.warning(f"Error analyzing subreddit {subreddit_name}: {e}")
-                    continue
-            
-            return {
-                "success": True,
-                "trending_data": trending_data,
-                "timestamp": datetime.now().isoformat(),
-                "message": "Trending topics retrieved successfully"
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting trending topics: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to retrieve trending topics"
-            }
-    
-    async def bulk_engage(
-        self, 
-        posts: List[str], 
-        engagement_type: str = "upvote"
-    ) -> Dict[str, Any]:
-        """
-        Bulk engagement with multiple posts (upvote, save, etc.)
-        
-        Args:
-            posts: List of post IDs
-            engagement_type: Type of engagement (upvote, downvote, save)
-            
-        Returns:
-            Dictionary containing bulk engagement results
-        """
-        try:
-            results = {"successful": [], "failed": []}
-            
-            for post_id in posts:
-                try:
-                    self._rate_limit_check(f"bulk_engage_{post_id}")
-                    
-                    submission = self.reddit.submission(id=post_id)
-                    
-                    if engagement_type == "upvote":
-                        submission.upvote()
-                    elif engagement_type == "downvote":
-                        submission.downvote()
-                    elif engagement_type == "save":
-                        submission.save()
-                    elif engagement_type == "clear_vote":
-                        submission.clear_vote()
-                    
-                    results["successful"].append(post_id)
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to engage with post {post_id}: {e}")
-                    results["failed"].append({"post_id": post_id, "error": str(e)})
-            
-            return {
-                "success": True,
-                "results": results,
-                "total_processed": len(posts),
-                "successful_count": len(results["successful"]),
-                "failed_count": len(results["failed"]),
-                "message": f"Bulk engagement completed: {len(results['successful'])}/{len(posts)} successful"
-            }
-            
-        except Exception as e:
-            logger.error(f"Bulk engagement failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Bulk engagement operation failed"
-            }
+        self.last_request_time[endpoint] = current_time
     
     async def health_check(self) -> Dict[str, Any]:
         """
-        Check Reddit API connection health and rate limit status
+        Check Reddit API connection health
         
         Returns:
             Dictionary containing health status
         """
         try:
-            # Test basic API call
-            user = self.reddit.user.me()
-            
-            # Check rate limit status (approximate)
-            current_time = datetime.now()
-            recent_requests = sum(
-                1 for timestamp in self.last_request_time.values()
-                if (current_time - timestamp).total_seconds() < 600  # Last 10 minutes
-            )
-            
             return {
                 "success": True,
-                "status": "healthy",
-                "authenticated_user": str(user),
-                "recent_api_calls": recent_requests,
-                "rate_limit_status": "normal" if recent_requests < 50 else "approaching_limit",
-                "last_check": current_time.isoformat(),
-                "message": "Reddit API connection is healthy"
+                "status": "healthy" if self.is_configured else "degraded",
+                "message": "Reddit OAuth connector health check completed",
+                "client_configured": bool(self.client_id and self.client_secret),
+                "encryption_available": bool(self.cipher),
+                "oauth_ready": self.is_configured
             }
             
         except Exception as e:
@@ -700,5 +601,14 @@ class RedditConnector:
                 "success": False,
                 "status": "unhealthy",
                 "error": str(e),
-                "message": "Reddit API connection failed health check"
+                "message": "Reddit OAuth connector health check failed"
             }
+
+# Additional method to get user credentials (add to RedditOAuthConnector class)
+async def get_user_reddit_credentials(self, user_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get stored Reddit credentials for a user
+    This method should be implemented in your database manager
+    """
+    # This is a placeholder - implement in your database manager
+    return None

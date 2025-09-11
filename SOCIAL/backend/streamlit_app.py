@@ -1,19 +1,15 @@
 """
-Streamlit Development Interface for Multi-Platform Automation System
-Production-ready development UI with comprehensive testing capabilities
+Updated Streamlit Development Interface for Multi-Platform Automation System
+Compatible with OAuth-based Reddit integration
 """
 
 import streamlit as st
 import requests
 import json
-import asyncio
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
-import base64
-import io
 from typing import Dict, List, Any
 import logging
 
@@ -34,37 +30,22 @@ API_BASE_URL = "http://localhost:8000"
 
 # Session state initialization
 if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-if 'user_token' not in st.session_state:
-    st.session_state.user_token = None
-if 'user_info' not in st.session_state:
-    st.session_state.user_info = {}
-if 'platform_status' not in st.session_state:
-    st.session_state.platform_status = {}
+    st.session_state.authenticated = True  # Skip auth for testing
+if 'reddit_connected' not in st.session_state:
+    st.session_state.reddit_connected = False
+if 'reddit_username' not in st.session_state:
+    st.session_state.reddit_username = None
 
-
-def make_api_request(endpoint: str, method: str = "GET", data: dict = None, auth_required: bool = True) -> dict:
+def make_api_request(endpoint: str, method: str = "GET", data: dict = None, auth_required: bool = False) -> dict:
     """
-    Make API request with error handling
-    
-    Args:
-        endpoint: API endpoint
-        method: HTTP method
-        data: Request data
-        auth_required: Whether authentication is required
-        
-    Returns:
-        API response dictionary
+    Make API request with error handling (auth disabled for testing)
     """
     try:
         url = f"{API_BASE_URL}{endpoint}"
         headers = {"Content-Type": "application/json"}
         
-        if auth_required and st.session_state.user_token:
-            headers["Authorization"] = f"Bearer {st.session_state.user_token}"
-        
         if method == "GET":
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, params=data)
         elif method == "POST":
             response = requests.post(url, headers=headers, json=data)
         elif method == "PUT":
@@ -83,303 +64,99 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, auth
         logger.error(f"Unexpected error in API request: {e}")
         return {"success": False, "error": str(e)}
 
-
-def login_page():
-    """User authentication page"""
-    st.title("🚀 Multi-Platform Automation System")
-    st.markdown("### Welcome to the Indian Social Media Automation Platform")
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
-        st.markdown("#### Login to Your Account")
-        
-        with st.form("login_form"):
-            email = st.text_input("Email", placeholder="your.email@example.com")
-            password = st.text_input("Password", type="password")
-            
-            col_login, col_register = st.columns(2)
-            
-            with col_login:
-                login_clicked = st.form_submit_button("Login", use_container_width=True)
-            
-            with col_register:
-                register_clicked = st.form_submit_button("Register", use_container_width=True)
-        
-        if login_clicked:
-            if email and password:
-                with st.spinner("Authenticating..."):
-                    response = make_api_request(
-                        "/api/auth/login",
-                        method="POST",
-                        data={"email": email, "password": password},
-                        auth_required=False
-                    )
-                
-                if response.get("success"):
-                    st.session_state.authenticated = True
-                    st.session_state.user_token = response.get("access_token")
-                    st.session_state.user_info = response.get("user", {})
-                    st.success("Login successful!")
-                    st.rerun()
-                else:
-                    st.error(f"Login failed: {response.get('error', 'Unknown error')}")
-            else:
-                st.error("Please enter both email and password")
-        
-        if register_clicked:
-            if email and password:
-                with st.spinner("Creating account..."):
-                    response = make_api_request(
-                        "/api/auth/register",
-                        method="POST",
-                        data={
-                            "email": email,
-                            "password": password,
-                            "name": email.split("@")[0]  # Use email prefix as name
-                        },
-                        auth_required=False
-                    )
-                
-                if response.get("success"):
-                    st.success("Account created successfully! Please login.")
-                else:
-                    st.error(f"Registration failed: {response.get('error', 'Unknown error')}")
-            else:
-                st.error("Please enter both email and password")
-    
-    # Demo section
-    st.markdown("---")
-    st.markdown("### 🎯 Platform Features")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown("""
-        **📱 Reddit Integration**
-        - Auto-post to Indian subreddits
-        - Q&A monitoring and responses
-        - Karma building automation
-        - Cultural content adaptation
-        """)
-    
-    with col2:
-        st.markdown("""
-        **🐦 Twitter Automation**
-        - Tweet scheduling and posting
-        - Thread generation
-        - Engagement analytics
-        - Trend participation
-        """)
-    
-    with col3:
-        st.markdown("""
-        **💻 Stack Overflow**
-        - Programming Q&A automation
-        - Reputation building
-        - Technical content generation
-        - Code solution posting
-        """)
-    
-    with col4:
-        st.markdown("""
-        **🏥 WebMD Health Q&A**
-        - Medical information sharing
-        - Health education content
-        - Symptom explanation
-        - Wellness advice
-        """)
-
-
 def main_dashboard():
     """Main application dashboard"""
     
     # Sidebar
     with st.sidebar:
-        st.title(f"Welcome, {st.session_state.user_info.get('name', 'User')}!")
+        st.title("Reddit Automation Tester")
         
-        # Platform connection status
-        st.markdown("### 🔗 Platform Status")
-        check_platform_status()
+        # System health check
+        st.markdown("### 🔗 System Status")
+        if st.button("Check System Health"):
+            with st.spinner("Checking system..."):
+                health = make_api_request("/health")
+                if health.get("success"):
+                    st.success("All systems operational!")
+                    services = health.get("health", {}).get("services", {})
+                    for service, status in services.items():
+                        emoji = "🟢" if status.get("success") else "🔴"
+                        st.markdown(f"{service}: {emoji}")
+                else:
+                    st.error(f"System health check failed: {health.get('error')}")
+        
+        # Reddit OAuth Connection
+        st.markdown("### 📱 Reddit OAuth")
+        if not st.session_state.reddit_connected:
+            if st.button("Connect Reddit Account", type="primary"):
+                with st.spinner("Getting OAuth URL..."):
+                    oauth_response = make_api_request("/api/oauth/reddit/authorize")
+                    if oauth_response.get("success"):
+                        st.markdown("**Click the link below to authorize:**")
+                        st.markdown(f"[Connect Reddit Account]({oauth_response['redirect_url']})")
+                        st.info("After authorization, you'll be redirected back to test posting features")
+                    else:
+                        st.error(f"OAuth setup failed: {oauth_response.get('error')}")
+        else:
+            st.success(f"Connected as: {st.session_state.reddit_username}")
+            if st.button("Disconnect"):
+                st.session_state.reddit_connected = False
+                st.session_state.reddit_username = None
+                st.rerun()
         
         # Navigation
         st.markdown("### 📊 Navigation")
         page = st.selectbox(
-            "Select Page",
+            "Select Feature",
             [
-                "Dashboard",
-                "Reddit Automation",
-                "Twitter Management", 
-                "Stack Overflow Q&A",
-                "WebMD Health",
-                "AI Content Generator",
-                "Voice Assistant",
-                "Analytics",
-                "Settings"
+                "Reddit Testing",
+                "AI Content Generator", 
+                "Question Monitor",
+                "Auto-Reply Demo",
+                "Domain Content",
+                "Analytics"
             ]
         )
-        
-        # Logout
-        if st.button("Logout", use_container_width=True):
-            st.session_state.authenticated = False
-            st.session_state.user_token = None
-            st.session_state.user_info = {}
-            st.rerun()
     
     # Main content area
-    if page == "Dashboard":
-        dashboard_page()
-    elif page == "Reddit Automation":
-        reddit_page()
-    elif page == "Twitter Management":
-        twitter_page()
-    elif page == "Stack Overflow Q&A":
-        stackoverflow_page()
-    elif page == "WebMD Health":
-        webmd_page()
+    if page == "Reddit Testing":
+        reddit_testing_page()
     elif page == "AI Content Generator":
         ai_content_page()
-    elif page == "Voice Assistant":
-        voice_assistant_page()
+    elif page == "Question Monitor":
+        question_monitor_page()
+    elif page == "Auto-Reply Demo":
+        auto_reply_demo_page()
+    elif page == "Domain Content":
+        domain_content_page()
     elif page == "Analytics":
         analytics_page()
-    elif page == "Settings":
-        settings_page()
 
-
-def check_platform_status():
-    """Check and display platform connection status"""
-    try:
-        response = make_api_request("/health")
-        
-        if response.get("success"):
-            services = response.get("services", {})
-            
-            # Reddit status
-            reddit_status = services.get("reddit", {}).get("success", False)
-            st.markdown(f"Reddit: {'🟢' if reddit_status else '🔴'}")
-            
-            # Database status
-            db_status = services.get("database", {}).get("success", False)
-            st.markdown(f"Database: {'🟢' if db_status else '🔴'}")
-            
-            # AI Service status
-            ai_status = services.get("ai_service", {}).get("success", False)
-            st.markdown(f"AI Service: {'🟢' if ai_status else '🔴'}")
-            
-        else:
-            st.markdown("System: 🔴 Offline")
-            
-    except Exception as e:
-        st.markdown("System: 🔴 Error")
-
-
-def dashboard_page():
-    """Main dashboard page"""
-    st.title("📊 Dashboard Overview")
+def reddit_testing_page():
+    """Reddit automation testing page"""
+    st.title("📱 Reddit Automation Testing")
     
-    # Get dashboard data
-    response = make_api_request("/api/analytics/dashboard")
-    
-    if response.get("success"):
-        dashboard_data = response.get("dashboard", {})
-        
-        # Key metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric(
-                "Posts Today",
-                dashboard_data.get("posts_today", 0),
-                delta=dashboard_data.get("posts_change", 0)
-            )
-        
-        with col2:
-            st.metric(
-                "Total Engagement",
-                dashboard_data.get("total_engagement", 0),
-                delta=dashboard_data.get("engagement_change", 0)
-            )
-        
-        with col3:
-            st.metric(
-                "Q&A Earnings",
-                f"₹{dashboard_data.get('qa_earnings', 0)}",
-                delta=dashboard_data.get("earnings_change", 0)
-            )
-        
-        with col4:
-            st.metric(
-                "Active Platforms",
-                dashboard_data.get("active_platforms", 0),
-                delta=dashboard_data.get("platforms_change", 0)
-            )
-        
-        # Recent activity
-        st.markdown("### 📈 Recent Activity")
-        
-        # Create sample activity data for demo
-        activity_data = [
-            {"time": "2024-01-15 14:30", "platform": "Reddit", "action": "Posted to r/india", "status": "Success"},
-            {"time": "2024-01-15 14:25", "platform": "Twitter", "action": "Tweet posted", "status": "Success"},
-            {"time": "2024-01-15 14:20", "platform": "Stack Overflow", "action": "Answer posted", "status": "Success"},
-            {"time": "2024-01-15 14:15", "platform": "WebMD", "action": "Health answer", "status": "Success"},
-        ]
-        
-        df = pd.DataFrame(activity_data)
-        st.dataframe(df, use_container_width=True)
-        
-        # Engagement chart
-        st.markdown("### 📊 Engagement Trends")
-        
-        # Generate sample data
-        dates = pd.date_range(start="2024-01-01", end="2024-01-15", freq="D")
-        engagement_data = pd.DataFrame({
-            "Date": dates,
-            "Reddit": [10, 15, 12, 18, 20, 25, 22, 30, 28, 35, 32, 40, 38, 45, 42],
-            "Twitter": [5, 8, 6, 10, 12, 15, 18, 20, 25, 22, 28, 30, 35, 32, 38],
-            "Stack Overflow": [2, 3, 1, 4, 5, 3, 6, 4, 7, 5, 8, 6, 9, 7, 10],
-            "WebMD": [1, 1, 2, 1, 3, 2, 3, 4, 2, 5, 3, 6, 4, 7, 5]
-        })
-        
-        fig = px.line(
-            engagement_data.melt(id_vars=["Date"], var_name="Platform", value_name="Engagement"),
-            x="Date",
-            y="Engagement",
-            color="Platform",
-            title="Daily Engagement by Platform"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    
-    else:
-        st.error("Failed to load dashboard data")
-
-
-def reddit_page():
-    """Reddit automation page"""
-    st.title("📱 Reddit Automation")
-    
-    tab1, tab2, tab3, tab4 = st.tabs(["Post Content", "Monitor Questions", "Auto-Reply", "Statistics"])
+    tab1, tab2, tab3 = st.tabs(["Manual Posting", "Auto-Post Demo", "OAuth Status"])
     
     with tab1:
-        st.markdown("### Create Reddit Post")
+        st.markdown("### Manual Reddit Post Testing")
         
         col1, col2 = st.columns([2, 1])
         
         with col1:
             subreddit = st.selectbox(
                 "Select Subreddit",
-                ["india", "indiaspeaks", "bangalore", "delhi", "mumbai", "pune", "AskReddit", "explainlikeimfive"]
+                ["test", "india", "indiaspeaks", "bangalore", "delhi", "mumbai", "AskReddit"]
             )
             
             title = st.text_input("Post Title", placeholder="Enter your post title...")
-            content = st.text_area("Post Content", placeholder="Enter your post content...", height=200)
+            content = st.text_area("Post Content", placeholder="Enter your post content...", height=150)
             
             col_lang, col_tone = st.columns(2)
             with col_lang:
                 language = st.selectbox("Language", ["en", "hi", "ta", "te", "bn"])
             with col_tone:
-                tone = st.selectbox("Tone", ["professional", "casual", "friendly", "informative"])
+                content_type = st.selectbox("Content Type", ["text", "link"])
         
         with col2:
             st.markdown("#### Post Preview")
@@ -388,503 +165,575 @@ def reddit_page():
                 st.markdown(f"**Content:** {content[:100]}...")
                 st.markdown(f"**Subreddit:** r/{subreddit}")
                 st.markdown(f"**Language:** {language}")
-        
-        if st.button("Post to Reddit", type="primary", use_container_width=True):
-            if title and content:
-                with st.spinner("Posting to Reddit..."):
-                    response = make_api_request(
-                        "/api/reddit/post",
-                        method="POST",
-                        data={
-                            "subreddit": subreddit,
-                            "title": title,
-                            "content": content,
-                            "language": language,
-                            "content_type": "text"
-                        }
-                    )
-                
-                if response.get("success"):
-                    st.success(f"Post created successfully! [View Post]({response.get('post_url')})")
-                else:
-                    st.error(f"Failed to post: {response.get('error')}")
+            
+            st.markdown("#### Requirements")
+            if st.session_state.reddit_connected:
+                st.success("✅ Reddit Connected")
             else:
+                st.warning("❌ Connect Reddit first")
+        
+        if st.button("Test Post to Reddit", type="primary", use_container_width=True):
+            if not title or not content:
                 st.error("Please enter both title and content")
-    
-    with tab2:
-        st.markdown("### Monitor Questions")
-        
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            subreddits_input = st.text_input(
-                "Subreddits to Monitor (comma-separated)",
-                value="AskReddit,explainlikeimfive,NoStupidQuestions"
-            )
-        
-        with col2:
-            keywords_input = st.text_input(
-                "Keywords to Filter (comma-separated)",
-                value="help,how,what,why"
-            )
-        
-        limit = st.slider("Number of Questions", 5, 50, 10)
-        
-        if st.button("Find Questions", use_container_width=True):
-            with st.spinner("Searching for questions..."):
+                return
+                
+            with st.spinner("Posting to Reddit..."):
                 response = make_api_request(
-                    f"/api/reddit/questions?subreddits={subreddits_input}&keywords={keywords_input}&limit={limit}"
+                    "/api/reddit/post",
+                    method="POST",
+                    data={
+                        "subreddit": subreddit,
+                        "title": title,
+                        "content": content,
+                        "language": language,
+                        "content_type": content_type
+                    }
                 )
             
             if response.get("success"):
-                questions = response.get("questions", [])
-                
-                if questions:
-                    st.success(f"Found {len(questions)} questions")
-                    
-                    for i, question in enumerate(questions):
-                        with st.expander(f"Q{i+1}: {question['title'][:80]}..."):
-                            st.markdown(f"**Subreddit:** r/{question['subreddit']}")
-                            st.markdown(f"**Score:** {question['score']} | **Comments:** {question['num_comments']}")
-                            st.markdown(f"**Author:** {question['author']}")
-                            st.markdown(f"**Content:** {question['content'][:200]}...")
-                            st.markdown(f"**URL:** [View on Reddit]({question['url']})")
-                            
-                            if st.button(f"Generate Answer for Q{i+1}", key=f"answer_{i}"):
-                                st.info("Answer generation feature coming soon!")
-                else:
-                    st.info("No questions found matching your criteria")
+                st.success(f"Post created successfully!")
+                if response.get("post_url"):
+                    st.markdown(f"[View Post]({response['post_url']})")
+                st.json(response)
             else:
-                st.error(f"Failed to fetch questions: {response.get('error')}")
-    
-    with tab3:
-        st.markdown("### Auto-Reply to Questions")
-        
-        post_id = st.text_input("Reddit Post ID", placeholder="Enter the post ID to reply to...")
-        answer_content = st.text_area("Your Answer", placeholder="Enter your answer...", height=150)
-        
-        if st.button("Post Answer", use_container_width=True):
-            if post_id and answer_content:
-                with st.spinner("Posting answer..."):
-                    response = make_api_request(
-                        "/api/reddit/answer",
-                        method="POST",
-                        data={
-                            "post_id": post_id,
-                            "answer": answer_content,
-                            "language": "en"
-                        }
-                    )
-                
-                if response.get("success"):
-                    st.success(f"Answer posted successfully! [View Comment]({response.get('comment_url')})")
-                else:
-                    st.error(f"Failed to post answer: {response.get('error')}")
-            else:
-                st.error("Please enter both post ID and answer")
-    
-    with tab4:
-        st.markdown("### Reddit Statistics")
-        
-        if st.button("Refresh Stats", use_container_width=True):
-            with st.spinner("Loading statistics..."):
-                response = make_api_request("/api/reddit/stats")
-            
-            if response.get("success"):
-                stats = response.get("stats", {})
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    karma = stats.get("total_karma", {})
-                    st.metric("Total Karma", karma.get("total", 0))
-                    st.metric("Link Karma", karma.get("link", 0))
-                    st.metric("Comment Karma", karma.get("comment", 0))
-                
-                with col2:
-                    activity = stats.get("recent_activity", {})
-                    st.metric("Posts (30 days)", activity.get("posts_last_30_days", 0))
-                    st.metric("Comments (30 days)", activity.get("comments_last_30_days", 0))
-                
-                with col3:
-                    st.metric("Avg Post Score", activity.get("avg_post_score", 0))
-                    st.metric("Avg Comment Score", activity.get("avg_comment_score", 0))
-                    st.metric("Account Age (days)", stats.get("account_age_days", 0))
-            else:
-                st.error("Failed to load statistics")
-
-
-
-
-
-
-
-
-
-
-
-
-def ai_content_page():
-    """AI content generation page"""
-    st.title("🤖 AI Content Generator")
-    
-    tab1, tab2, tab3 = st.tabs(["Platform Content", "Q&A Answers", "Voice Assistant"])
-    
-    with tab1:
-        st.markdown("### Generate Platform-Specific Content")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            platform = st.selectbox(
-                "Select Platform",
-                ["reddit", "twitter", "stackoverflow", "webmd"]
-            )
-            
-            content_type = st.selectbox(
-                "Content Type",
-                ["post", "comment", "answer", "tweet", "thread"]
-            )
-            
-            topic = st.text_input("Topic", placeholder="Enter the topic for content generation...")
-            
-            col_tone, col_lang = st.columns(2)
-            with col_tone:
-                tone = st.selectbox("Tone", ["professional", "casual", "friendly", "informative", "humorous"])
-            with col_lang:
-                language = st.selectbox("Language", ["en", "hi", "ta", "te", "bn"])
-            
-            target_audience = st.text_input("Target Audience", placeholder="e.g., Indian students, tech professionals...")
-            additional_context = st.text_area("Additional Context", placeholder="Any specific requirements or context...")
-        
-        with col2:
-            st.markdown("#### Generation Settings")
-            st.info(f"Platform: {platform.title()}")
-            st.info(f"Type: {content_type.title()}")
-            st.info(f"Language: {language.upper()}")
-            
-            if platform == "twitter":
-                st.warning("Twitter content limited to 280 characters")
-            elif platform == "reddit":
-                st.info("Reddit content optimized for discussion")
-            elif platform == "stackoverflow":
-                st.info("Technical content with code examples")
-            elif platform == "webmd":
-                st.warning("Health content with medical disclaimers")
-        
-        if st.button("Generate Content", type="primary", use_container_width=True):
-            if topic:
-                with st.spinner("Generating AI content..."):
-                    response = make_api_request(
-                        "/api/ai/generate-content",
-                        method="POST",
-                        data={
-                            "platform": platform,
-                            "content_type": content_type,
-                            "topic": topic,
-                            "tone": tone,
-                            "language": language,
-                            "target_audience": target_audience,
-                            "additional_context": additional_context
-                        }
-                    )
-                
-                if response.get("success"):
-                    generated_content = response.get("content", "")
-                    
-                    st.success("Content generated successfully!")
-                    
-                    # Display generated content
-                    st.markdown("#### Generated Content:")
-                    st.text_area("", value=generated_content, height=200, key="generated_content")
-                    
-                    # Content metrics
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Word Count", response.get("word_count", 0))
-                    with col2:
-                        st.metric("Character Count", response.get("character_count", 0))
-                    with col3:
-                        st.metric("Platform", platform.title())
-                    
-                    # Copy button (simulated)
-                    if st.button("Copy Content", use_container_width=True):
-                        st.success("Content copied to clipboard! (Simulated)")
-                
-                else:
-                    st.error(f"Content generation failed: {response.get('error')}")
-            else:
-                st.error("Please enter a topic")
+                st.error(f"Posting failed: {response.get('message', 'Unknown error')}")
+                if response.get("action_required") == "oauth_connection":
+                    st.info("Please connect your Reddit account using OAuth first")
+                st.json(response)
     
     with tab2:
-        st.markdown("### Generate Q&A Answers")
+        st.markdown("### Auto-Post Demo (Domain-Based)")
         
-        qa_platform = st.selectbox(
-            "Q&A Platform",
-            ["stackoverflow", "reddit", "webmd"],
-            key="qa_platform"
-        )
-        
-        question = st.text_area("Question", placeholder="Enter the question you want to answer...", height=100)
-        context = st.text_area("Additional Context", placeholder="Any additional context about the question...")
+        st.info("This demonstrates how the system would automatically generate and post domain-specific content")
         
         col1, col2 = st.columns(2)
-        with col1:
-            qa_language = st.selectbox("Response Language", ["en", "hi", "ta", "te", "bn"], key="qa_language")
-        with col2:
-            expertise_level = st.selectbox("Expertise Level", ["beginner", "intermediate", "advanced"])
         
-        if st.button("Generate Answer", use_container_width=True):
-            if question:
-                with st.spinner("Generating answer..."):
-                    # Mock response for development - replace with actual API call
-                    import time
-                    time.sleep(2)
+        with col1:
+            domain = st.selectbox(
+                "Business Domain",
+                ["education", "restaurant", "tech", "health", "business"]
+            )
+            
+            business_type = st.text_input(
+                "Business Type",
+                placeholder="e.g., JEE coaching center, South Indian restaurant..."
+            )
+            
+            target_audience = st.selectbox(
+                "Target Audience",
+                ["indian_students", "food_lovers", "tech_professionals", "health_conscious", "entrepreneurs"]
+            )
+        
+        with col2:
+            content_style = st.selectbox(
+                "Content Style",
+                ["engaging", "informative", "promotional", "helpful"]
+            )
+            
+            language = st.selectbox("Content Language", ["en", "hi"], key="auto_lang")
+            
+            num_posts = st.slider("Number of Posts to Generate", 1, 5, 1)
+        
+        if st.button("Generate Auto-Posts", type="primary", use_container_width=True):
+            if not business_type:
+                st.error("Please enter your business type")
+                return
+            
+            with st.spinner(f"Generating {num_posts} domain-specific posts..."):
+                for i in range(num_posts):
+                    st.markdown(f"#### Generated Post {i+1}")
                     
-                    # Simulate API response
-                    mock_answer = f"""Based on your question about {question[:50]}..., here's a comprehensive answer:
-
-This is a great question that requires careful consideration. Let me break this down step by step:
-
-1. First, let's understand the core concept
-2. Then we'll look at practical applications
-3. Finally, I'll provide some examples
-
-The key points to remember are:
-- Always consider the context
-- Apply best practices
-- Test your implementation
-
-I hope this helps! Feel free to ask if you need any clarification."""
+                    # Generate domain content
+                    response = make_api_request(
+                        "/api/ai/generate-domain-content",
+                        method="POST",
+                        data={
+                            "domain": domain,
+                            "business_type": business_type,
+                            "target_audience": target_audience,
+                            "language": language,
+                            "content_style": content_style
+                        }
+                    )
                     
-                    st.success("Answer generated successfully!")
-                    st.markdown("#### Generated Answer:")
-                    st.text_area("", value=mock_answer, height=250, key="generated_answer")
+                    if response.get("success"):
+                        st.success(f"Content generated for {domain} domain!")
+                        
+                        with st.expander(f"View Generated Content {i+1}"):
+                            st.markdown(f"**Title:** {response.get('title', 'No title')}")
+                            st.markdown(f"**Body:** {response.get('body', 'No content')}")
+                            st.markdown(f"**Suggested Subreddits:** {', '.join(response.get('suggested_subreddits', []))}")
+                            st.markdown(f"**Keywords:** {', '.join(response.get('keywords', []))}")
+                        
+                        # Simulate auto-posting
+                        if st.session_state.reddit_connected:
+                            st.info("✅ Would auto-post to recommended subreddits")
+                        else:
+                            st.warning("❌ Connect Reddit to enable auto-posting")
+                    else:
+                        st.error(f"Content generation failed: {response.get('error')}")
                     
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Word Count", len(mock_answer.split()))
-                    with col2:
-                        st.metric("Expertise Level", expertise_level.title())
-            else:
-                st.error("Please enter a question")
+                    time.sleep(1)  # Small delay between generations
     
     with tab3:
-        st.markdown("### Voice Assistant (Demo Mode)")
+        st.markdown("### Reddit OAuth Connection Status")
         
-        st.info("Voice processing features - Development version with mock responses")
+        # Test OAuth endpoints
+        if st.button("Test OAuth Authorization URL"):
+            with st.spinner("Testing OAuth setup..."):
+                response = make_api_request("/api/oauth/reddit/authorize")
+                if response.get("success"):
+                    st.success("OAuth URL generated successfully!")
+                    st.code(response["redirect_url"])
+                    st.markdown("**This URL would redirect users to Reddit for authorization**")
+                else:
+                    st.error(f"OAuth setup failed: {response.get('error')}")
+                st.json(response)
         
-        # Speech to Text section
-        st.markdown("#### 🎤 Speech to Text")
+        st.markdown("### Manual OAuth Testing")
+        st.markdown("To test the full OAuth flow:")
+        st.markdown("1. Click 'Test OAuth Authorization URL' above")
+        st.markdown("2. Copy the generated URL and visit it in a new tab")
+        st.markdown("3. Authorize the application on Reddit")
+        st.markdown("4. Check the callback handling")
         
-        uploaded_audio = st.file_uploader(
-            "Upload Audio File", 
-            type=['wav', 'mp3', 'webm', 'm4a'],
-            help="Upload an audio file to convert speech to text"
+        # Simulate connected state for testing
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Simulate Reddit Connected"):
+                st.session_state.reddit_connected = True
+                st.session_state.reddit_username = "test_user"
+                st.success("Simulated Reddit connection!")
+                st.rerun()
+        
+        with col2:
+            if st.button("Clear Connection"):
+                st.session_state.reddit_connected = False
+                st.session_state.reddit_username = None
+                st.success("Connection cleared!")
+                st.rerun()
+
+def question_monitor_page():
+    """Question monitoring and auto-reply testing"""
+    st.title("🔍 Reddit Question Monitor")
+    
+    st.markdown("### Monitor Reddit Questions for Auto-Reply Opportunities")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        subreddits_input = st.text_input(
+            "Subreddits to Monitor",
+            value="AskReddit,explainlikeimfive,NoStupidQuestions,india",
+            help="Comma-separated list of subreddits"
         )
         
-        if uploaded_audio:
-            st.audio(uploaded_audio)
-            
-            audio_language = st.selectbox(
-                "Audio Language",
-                ["auto", "en", "hi", "ta", "te", "bn"],
-                help="Select the language of the audio"
+        keywords_input = st.text_input(
+            "Filter Keywords",
+            value="help,how,what,why,study,learn",
+            help="Questions containing these keywords"
+        )
+    
+    with col2:
+        limit = st.slider("Number of Questions", 5, 25, 10)
+        
+        domain_filter = st.selectbox(
+            "Domain Focus",
+            ["all", "education", "tech", "health", "business"]
+        )
+    
+    if st.button("Find Questions to Answer", type="primary", use_container_width=True):
+        with st.spinner("Scanning Reddit for questions..."):
+            response = make_api_request(
+                "/api/reddit/questions",
+                data={
+                    "subreddits": subreddits_input,
+                    "keywords": keywords_input,
+                    "limit": limit
+                }
             )
+        
+        if response.get("success"):
+            questions = response.get("questions", [])
             
-            if st.button("Convert Speech to Text"):
-                with st.spinner("Processing audio..."):
-                    import time
+            if questions:
+                st.success(f"Found {len(questions)} relevant questions!")
+                
+                for i, question in enumerate(questions):
+                    with st.expander(f"Q{i+1}: {question['title'][:80]}..."):
+                        col1, col2 = st.columns([2, 1])
+                        
+                        with col1:
+                            st.markdown(f"**Subreddit:** r/{question['subreddit']}")
+                            st.markdown(f"**Question:** {question['title']}")
+                            st.markdown(f"**Content:** {question['content'][:300]}...")
+                            st.markdown(f"**Score:** {question['score']} | **Comments:** {question['num_comments']}")
+                        
+                        with col2:
+                            st.markdown(f"**Author:** {question['author']}")
+                            st.markdown(f"**URL:** [View]({question['url']})")
+                            
+                            # Auto-reply simulation
+                            if st.button(f"Generate Auto-Reply", key=f"reply_{i}"):
+                                with st.spinner("Generating domain-specific answer..."):
+                                    # Simulate AI answer generation
+                                    time.sleep(2)
+                                    sample_answer = f"""This is a great question about {question['title'][:30]}! 
+
+Based on my experience, here's what I'd suggest:
+
+1. Start with understanding the fundamentals
+2. Practice regularly with real examples  
+3. Don't hesitate to ask for clarification
+
+Feel free to reach out if you need more specific guidance!"""
+                                    
+                                    st.success("Auto-reply generated!")
+                                    st.text_area("Generated Answer:", sample_answer, height=150, key=f"answer_{i}")
+                                    
+                                    if st.session_state.reddit_connected:
+                                        st.info("✅ Would post this reply automatically")
+                                    else:
+                                        st.warning("❌ Connect Reddit to enable auto-reply")
+            else:
+                st.info("No questions found matching your criteria. Try different keywords or subreddits.")
+        else:
+            st.error(f"Failed to fetch questions: {response.get('error')}")
+
+def auto_reply_demo_page():
+    """Auto-reply demonstration"""
+    st.title("🤖 Auto-Reply System Demo")
+    
+    st.markdown("### How Auto-Reply Works")
+    
+    tab1, tab2, tab3 = st.tabs(["Process Demo", "Manual Reply", "Bulk Processing"])
+    
+    with tab1:
+        st.markdown("#### Auto-Reply Process Flow")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("**1. Monitor**")
+            st.info("🔍 Scan subreddits for questions")
+            if st.button("Start Monitoring Demo"):
+                with st.spinner("Monitoring subreddits..."):
                     time.sleep(2)
-                    
-                    # Mock transcription based on language
-                    if audio_language == "hi":
-                        mock_transcription = "नमस्ते! मुझे JEE की तैयारी में मदद चाहिए। Physics के कुछ concepts clear नहीं हैं।"
-                    elif audio_language == "ta":
-                        mock_transcription = "வணக்கம்! எனக்கு JEE தயாரிப்பில் உதவி வேண்டும்।"
-                    else:
-                        mock_transcription = "Hello! I need help with JEE preparation. Some physics concepts are not clear to me."
-                    
-                    st.success(f"Speech converted successfully! (Detected: {audio_language})")
-                    st.text_area("Transcribed Text:", value=mock_transcription, height=100)
-                    
-                    if st.button("Use for Content Generation"):
-                        st.session_state.voice_text = mock_transcription
-                        st.success("Text saved for content generation!")
+                    st.success("Found 15 new questions!")
         
-        # Text to Speech section
-        st.markdown("#### 🔊 Text to Speech")
+        with col2:
+            st.markdown("**2. Filter**")
+            st.info("🎯 Match domain expertise")
+            if st.button("Apply Filters"):
+                with st.spinner("Filtering questions..."):
+                    time.sleep(1)
+                    st.success("5 questions match your expertise!")
         
-        tts_text = st.text_area(
-            "Enter text to convert to speech:",
-            value=st.session_state.get('voice_text', ''),
-            height=100,
-            placeholder="Type your text here or use transcribed text from above..."
+        with col3:
+            st.markdown("**3. Respond**")
+            st.info("✍️ Generate and post answers")
+            if st.button("Auto-Reply"):
+                with st.spinner("Generating responses..."):
+                    time.sleep(2)
+                    st.success("Posted 3 helpful answers!")
+        
+        st.markdown("---")
+        st.markdown("#### Domain-Specific Auto-Reply")
+        
+        domain = st.selectbox("Your Expertise Domain", ["education", "tech", "health", "business"])
+        expertise_level = st.selectbox("Your Expertise Level", ["beginner", "intermediate", "expert"])
+        
+        if st.button("Simulate Domain Auto-Reply"):
+            with st.spinner(f"Finding {domain} questions..."):
+                time.sleep(2)
+                
+                # Mock domain-specific questions
+                domain_questions = {
+                    "education": "How do I prepare for JEE Main in 6 months?",
+                    "tech": "What's the best way to learn React.js?", 
+                    "health": "What are good exercises for back pain?",
+                    "business": "How to start a small business in India?"
+                }
+                
+                question = domain_questions.get(domain, "Generic question")
+                
+                st.success(f"Found question: '{question}'")
+                
+                # Generate domain-specific answer
+                time.sleep(1)
+                st.info("Generated expert-level answer based on your domain knowledge")
+                st.success("Auto-posted reply with domain authority!")
+    
+    with tab2:
+        st.markdown("#### Manual Reply Testing")
+        
+        post_id = st.text_input("Reddit Post ID", placeholder="Enter post ID to reply to...")
+        
+        question_preview = st.text_area(
+            "Question Preview",
+            placeholder="Paste the question here to see how AI would respond...",
+            height=100
         )
         
-        col1, col2 = st.columns(2)
-        with col1:
-            tts_language = st.selectbox(
-                "Speech Language",
-                ["en", "hi", "ta", "te", "bn"],
-                help="Select the language for speech generation"
+        if question_preview:
+            if st.button("Generate Answer"):
+                with st.spinner("Generating AI answer..."):
+                    response = make_api_request(
+                        "/api/ai/generate-answer",
+                        method="POST",
+                        data={
+                            "platform": "reddit",
+                            "question": question_preview,
+                            "language": "en",
+                            "expertise_level": "intermediate"
+                        }
+                    )
+                
+                if response.get("success"):
+                    st.success("Answer generated!")
+                    answer = response.get("answer", "No answer generated")
+                    st.text_area("Generated Answer:", answer, height=200)
+                    
+                    if post_id and st.session_state.reddit_connected:
+                        if st.button("Post This Answer"):
+                            st.success("Answer would be posted to Reddit!")
+                    else:
+                        st.info("Enter post ID and connect Reddit to post answers")
+                else:
+                    st.error(f"Answer generation failed: {response.get('error')}")
+    
+    with tab3:
+        st.markdown("#### Bulk Auto-Reply Processing")
+        
+        batch_size = st.slider("Batch Size", 1, 10, 5)
+        delay_between = st.slider("Delay Between Replies (seconds)", 10, 300, 60)
+        
+        if st.button("Start Bulk Processing Demo"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            for i in range(batch_size):
+                progress = (i + 1) / batch_size
+                progress_bar.progress(progress)
+                status_text.text(f"Processing question {i+1}/{batch_size}...")
+                
+                time.sleep(1)  # Simulate processing
+                
+                st.success(f"✅ Answered question {i+1}")
+            
+            status_text.text("Bulk processing complete!")
+            st.success(f"Successfully processed {batch_size} questions!")
+
+def domain_content_page():
+    """Domain-specific content generation"""
+    st.title("🏢 Domain-Specific Content Generation")
+    
+    st.markdown("### Generate Content for Indian Business Domains")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        domain = st.selectbox(
+            "Business Domain",
+            ["education", "restaurant", "tech", "health", "business"]
+        )
+        
+        business_type = st.text_input("Specific Business Type", placeholder="e.g., 'IIT JEE coaching center'")
+        
+        content_topics = {
+            "education": ["study tips", "exam preparation", "career guidance", "course recommendations"],
+            "restaurant": ["new dishes", "food reviews", "cooking tips", "restaurant updates"],
+            "tech": ["tutorials", "tech news", "product reviews", "job opportunities"],
+            "health": ["fitness tips", "nutrition advice", "wellness guides", "health awareness"],
+            "business": ["startup advice", "investment tips", "market insights", "success stories"]
+        }
+        
+        suggested_topics = content_topics.get(domain, [])
+        topic = st.selectbox("Content Topic", suggested_topics + ["custom"])
+        
+        if topic == "custom":
+            topic = st.text_input("Custom Topic")
+    
+    with col2:
+        language = st.selectbox("Content Language", ["en", "hi"])
+        content_style = st.selectbox("Content Style", ["engaging", "informative", "promotional"])
+        target_audience = st.selectbox("Target Audience", ["students", "professionals", "general_public"])
+        
+        # Show domain-specific subreddits
+        if st.button("Show Recommended Subreddits"):
+            response = make_api_request(f"/api/reddit/domain-subreddits?domain={domain}")
+            if response.get("success"):
+                st.success("Recommended subreddits:")
+                subreddits = response.get("subreddits", [])
+                st.write(", ".join([f"r/{sub}" for sub in subreddits]))
+            else:
+                st.error("Failed to get subreddit recommendations")
+    
+    if st.button("Generate Domain Content", type="primary", use_container_width=True):
+        if not business_type or not topic:
+            st.error("Please fill in business type and topic")
+            return
+        
+        with st.spinner("Generating domain-specific content..."):
+            response = make_api_request(
+                "/api/ai/generate-domain-content",
+                method="POST",
+                data={
+                    "domain": domain,
+                    "business_type": business_type,
+                    "target_audience": target_audience,
+                    "language": language,
+                    "content_style": content_style
+                }
             )
-        with col2:
-            voice_gender = st.selectbox("Voice Gender", ["female", "male"])
         
-        if st.button("Convert to Speech") and tts_text:
-            with st.spinner("Generating speech..."):
-                import time
-                time.sleep(1)
+        if response.get("success"):
+            st.success("Content generated successfully!")
+            
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.markdown("#### Generated Content")
+                st.markdown(f"**Title:** {response.get('title', 'No title')}")
+                st.markdown("**Body:**")
+                st.text_area("", response.get('body', 'No content'), height=200, key="domain_content")
+            
+            with col2:
+                st.markdown("#### Metadata")
+                st.markdown(f"**Domain:** {response.get('domain')}")
+                st.markdown(f"**Language:** {response.get('language')}")
+                st.markdown(f"**Keywords:**")
+                for keyword in response.get('keywords', []):
+                    st.markdown(f"- {keyword}")
                 
-                st.success("Speech generated successfully! (Demo Mode)")
-                st.info("🎵 In production, an audio player would appear here with the generated speech")
+                st.markdown(f"**Suggested Subreddits:**")
+                for subreddit in response.get('suggested_subreddits', []):
+                    st.markdown(f"- r/{subreddit}")
+            
+            # Auto-post option
+            if st.session_state.reddit_connected:
+                if st.button("Auto-Post to Recommended Subreddits"):
+                    st.success("Content would be posted to recommended subreddits!")
+            else:
+                st.info("Connect Reddit to enable auto-posting")
+        else:
+            st.error(f"Content generation failed: {response.get('error')}")
+
+def ai_content_page():
+    """AI content generation testing"""
+    st.title("🤖 AI Content Generator Testing")
+    
+    tab1, tab2 = st.tabs(["General Content", "Content Suggestions"])
+    
+    with tab1:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            platform = st.selectbox("Platform", ["reddit", "twitter", "stackoverflow", "webmd"])
+            content_type = st.selectbox("Content Type", ["post", "comment", "answer", "tweet"])
+            topic = st.text_input("Topic", placeholder="Enter content topic...")
+            tone = st.selectbox("Tone", ["professional", "casual", "friendly", "informative"])
+        
+        with col2:
+            language = st.selectbox("Language", ["en", "hi", "ta", "te", "bn"])
+            target_audience = st.text_input("Target Audience", placeholder="e.g., Indian students")
+            domain = st.selectbox("Domain (Optional)", ["", "education", "tech", "health", "business"])
+            
+        additional_context = st.text_area("Additional Context", placeholder="Any specific requirements...")
+        
+        if st.button("Generate Content", use_container_width=True):
+            if not topic:
+                st.error("Please enter a topic")
+                return
+            
+            with st.spinner("Generating AI content..."):
+                data = {
+                    "platform": platform,
+                    "content_type": content_type,
+                    "topic": topic,
+                    "tone": tone,
+                    "language": language,
+                    "target_audience": target_audience,
+                    "additional_context": additional_context
+                }
+                if domain:
+                    data["domain"] = domain
                 
-                # Show what the API would return
-                st.json({
-                    "text_length": len(tts_text),
-                    "language": tts_language,
-                    "voice": voice_gender,
-                    "duration_estimate": f"{len(tts_text) // 10} seconds"
-                })
-
-
-# Additional utility functions for the Streamlit app
-def twitter_page():
-    """Twitter management page placeholder"""
-    st.title("🐦 Twitter Management")
+                response = make_api_request("/api/ai/generate-content", method="POST", data=data)
+            
+            if response.get("success"):
+                st.success("Content generated successfully!")
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.text_area("Generated Content:", response.get("content", ""), height=200)
+                with col2:
+                    st.metric("Word Count", response.get("word_count", 0))
+                    st.metric("Character Count", response.get("character_count", 0))
+            else:
+                st.error(f"Generation failed: {response.get('error')}")
     
-    st.info("🚧 Twitter integration coming soon!")
-    
-    st.markdown("""
-    ### Planned Features:
-    - Tweet scheduling and automation
-    - Thread generation for long content
-    - Hashtag optimization
-    - Engagement analytics
-    - Indian trends monitoring
-    - Multi-language tweet support
-    """)
-    
-    # Mock interface
-    with st.expander("Preview: Tweet Composer"):
-        tweet_text = st.text_area("Compose Tweet", placeholder="What's happening?", max_chars=280)
+    with tab2:
+        st.markdown("### Content Suggestions by Domain")
         
         col1, col2 = st.columns(2)
         with col1:
-            st.selectbox("Language", ["English", "Hindi", "Tamil", "Telugu"])
+            platform = st.selectbox("Platform", ["reddit", "twitter", "stackoverflow"], key="suggest_platform")
+            domain = st.selectbox("Domain", ["education", "tech", "health", "business"], key="suggest_domain")
         with col2:
-            st.selectbox("Tone", ["Professional", "Casual", "Humorous"])
+            language = st.selectbox("Language", ["en", "hi"], key="suggest_language")
         
-        if st.button("Schedule Tweet (Demo)", disabled=True):
-            st.info("Twitter integration will be available in the next update!")
+        if st.button("Get Content Suggestions"):
+            response = make_api_request(f"/api/content/suggestions?platform={platform}&domain={domain}&language={language}")
+            
+            if response.get("success"):
+                st.success("Suggestions loaded!")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("#### Content Ideas")
+                    for suggestion in response.get("content_suggestions", []):
+                        st.markdown(f"• {suggestion}")
+                
+                with col2:
+                    st.markdown("#### Trending Topics")
+                    for topic in response.get("trending_topics", []):
+                        st.markdown(f"• {topic}")
+            else:
+                st.error("Failed to get suggestions")
 
+def analytics_page():
+    """Analytics and monitoring"""
+    st.title("📊 Analytics Dashboard")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Posts Today", 12, delta=3)
+    with col2:
+        st.metric("Total Engagement", 456, delta=45)
+    with col3:
+        st.metric("Auto-Replies", 8, delta=2)
+    with col4:
+        st.metric("Success Rate", "87%", delta="5%")
+    
+    # Mock engagement chart
+    dates = pd.date_range(start="2024-01-01", end="2024-01-15", freq="D")
+    data = pd.DataFrame({
+        "Date": dates,
+        "Reddit Posts": [5, 8, 6, 10, 12, 15, 18, 20, 25, 22, 28, 30, 35, 32, 28],
+        "Auto-Replies": [2, 3, 1, 4, 5, 3, 6, 4, 7, 5, 8, 6, 9, 7, 5]
+    })
+    
+    fig = px.line(data.melt(id_vars=["Date"], var_name="Activity", value_name="Count"),
+                  x="Date", y="Count", color="Activity", title="Daily Activity")
+    st.plotly_chart(fig, use_container_width=True)
 
-def stackoverflow_page():
-    """Stack Overflow Q&A page placeholder"""
-    st.title("💻 Stack Overflow Q&A")
-    
-    st.info("🚧 Stack Overflow integration coming soon!")
-    
-    st.markdown("""
-    ### Planned Features:
-    - Question monitoring by tags
-    - AI-powered answer generation
-    - Code example integration
-    - Reputation building automation
-    - Technical content optimization
-    - Programming language detection
-    """)
-    
-    # Mock interface
-    with st.expander("Preview: Answer Generator"):
-        question_text = st.text_area("Programming Question", placeholder="Enter the Stack Overflow question...")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.selectbox("Language", ["Python", "JavaScript", "Java", "C++"])
-        with col2:
-            st.selectbox("Difficulty", ["Beginner", "Intermediate", "Advanced"])
-        
-        if st.button("Generate Answer (Demo)", disabled=True):
-            st.info("Stack Overflow integration will be available in the next update!")
-
-
-def webmd_page():
-    """WebMD Health Q&A page placeholder"""
-    st.title("🏥 WebMD Health Q&A")
-    
-    st.info("🚧 WebMD integration coming soon!")
-    
-    st.markdown("""
-    ### Planned Features:
-    - Health question monitoring
-    - Medical information responses (with disclaimers)
-    - Symptom explanation automation
-    - Wellness content generation
-    - Regional health awareness
-    - Ayurveda integration for Indian users
-    """)
-    
-    # Mock interface
-    with st.expander("Preview: Health Answer Generator"):
-        health_question = st.text_area("Health Question", placeholder="Enter the health-related question...")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.selectbox("Category", ["General Health", "Nutrition", "Mental Health", "Fitness"])
-        with col2:
-            st.selectbox("Audience", ["General Public", "Students", "Elderly", "Athletes"])
-        
-        st.warning("⚠️ All health content will include appropriate medical disclaimers")
-        
-        if st.button("Generate Health Answer (Demo)", disabled=True):
-            st.info("WebMD integration will be available in the next update!")
-
-
-# Analytics helper functions
-def create_sample_analytics_data():
-    """Create sample data for analytics charts"""
-    import pandas as pd
-    import random
-    from datetime import datetime, timedelta
-    
-    # Generate sample engagement data
-    dates = pd.date_range(end=datetime.now(), periods=30, freq='D')
-    
-    engagement_data = []
-    for date in dates:
-        for platform in ["Reddit", "Twitter", "Stack Overflow", "WebMD"]:
-            base_values = {"Reddit": 20, "Twitter": 15, "Stack Overflow": 8, "WebMD": 5}
-            value = base_values[platform] + random.randint(-5, 10)
-            engagement_data.append({
-                "Date": date,
-                "Platform": platform,
-                "Engagement": max(0, value)
-            })
-    
-    return pd.DataFrame(engagement_data)
-
-
-def format_indian_currency(amount):
-    """Format currency in Indian format"""
-    if amount >= 10000000:  # 1 crore
-        return f"₹{amount/10000000:.1f}Cr"
-    elif amount >= 100000:  # 1 lakh
-        return f"₹{amount/100000:.1f}L"
-    elif amount >= 1000:  # 1 thousand
-        return f"₹{amount/1000:.1f}K"
+# Main app logic
+if __name__ == "__main__":
+    if st.session_state.authenticated:
+        main_dashboard()
     else:
-        return f"₹{amount:.0f}"
-
-
-# Error handling wrapper
-def safe_api_call(func):
-    """Decorator for safe API calls with error handling"""
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            st.error(f"API call failed: {str(e)}")
-            return {"success": False, "error": str(e)}
-    return wrapper
+        # Skip login for testing
+        st.session_state.authenticated = True
+        main_dashboard()
