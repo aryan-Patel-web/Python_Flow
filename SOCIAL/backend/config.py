@@ -1,7 +1,7 @@
 """
 Configuration module for Multi-Platform Automation System
 Handles environment variables, settings validation, and configuration management
-Updated for Reddit OAuth support
+Updated for Reddit OAuth support and Pydantic V2
 """
 
 import os
@@ -9,7 +9,7 @@ from typing import List, Optional
 from functools import lru_cache
 import logging
 from pydantic_settings import BaseSettings
-from pydantic import validator
+from pydantic import field_validator, ConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     """
     Application settings with validation and type checking
     """
+    
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
 
     # ==============================================
     # APPLICATION CORE SETTINGS
@@ -40,41 +47,54 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:8501",
         "http://127.0.0.1:3000",
-        "http://127.0.0.1:8501"
+        "http://127.0.0.1:8501",
+        "http://localhost:5173"
     ]
 
     # ==============================================
-    # AI SERVICES CONFIGURATION
+    # AI SERVICES CONFIGURATION - USING ENV VARS
     # ==============================================
     mistral_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
 
-    @validator('mistral_api_key', 'groq_api_key')
-    def validate_ai_keys(cls, v):
-        """Ensure at least one AI service is configured"""
+    @field_validator('mistral_api_key', 'groq_api_key', 'openai_api_key', mode='before')
+    @classmethod
+    def validate_ai_keys(cls, v, info):
+        """Load from environment if not provided"""
+        if v is None:
+            field_name = info.field_name
+            env_key = field_name.upper()
+            env_value = os.getenv(env_key)
+            if env_value:
+                logger.info(f"Loaded {field_name} from environment")
+            return env_value
         return v
 
     # ==============================================
-    # REDDIT API CONFIGURATION (UPDATED FOR OAUTH)
+    # REDDIT API CONFIGURATION - USING ENV VARS
     # ==============================================
-    reddit_client_id: str = "your_reddit_client_id"
-    reddit_client_secret: str = "your_reddit_client_secret"
+    reddit_client_id: Optional[str] = None
+    reddit_client_secret: Optional[str] = None
     reddit_user_agent: str = "IndianAutomationPlatform/1.0"
-
-    # OAuth-specific settings
     reddit_redirect_uri: str = "http://localhost:8000/api/oauth/reddit/callback"
     token_encryption_key: Optional[str] = None
 
-    # Legacy username/password (optional for backward compatibility)
+    # Legacy username/password (optional)
     reddit_username: Optional[str] = None
     reddit_password: Optional[str] = None
 
-    @validator('reddit_client_id', 'reddit_client_secret')
-    def validate_reddit_credentials(cls, v):
-        if not v or v == "your_reddit_client_id" or v == "your_reddit_client_secret":
-            logger.warning("Reddit credentials not configured properly")
-            return v
+    @field_validator('reddit_client_id', 'reddit_client_secret', mode='before')
+    @classmethod
+    def validate_reddit_credentials(cls, v, info):
+        """Load from environment if not provided"""
+        if v is None:
+            field_name = info.field_name
+            env_key = field_name.upper()
+            env_value = os.getenv(env_key)
+            if env_value:
+                logger.info(f"Loaded {field_name} from environment")
+            return env_value
         return v
 
     # ==============================================
@@ -89,19 +109,14 @@ class Settings(BaseSettings):
     twitter_client_secret: Optional[str] = None
 
     # ==============================================
-    # STACK OVERFLOW API CONFIGURATION
-    # ==============================================
-    stackoverflow_key: Optional[str] = None
-    stackoverflow_access_token: Optional[str] = None
-
-    # ==============================================
-    # DATABASE CONFIGURATION (UPDATED FOR socialMedia)
+    # DATABASE CONFIGURATION
     # ==============================================
     mongodb_uri: str = "mongodb://localhost:27017/socialMedia"
     mongodb_test_uri: str = "mongodb://localhost:27017/socialMedia_test"
     redis_url: str = "redis://localhost:6379/0"
 
-    @validator('mongodb_uri')
+    @field_validator('mongodb_uri')
+    @classmethod
     def validate_mongodb_uri(cls, v):
         if not v.startswith(('mongodb://', 'mongodb+srv://')):
             raise ValueError("Invalid MongoDB URI format")
@@ -114,43 +129,10 @@ class Settings(BaseSettings):
     rate_limit_per_hour: int = 1000
 
     # ==============================================
-    # VOICE PROCESSING CONFIGURATION
-    # ==============================================
-    google_cloud_tts_key: Optional[str] = None
-    azure_speech_key: Optional[str] = None
-    azure_speech_region: Optional[str] = None
-
-    # ==============================================
-    # SELENIUM/BROWSER CONFIGURATION
-    # ==============================================
-    webdriver_path: str = "/usr/local/bin/chromedriver"
-    selenium_headless: bool = True
-    selenium_timeout: int = 30
-
-    # ==============================================
-    # MONITORING & LOGGING
-    # ==============================================
-    sentry_dsn: Optional[str] = None
-
-    # ==============================================
-    # FEATURE FLAGS
-    # ==============================================
-    enable_voice_processing: bool = True
-    enable_web_scraping: bool = True
-    enable_ai_content_generation: bool = True
-    enable_multi_language: bool = True
-    enable_analytics: bool = True
-
-    # ==============================================
     # PLATFORM SPECIFIC SETTINGS
     # ==============================================
     reddit_rate_limit_delay: int = 2
     reddit_max_retries: int = 3
-    twitter_rate_limit_delay: int = 1
-    twitter_max_retries: int = 3
-    webmd_request_delay: int = 3
-    webmd_max_retries: int = 2
-    stackoverflow_rate_limit: int = 300
 
     # ==============================================
     # CONTENT GENERATION SETTINGS
@@ -174,70 +156,13 @@ class Settings(BaseSettings):
     ]
 
     # ==============================================
-    # BUSINESS LOGIC SETTINGS
+    # FEATURE FLAGS
     # ==============================================
-    free_tier_platforms: int = 1
-    free_tier_monthly_actions: int = 50
-    pro_tier_platforms: int = 3
-    pro_tier_monthly_actions: int = 500
-    pro_tier_price: float = 999.0
-    gold_tier_platforms: int = 5
-    gold_tier_monthly_actions: int = 2000
-    gold_tier_price: float = 2499.0
-    diamond_tier_platforms: int = -1
-    diamond_tier_monthly_actions: int = -1
-    diamond_tier_price: float = 4999.0
-    qa_commission_rate: float = 0.30
-    min_payout_amount: float = 500.0
-
-    # ==============================================
-    # CACHE SETTINGS
-    # ==============================================
-    cache_ttl_short: int = 300
-    cache_ttl_medium: int = 1800
-    cache_ttl_long: int = 3600
-    cache_ttl_daily: int = 86400
-
-    # ==============================================
-    # FILE UPLOAD SETTINGS
-    # ==============================================
-    max_file_size: int = 10 * 1024 * 1024
-    allowed_file_types: List[str] = [
-        "image/jpeg", "image/png", "image/gif",
-        "audio/wav", "audio/mp3", "audio/webm"
-    ]
-    upload_path: str = "uploads"
-
-    # ==============================================
-    # NOTIFICATION SETTINGS
-    # ==============================================
-    email_notifications: bool = True
-    sms_notifications: bool = False
-    push_notifications: bool = True
-
-    # ==============================================
-    # ANALYTICS SETTINGS
-    # ==============================================
-    analytics_retention_days: int = 365
-    enable_user_tracking: bool = True
-    enable_performance_monitoring: bool = True
-
-    # ==============================================
-    # SECURITY SETTINGS
-    # ==============================================
-    enable_rate_limiting: bool = True
-    enable_request_logging: bool = True
-    enable_input_validation: bool = True
-    enable_xss_protection: bool = True
-    enable_csrf_protection: bool = True
-
-    min_password_length: int = 8
-    require_password_numbers: bool = True
-    require_password_symbols: bool = True
-    require_password_uppercase: bool = True
-    session_timeout_minutes: int = 120
-    max_login_attempts: int = 5
-    lockout_duration_minutes: int = 15
+    enable_voice_processing: bool = True
+    enable_web_scraping: bool = True
+    enable_ai_content_generation: bool = True
+    enable_multi_language: bool = True
+    enable_analytics: bool = True
 
     # ==============================================
     # DEVELOPMENT SETTINGS
@@ -250,12 +175,6 @@ class Settings(BaseSettings):
     test_mode: bool = False
     mock_ai_responses: bool = False
     mock_platform_apis: bool = False
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"   # ✅ FIX: ignore unknown fields like max_workers, reload
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -273,17 +192,25 @@ class Settings(BaseSettings):
                 self.token_encryption_key = None
 
     def _validate_configuration(self):
-        if not any([self.mistral_api_key, self.groq_api_key, self.openai_api_key]):
-            logger.warning("No AI service API keys configured. AI features limited.")
-        if self.environment == "production":
-            if "localhost" in self.mongodb_uri:
-                logger.warning("Using localhost MongoDB in production")
-            if "localhost" in self.redis_url:
-                logger.warning("Using localhost Redis in production")
-        if self.environment == "production" and self.debug:
-            logger.warning("Debug mode enabled in production")
-        if len(self.secret_key) < 32:
-            logger.warning("Secret key should be >= 32 chars")
+        """Enhanced validation with better error messages"""
+        ai_keys_available = any([self.mistral_api_key, self.groq_api_key, self.openai_api_key])
+        
+        if not ai_keys_available:
+            logger.warning("No AI service API keys configured. AI features will be limited.")
+        else:
+            available_services = []
+            if self.mistral_api_key:
+                available_services.append("Mistral")
+            if self.groq_api_key:
+                available_services.append("Groq")
+            if self.openai_api_key:
+                available_services.append("OpenAI")
+            logger.info(f"AI services configured: {', '.join(available_services)}")
+        
+        if not self.reddit_client_id or not self.reddit_client_secret:
+            logger.warning("Reddit OAuth credentials not configured. Reddit features will be limited.")
+        else:
+            logger.info("Reddit OAuth credentials configured successfully")
 
     @property
     def database_url(self) -> str:
@@ -310,67 +237,16 @@ class Settings(BaseSettings):
 
     def get_reddit_config(self) -> dict:
         return {
-            "client_id": self.reddit_client_id,
-            "client_secret": self.reddit_client_secret,
-            "user_agent": self.reddit_user_agent,
-            "redirect_uri": self.reddit_redirect_uri,
-            "token_encryption_key": self.token_encryption_key,
+            "REDDIT_CLIENT_ID": self.reddit_client_id,
+            "REDDIT_CLIENT_SECRET": self.reddit_client_secret,
+            "REDDIT_USER_AGENT": self.reddit_user_agent,
+            "REDDIT_REDIRECT_URI": self.reddit_redirect_uri,
+            "TOKEN_ENCRYPTION_KEY": self.token_encryption_key,
             "rate_limit_delay": self.reddit_rate_limit_delay,
             "max_retries": self.reddit_max_retries,
             "username": self.reddit_username,
             "password": self.reddit_password
         }
-
-    def get_platform_config(self, platform: str) -> dict:
-        platform_configs = {
-            "reddit": self.get_reddit_config(),
-            "twitter": {
-                "bearer_token": self.twitter_bearer_token,
-                "api_key": self.twitter_api_key,
-                "api_secret": self.twitter_api_secret,
-                "access_token": self.twitter_access_token,
-                "access_token_secret": self.twitter_access_token_secret,
-                "client_id": self.twitter_client_id,
-                "client_secret": self.twitter_client_secret,
-                "rate_limit_delay": self.twitter_rate_limit_delay,
-                "max_retries": self.twitter_max_retries
-            },
-            "stackoverflow": {
-                "key": self.stackoverflow_key,
-                "access_token": self.stackoverflow_access_token,
-                "rate_limit": self.stackoverflow_rate_limit
-            },
-            "webmd": {
-                "request_delay": self.webmd_request_delay,
-                "max_retries": self.webmd_max_retries
-            }
-        }
-        return platform_configs.get(platform, {})
-
-    def get_subscription_config(self, tier: str) -> dict:
-        tier_configs = {
-            "free": {
-                "platforms": self.free_tier_platforms,
-                "monthly_actions": self.free_tier_monthly_actions,
-                "price": 0.0
-            },
-            "pro": {
-                "platforms": self.pro_tier_platforms,
-                "monthly_actions": self.pro_tier_monthly_actions,
-                "price": self.pro_tier_price
-            },
-            "gold": {
-                "platforms": self.gold_tier_platforms,
-                "monthly_actions": self.gold_tier_monthly_actions,
-                "price": self.gold_tier_price
-            },
-            "diamond": {
-                "platforms": self.diamond_tier_platforms,
-                "monthly_actions": self.diamond_tier_monthly_actions,
-                "price": self.diamond_tier_price
-            }
-        }
-        return tier_configs.get(tier, tier_configs["free"])
 
 
 @lru_cache()

@@ -1,6 +1,7 @@
 """
-AI Service Module for Multi-Platform Content Generation
-Handles Mistral AI, Groq fallback, voice processing, and platform-specific prompts
+Enhanced AI Service Module for Multi-Platform Content Generation
+Real Mistral AI integration with Groq fallback for Reddit automation
+NO DEMO DATA - Uses actual API calls for content generation
 """
 
 import asyncio
@@ -10,206 +11,215 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import json
-import re
+import os
+import random
 
-# AI Service imports
+# Import AI service clients
 try:
     from mistralai.client import MistralClient
     from mistralai.models.chat_completion import ChatMessage
+    MISTRAL_AVAILABLE = True
 except ImportError:
-    MistralClient = None
-    ChatMessage = None
+    MISTRAL_AVAILABLE = False
+    print("⚠️ Mistral AI client not available. Install: pip install mistralai")
 
 try:
     from groq import Groq
+    GROQ_AVAILABLE = True
 except ImportError:
-    Groq = None
-
-# Voice processing imports
-try:
-    import speech_recognition as sr
-    from gtts import gTTS
-    import pyttsx3
-    from pydub import AudioSegment
-except ImportError:
-    sr = None
-    gTTS = None
-    pyttsx3 = None
-    AudioSegment = None
-
-# Language detection
-try:
-    from langdetect import detect, LangDetectError
-    from googletrans import Translator
-except ImportError:
-    detect = None
-    LangDetectError = None
-    Translator = None
-
-from config import get_settings
+    GROQ_AVAILABLE = False
+    print("⚠️ Groq client not available. Install: pip install groq")
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
-
 
 class AIService:
-    """
-    Production-ready AI service with Mistral primary, Groq fallback,
-    platform-specific prompts, and voice processing capabilities
-    """
+    """Enhanced AI Service with real Mistral integration for Reddit automation"""
     
     def __init__(self):
-        """Initialize AI service with multiple providers"""
+        """Initialize AI service with real API clients"""
+        
+        # Get API keys from environment or config
+        self.mistral_api_key = os.getenv("MISTRAL_API_KEY") or "your_mistral_api_key_here"
+        self.groq_api_key = os.getenv("GROQ_API_KEY") or "your_groq_api_key_here"
+        print(f"Mistral Key: {self.mistral_api_key[:4]}..., Groq Key: {self.groq_api_key[:4]}...")
+        
+        # Initialize clients
         self.mistral_client = None
         self.groq_client = None
-        self.translator = None
-        self.voice_engine = None
         
-        # Initialize Mistral AI
-        if settings.mistral_api_key and MistralClient:
+        # Initialize Mistral client
+        if MISTRAL_AVAILABLE and self.mistral_api_key and self.mistral_api_key != "your_mistral_api_key_here":
             try:
-                self.mistral_client = MistralClient(api_key=settings.mistral_api_key)
-                logger.info("Mistral AI client initialized successfully")
+                self.mistral_client = MistralClient(api_key=self.mistral_api_key)
+                logger.info("✅ Mistral AI client initialized")
             except Exception as e:
-                logger.error(f"Failed to initialize Mistral AI: {e}")
+                logger.error(f"❌ Mistral AI initialization failed: {e}")
         
-        # Initialize Groq as fallback
-        if settings.groq_api_key and Groq:
+        # Initialize Groq client as fallback
+        if GROQ_AVAILABLE and self.groq_api_key and self.groq_api_key != "your_groq_api_key_here":
             try:
-                self.groq_client = Groq(api_key=settings.groq_api_key)
-                logger.info("Groq client initialized successfully")
+                self.groq_client = Groq(api_key=self.groq_api_key)
+                logger.info("✅ Groq AI client initialized")
             except Exception as e:
-                logger.error(f"Failed to initialize Groq: {e}")
+                logger.error(f"❌ Groq AI initialization failed: {e}")
         
-        # Initialize translator
-        if Translator:
-            try:
-                self.translator = Translator()
-                logger.info("Google Translator initialized successfully")
-            except Exception as e:
-                logger.error(f"Failed to initialize translator: {e}")
-        
-        # Initialize voice engine
-        if pyttsx3:
-            try:
-                self.voice_engine = pyttsx3.init()
-                self.voice_engine.setProperty('rate', 150)  # Speed
-                self.voice_engine.setProperty('volume', 0.9)  # Volume
-                logger.info("Voice engine initialized successfully")
-            except Exception as e:
-                logger.error(f"Failed to initialize voice engine: {e}")
-        
-        # Platform-specific prompts - FIXED: Added missing _get_reddit_answer_prompt
-        self.platform_prompts = {
-            "reddit": {
-                "post": self._get_reddit_post_prompt,
-                "comment": self._get_reddit_comment_prompt,
-                "answer": self._get_reddit_answer_prompt  # This was missing - FIXED
-            },
-            "twitter": {
-                "tweet": self._get_twitter_tweet_prompt,
-                "thread": self._get_twitter_thread_prompt,
-                "reply": self._get_twitter_reply_prompt
-            },
-            "stackoverflow": {
-                "answer": self._get_stackoverflow_answer_prompt,
-                "question": self._get_stackoverflow_question_prompt
-            },
-            "webmd": {
-                "answer": self._get_webmd_answer_prompt,
-                "advice": self._get_webmd_advice_prompt
-            }
+        # Domain-specific subreddit mappings
+        self.domain_subreddits = {
+            "education": ["JEE", "NEET", "IndianStudents", "india", "StudyTips", "GetStudying"],
+            "restaurant": ["IndianFood", "food", "FoodPorn", "recipes", "bangalore", "mumbai"],
+            "technology": ["developersIndia", "programming", "coding", "tech", "india"],
+            "health": ["fitness", "HealthyFood", "nutrition", "india", "HealthyEating"],
+            "business": ["entrepreneur", "IndiaInvestments", "business", "startup", "india"]
         }
         
-        # Domain-specific content templates for Indian businesses
-        self.domain_templates = {
-            "education": {
-                "reddit_subreddits": ["india", "JEE", "NEET", "IndianStudents", "StudyTips", "AskIndia"],
-                "content_themes": ["exam_preparation", "study_tips", "career_guidance", "course_recommendations"],
-                "keywords": ["JEE", "NEET", "board_exams", "competitive_exams", "study_abroad", "engineering", "medical"]
-            },
-            "restaurant": {
-                "reddit_subreddits": ["india", "bangalore", "mumbai", "delhi", "food", "IndianFood", "pune"],
-                "content_themes": ["food_reviews", "recipe_sharing", "restaurant_updates", "local_cuisine"],
-                "keywords": ["indian_food", "street_food", "home_delivery", "restaurant", "recipe", "spices"]
-            },
-            "tech": {
-                "reddit_subreddits": ["india", "bangalore", "developersIndia", "programming", "coding", "IndianStartups"],
-                "content_themes": ["tech_tutorials", "job_market", "startup_news", "programming_tips"],
-                "keywords": ["programming", "software", "development", "startup", "tech_jobs", "coding"]
-            },
-            "health": {
-                "reddit_subreddits": ["india", "fitness", "HealthyFood", "mentalhealth", "AskDocs"],
-                "content_themes": ["health_tips", "fitness_advice", "nutrition", "mental_wellness"],
-                "keywords": ["health", "fitness", "yoga", "ayurveda", "nutrition", "wellness", "exercise"]
-            },
-            "business": {
-                "reddit_subreddits": ["india", "entrepreneur", "IndiaInvestments", "business", "IndianStartups"],
-                "content_themes": ["business_tips", "investment_advice", "startup_stories", "market_insights"],
-                "keywords": ["business", "entrepreneur", "investment", "startup", "finance", "marketing"]
-            }
+        # Content style templates
+        self.style_prompts = {
+            "engaging": "Write in a conversational, engaging tone that encourages discussion",
+            "informative": "Write in a clear, educational tone with practical information",
+            "promotional": "Write in a subtle promotional tone that provides value first",
+            "helpful": "Write in a supportive, helpful tone like giving advice to a friend"
         }
     
-    async def generate_platform_content(
-        self,
-        platform: str,
-        content_type: str,
-        topic: str,
-        tone: str = "professional",
-        language: str = "en",
-        target_audience: str = "general",
-        additional_context: str = "",
-        domain: str = None
-    ) -> Dict[str, Any]:
-        """
-        Generate platform-specific content using AI with domain expertise
-        
-        Args:
-            platform: Target platform (reddit, twitter, stackoverflow, webmd)
-            content_type: Type of content (post, comment, answer, etc.)
-            topic: Content topic
-            tone: Content tone (professional, casual, friendly, etc.)
-            language: Target language
-            target_audience: Target audience description
-            additional_context: Additional context or requirements
-            domain: Business domain (education, restaurant, tech, health, business)
-            
-        Returns:
-            Dictionary containing generated content and metadata
-        """
+    async def test_ai_connection(self) -> Dict[str, Any]:
+        """Test AI service connections"""
         try:
-            # Get platform-specific prompt
-            prompt_generator = self.platform_prompts.get(platform, {}).get(content_type)
-            if not prompt_generator:
-                raise ValueError(f"Unsupported platform/content_type: {platform}/{content_type}")
+            services = {}
+            primary_service = None
             
-            # Generate prompt with domain context
-            prompt = prompt_generator(
-                topic=topic,
-                tone=tone,
-                language=language,
-                target_audience=target_audience,
-                additional_context=additional_context,
-                domain=domain
-            )
+            # Test Mistral
+            if self.mistral_client:
+                try:
+                    # Test with a simple message
+                    response = self.mistral_client.chat(
+                        model="mistral-large-latest",
+                        messages=[ChatMessage(role="user", content="Hello, test connection.")],
+                        max_tokens=10
+                    )
+                    services["mistral"] = {"status": "connected", "response_length": len(response.choices[0].message.content)}
+                    primary_service = "mistral"
+                    logger.info("✅ Mistral AI test successful")
+                except Exception as e:
+                    services["mistral"] = {"status": "failed", "error": str(e)}
+                    logger.error(f"❌ Mistral AI test failed: {e}")
+            else:
+                services["mistral"] = {"status": "not_configured", "error": "API key not set"}
             
-            # Generate content using AI
-            content = await self._generate_with_fallback(prompt, platform, language)
+            # Test Groq
+            if self.groq_client:
+                try:
+                    response = self.groq_client.chat.completions.create(
+                        messages=[{"role": "user", "content": "Hello, test connection."}],
+                        model="llama3-8b-8192",
+                        max_tokens=10
+                    )
+                    services["groq"] = {"status": "connected", "response_length": len(response.choices[0].message.content)}
+                    if not primary_service:
+                        primary_service = "groq"
+                    logger.info("✅ Groq AI test successful")
+                except Exception as e:
+                    services["groq"] = {"status": "failed", "error": str(e)}
+                    logger.error(f"❌ Groq AI test failed: {e}")
+            else:
+                services["groq"] = {"status": "not_configured", "error": "API key not set"}
             
-            # Post-process content
-            processed_content = self._post_process_content(content, platform, language, domain)
+            success = any(service.get("status") == "connected" for service in services.values())
             
             return {
-                "success": True,
-                "content": processed_content,
-                "platform": platform,
-                "content_type": content_type,
-                "language": language,
-                "domain": domain,
-                "word_count": len(processed_content.split()),
-                "character_count": len(processed_content),
-                "generated_at": datetime.now().isoformat(),
-                "message": "Content generated successfully"
+                "success": success,
+                "primary_service": primary_service,
+                "services": services,
+                "message": f"Primary service: {primary_service}" if primary_service else "No AI services available"
+            }
+            
+        except Exception as e:
+            logger.error(f"AI connection test failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "services": {},
+                "primary_service": None
+            }
+    
+    async def generate_reddit_domain_content(
+        self,
+        domain: str,
+        business_type: str,
+        business_description: str = "",
+        target_audience: str = "indian_users",
+        language: str = "en",
+        content_style: str = "engaging",
+        test_mode: bool = False,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Generate domain-specific Reddit content using real AI"""
+        
+        try:
+            # Create comprehensive prompt for the domain
+            prompt = self._create_reddit_content_prompt(
+                domain=domain,
+                business_type=business_type,
+                business_description=business_description,
+                target_audience=target_audience,
+                language=language,
+                content_style=content_style,
+                test_mode=test_mode
+            )
+            
+            # Try Mistral first
+            if self.mistral_client:
+                try:
+                    logger.info("🔄 Generating content using Mistral AI...")
+                    
+                    response = self.mistral_client.chat(
+                        model="mistral-large-latest",
+                        messages=[ChatMessage(role="user", content=prompt)],
+                        max_tokens=800,
+                        temperature=0.8
+                    )
+                    
+                    content = response.choices[0].message.content.strip()
+                    parsed_content = self._parse_reddit_content(content)
+                    
+                    if parsed_content.get("title") and parsed_content.get("content"):
+                        parsed_content["ai_service"] = "mistral"
+                        parsed_content["success"] = True
+                        logger.info(f"✅ Mistral generated {len(parsed_content['content'])} characters")
+                        return parsed_content
+                    
+                except Exception as e:
+                    logger.error(f"❌ Mistral generation failed: {e}")
+            
+            # Fallback to Groq
+            if self.groq_client:
+                try:
+                    logger.info("🔄 Falling back to Groq AI...")
+                    
+                    response = self.groq_client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model="llama3-70b-8192",
+                        max_tokens=800,
+                        temperature=0.8
+                    )
+                    
+                    content = response.choices[0].message.content.strip()
+                    parsed_content = self._parse_reddit_content(content)
+                    
+                    if parsed_content.get("title") and parsed_content.get("content"):
+                        parsed_content["ai_service"] = "groq"
+                        parsed_content["success"] = True
+                        logger.info(f"✅ Groq generated {len(parsed_content['content'])} characters")
+                        return parsed_content
+                    
+                except Exception as e:
+                    logger.error(f"❌ Groq generation failed: {e}")
+            
+            # If all AI services fail
+            return {
+                "success": False,
+                "error": "All AI services failed or not configured",
+                "title": "AI Service Unavailable",
+                "content": "Please configure your Mistral or Groq API keys to generate content.",
+                "ai_service": "none"
             }
             
         except Exception as e:
@@ -217,704 +227,329 @@ class AIService:
             return {
                 "success": False,
                 "error": str(e),
-                "message": "Failed to generate content"
+                "title": "Content Generation Error",
+                "content": f"Error occurred: {str(e)}",
+                "ai_service": "error"
             }
     
-    async def generate_reddit_domain_content(
+    def _create_reddit_content_prompt(
         self,
         domain: str,
         business_type: str,
-        target_audience: str = "indian_users",
-        language: str = "en",
-        content_style: str = "engaging"
-    ) -> Dict[str, Any]:
-        """
-        Generate domain-specific Reddit content for Indian businesses
+        business_description: str,
+        target_audience: str,
+        language: str,
+        content_style: str,
+        test_mode: bool = False
+    ) -> str:
+        """Create comprehensive prompts for Reddit content generation"""
         
-        Args:
-            domain: Business domain (education, restaurant, tech, health, business)
-            business_type: Specific business type within domain
-            target_audience: Target audience specification
-            language: Content language
-            content_style: Style of content (engaging, informative, promotional)
-            
-        Returns:
-            Dictionary containing generated Reddit content
-        """
-        try:
-            domain_config = self.domain_templates.get(domain, {})
-            if not domain_config:
-                raise ValueError(f"Unsupported domain: {domain}")
-            
-            # Create domain-specific prompt
-            prompt = f"""
-            Create engaging Reddit content for a {business_type} in the {domain} sector targeting {target_audience}.
-            
-            Domain Context: {domain}
-            Business Type: {business_type}
-            Target Audience: {target_audience}
-            Language: {language}
-            Content Style: {content_style}
-            
-            Requirements:
-            - Create both a compelling title and body content
-            - Make it relevant to Indian market and culture
-            - Include appropriate keywords: {', '.join(domain_config.get('keywords', []))}
-            - Suitable for subreddits: {', '.join(domain_config.get('reddit_subreddits', []))}
-            - Tone should be helpful and authentic, not overly promotional
-            - Include call-to-action that encourages discussion
-            - Consider regional preferences and cultural nuances
-            
-            Content Themes to consider: {', '.join(domain_config.get('content_themes', []))}
-            
-            Format as:
-            TITLE: [Engaging Reddit post title]
-            BODY: [Main post content with appropriate formatting]
-            SUGGESTED_SUBREDDITS: [Best subreddits for this content]
+        # Base context
+        audience_context = {
+            "indian_students": "Indian students preparing for competitive exams like JEE, NEET, and other entrance exams",
+            "indian_users": "Indian users interested in practical solutions and local insights",
+            "tech_professionals": "Technology professionals and developers in India",
+            "food_lovers": "Food enthusiasts and people interested in Indian cuisine",
+            "health_conscious": "Health-conscious individuals looking for fitness and nutrition advice"
+        }.get(target_audience, "General Indian audience")
+        
+        style_instruction = self.style_prompts.get(content_style, "Write in an engaging, conversational tone")
+        
+        # Domain-specific content requirements
+        domain_instructions = {
+            "education": f"""
+            Create educational content about {business_type}. Focus on:
+            - Study tips and strategies
+            - Exam preparation advice
+            - Career guidance
+            - Success stories or motivation
+            - Practical learning techniques
+            Target subreddits like r/JEE, r/NEET, r/IndianStudents
+            """,
+            "restaurant": f"""
+            Create food and restaurant content about {business_type}. Focus on:
+            - Food recommendations and reviews
+            - Cooking tips and recipes
+            - Restaurant experiences
+            - Food culture and traditions
+            - Health and nutrition aspects
+            Target subreddits like r/IndianFood, r/food, r/recipes
+            """,
+            "technology": f"""
+            Create technology content about {business_type}. Focus on:
+            - Technical tips and tutorials
+            - Career advice in tech
+            - Tool recommendations
+            - Industry insights
+            - Programming and development
+            Target subreddits like r/developersIndia, r/programming
+            """,
+            "health": f"""
+            Create health and fitness content about {business_type}. Focus on:
+            - Fitness tips and workout routines
+            - Nutrition advice
+            - Health awareness
+            - Wellness strategies
+            - Lifestyle improvements
+            Target subreddits like r/fitness, r/HealthyFood
+            """,
+            "business": f"""
+            Create business content about {business_type}. Focus on:
+            - Business advice and strategies
+            - Entrepreneurship tips
+            - Investment insights
+            - Success stories
+            - Market analysis
+            Target subreddits like r/entrepreneur, r/IndiaInvestments
             """
+        }.get(domain, f"Create engaging content about {business_type}")
+        
+        test_indicator = "[TEST MODE] " if test_mode else ""
+        
+        prompt = f"""
+        {test_indicator}Create a Reddit post for {audience_context}.
+
+        Business: {business_type}
+        {f"Description: {business_description}" if business_description else ""}
+        Domain: {domain}
+        Style: {style_instruction}
+
+        {domain_instructions}
+
+        Requirements:
+        1. Write for Indian context and audience
+        2. Make it authentic and valuable, not promotional
+        3. Use a natural, conversational tone
+        4. Include practical tips or insights
+        5. Make it engaging to encourage comments
+        6. Keep title under 150 characters
+        7. Keep content between 150-400 words
+        
+        Format your response exactly as:
+        
+        TITLE: [Your engaging title here]
+        
+        CONTENT: [Your detailed post content here]
+        
+        Make sure the content provides real value and doesn't sound like an advertisement.
+        """
+        
+        return prompt
+    
+    def _parse_reddit_content(self, ai_response: str) -> Dict[str, Any]:
+        """Parse AI response into title and content"""
+        try:
+            lines = ai_response.strip().split('\n')
+            title = ""
+            content = ""
             
-            content = await self._generate_with_fallback(prompt, "reddit", language)
+            # Find title
+            for line in lines:
+                if line.upper().startswith('TITLE:'):
+                    title = line[6:].strip()
+                    break
             
-            # Parse the generated content
-            parsed_content = self._parse_reddit_content(content)
+            # Find content
+            content_started = False
+            content_lines = []
+            
+            for line in lines:
+                if line.upper().startswith('CONTENT:'):
+                    content_started = True
+                    content_line = line[8:].strip()
+                    if content_line:
+                        content_lines.append(content_line)
+                elif content_started and line.strip():
+                    content_lines.append(line.strip())
+            
+            content = '\n\n'.join(content_lines)
+            
+            # Fallback parsing if structured format not found
+            if not title or not content:
+                paragraphs = [p.strip() for p in ai_response.split('\n\n') if p.strip()]
+                if len(paragraphs) >= 2:
+                    title = paragraphs[0][:150]  # First paragraph as title
+                    content = '\n\n'.join(paragraphs[1:])  # Rest as content
+                elif len(paragraphs) == 1:
+                    # Single paragraph - create title and content
+                    full_text = paragraphs[0]
+                    if len(full_text) > 100:
+                        title = full_text[:80] + "..."
+                        content = full_text
+                    else:
+                        title = full_text
+                        content = full_text
+            
+            # Clean up title (remove quotes, extra formatting)
+            title = title.replace('"', '').replace("'", "").strip()
+            
+            # Ensure minimum content length
+            if len(content.strip()) < 50:
+                content += f"\n\nWhat are your thoughts on this? Have you had similar experiences?\n\nFeel free to share your insights in the comments!"
             
             return {
-                "success": True,
-                "title": parsed_content.get("title", ""),
-                "body": parsed_content.get("body", ""),
-                "suggested_subreddits": parsed_content.get("subreddits", domain_config.get('reddit_subreddits', [])),
-                "domain": domain,
-                "business_type": business_type,
-                "language": language,
-                "keywords": domain_config.get('keywords', []),
-                "generated_at": datetime.now().isoformat(),
-                "message": "Domain-specific Reddit content generated successfully"
+                "title": title,
+                "content": content,
+                "body": content,  # For backward compatibility
+                "word_count": len(content.split()),
+                "character_count": len(content),
+                "parsed_successfully": bool(title and content)
             }
             
         except Exception as e:
-            logger.error(f"Reddit domain content generation failed: {e}")
+            logger.error(f"Content parsing failed: {e}")
             return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to generate Reddit domain content"
+                "title": "AI Generated Content",
+                "content": ai_response[:500] if ai_response else "Content generation failed",
+                "body": ai_response[:500] if ai_response else "Content generation failed",
+                "word_count": len(ai_response.split()) if ai_response else 0,
+                "character_count": len(ai_response) if ai_response else 0,
+                "parsed_successfully": False
             }
     
     async def generate_qa_answer(
         self,
         platform: str,
         question: str,
-        context: str = "",
-        language: str = "en",
+        domain: str = None,
         expertise_level: str = "intermediate",
-        domain: str = None
-    ) -> Dict[str, Any]:
-        """
-        Generate Q&A answer for educational platforms with domain expertise
-        
-        Args:
-            platform: Platform name (stackoverflow, webmd, reddit)
-            question: Question text
-            context: Additional context about the question
-            language: Response language
-            expertise_level: Level of technical detail (beginner, intermediate, advanced)
-            domain: Business domain for specialized answers
-            
-        Returns:
-            Dictionary containing generated answer
-        """
-        try:
-            # Create specialized Q&A prompt with domain context
-            prompt = self._get_qa_prompt(
-                platform=platform,
-                question=question,
-                context=context,
-                language=language,
-                expertise_level=expertise_level,
-                domain=domain
-            )
-            
-            # Generate answer
-            answer = await self._generate_with_fallback(prompt, platform, language)
-            
-            # Add platform-specific formatting and disclaimers
-            formatted_answer = self._format_qa_answer(answer, platform, language, domain)
-            
-            return {
-                "success": True,
-                "answer": formatted_answer,
-                "platform": platform,
-                "language": language,
-                "expertise_level": expertise_level,
-                "domain": domain,
-                "word_count": len(formatted_answer.split()),
-                "generated_at": datetime.now().isoformat(),
-                "message": "Answer generated successfully"
-            }
-            
-        except Exception as e:
-            logger.error(f"Q&A answer generation failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to generate answer"
-            }
-    
-    async def monitor_and_reply_questions(
-        self,
-        domain: str,
-        subreddits: List[str],
-        keywords: List[str],
-        user_expertise: str,
         language: str = "en",
-        max_replies: int = 5
+        context: Dict[str, Any] = None,
+        **kwargs
     ) -> Dict[str, Any]:
-        """
-        Monitor Reddit questions and generate domain-specific replies
+        """Generate Q&A answers for auto-replies"""
         
-        Args:
-            domain: User's domain expertise
-            subreddits: Subreddits to monitor
-            keywords: Keywords to filter questions
-            user_expertise: User's expertise level in domain
-            language: Reply language
-            max_replies: Maximum number of replies to generate
-            
-        Returns:
-            Dictionary containing generated replies
-        """
         try:
-            # This would integrate with your Reddit monitoring functionality
-            # For now, providing the structure for generating replies
+            context = context or {}
             
-            generated_replies = []
+            # Create Q&A prompt
+            prompt = f"""
+            Answer this {platform} question with expertise level: {expertise_level}
             
-            # Simulate finding relevant questions (integrate with actual Reddit monitoring)
-            sample_questions = [
-                {
-                    "id": "sample_1",
-                    "title": "Best way to prepare for JEE Main?",
-                    "content": "I'm in 12th grade and need guidance on JEE preparation strategy.",
-                    "subreddit": "JEE",
-                    "score": 15,
-                    "num_comments": 3
-                }
-            ]
+            Question: {question}
             
-            for question in sample_questions[:max_replies]:
-                # Generate domain-specific reply
-                reply_prompt = f"""
-                As an expert in {domain}, provide a helpful answer to this question:
-                
-                Question: {question['title']}
-                Context: {question['content']}
-                Subreddit: r/{question['subreddit']}
-                
-                Your expertise level: {user_expertise}
-                Target language: {language}
-                
-                Requirements:
-                - Provide practical, actionable advice
-                - Draw from {domain} domain expertise
-                - Be helpful and encouraging
-                - Include specific tips or resources
-                - Keep it conversational and authentic
-                - Consider Indian context and cultural nuances
-                
-                Format as a natural Reddit comment that adds genuine value.
-                """
-                
-                reply_content = await self._generate_with_fallback(reply_prompt, "reddit", language)
-                
-                generated_replies.append({
-                    "question_id": question["id"],
-                    "question_title": question["title"],
-                    "subreddit": question["subreddit"],
-                    "generated_reply": reply_content,
-                    "word_count": len(reply_content.split()),
-                    "domain": domain
-                })
+            Requirements:
+            1. Provide a helpful, accurate answer
+            2. Use a friendly, knowledgeable tone
+            3. Include practical tips if relevant
+            4. Keep response between 100-300 words
+            5. Make it valuable to the person asking
+            6. Don't be promotional or salesy
+            {f"7. Focus on {domain} domain knowledge" if domain else ""}
             
-            return {
-                "success": True,
-                "replies_generated": len(generated_replies),
-                "replies": generated_replies,
-                "domain": domain,
-                "language": language,
-                "message": f"Generated {len(generated_replies)} domain-specific replies"
-            }
+            Context: {json.dumps(context) if context else "None"}
             
-        except Exception as e:
-            logger.error(f"Monitor and reply failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to generate replies"
-            }
-    
-    async def speech_to_text(
-        self,
-        audio_base64: str,
-        language: str = "auto"
-    ) -> Dict[str, Any]:
-        """
-        Convert speech to text with language detection
-        
-        Args:
-            audio_base64: Base64 encoded audio data
-            language: Target language or 'auto' for detection
-            
-        Returns:
-            Dictionary containing transcribed text
-        """
-        try:
-            if not sr:
-                raise ImportError("SpeechRecognition library not available")
-            
-            # Decode audio data
-            audio_data = base64.b64decode(audio_base64)
-            
-            # Convert to audio file
-            audio_file = io.BytesIO(audio_data)
-            
-            # Initialize recognizer
-            recognizer = sr.Recognizer()
-            
-            # Process audio
-            with sr.AudioFile(audio_file) as source:
-                audio = recognizer.record(source)
-            
-            # Transcribe with language detection
-            if language == "auto":
-                # Try multiple languages for Indian users
-                languages_to_try = ["en-US", "hi-IN", "ta-IN", "te-IN", "bn-IN"]
-                
-                for lang in languages_to_try:
-                    try:
-                        text = recognizer.recognize_google(audio, language=lang)
-                        detected_language = lang.split("-")[0]
-                        break
-                    except sr.UnknownValueError:
-                        continue
-                else:
-                    # Fallback to English
-                    text = recognizer.recognize_google(audio, language="en-US")
-                    detected_language = "en"
-            else:
-                text = recognizer.recognize_google(audio, language=f"{language}-IN")
-                detected_language = language
-            
-            return {
-                "success": True,
-                "text": text,
-                "detected_language": detected_language,
-                "confidence": 0.95,  # Placeholder - Google API doesn't provide confidence
-                "message": "Speech transcribed successfully"
-            }
-            
-        except Exception as e:
-            logger.error(f"Speech to text failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to transcribe speech"
-            }
-    
-    async def text_to_speech(
-        self,
-        text: str,
-        language: str = "en",
-        voice: str = "default"
-    ) -> Dict[str, Any]:
-        """
-        Convert text to speech with voice selection
-        
-        Args:
-            text: Text to convert
-            language: Speech language
-            voice: Voice type (default, male, female)
-            
-        Returns:
-            Dictionary containing audio data
-        """
-        try:
-            if not gTTS:
-                raise ImportError("gTTS library not available")
-            
-            # Language mapping for Indian languages
-            language_mapping = {
-                "hi": "hi",
-                "ta": "ta",
-                "te": "te",
-                "bn": "bn",
-                "mr": "mr",
-                "gu": "gu",
-                "kn": "kn",
-                "ml": "ml",
-                "pa": "pa",
-                "en": "en"
-            }
-            
-            tts_language = language_mapping.get(language, "en")
-            
-            # Generate speech
-            tts = gTTS(text=text, lang=tts_language, slow=False)
-            
-            # Save to BytesIO
-            audio_buffer = io.BytesIO()
-            tts.write_to_fp(audio_buffer)
-            audio_buffer.seek(0)
-            
-            # Encode to base64
-            audio_base64 = base64.b64encode(audio_buffer.read()).decode('utf-8')
-            
-            return {
-                "success": True,
-                "audio_base64": audio_base64,
-                "language": language,
-                "voice": voice,
-                "text_length": len(text),
-                "message": "Text converted to speech successfully"
-            }
-            
-        except Exception as e:
-            logger.error(f"Text to speech failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to convert text to speech"
-            }
-    
-    def detect_language(self, text: str) -> Dict[str, Any]:
-        """
-        Detect language of input text
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            Dictionary containing detected language
-        """
-        try:
-            if not detect:
-                raise ImportError("langdetect library not available")
-            
-            detected_lang = detect(text)
-            
-            # Language names mapping
-            language_names = {
-                "en": "English",
-                "hi": "Hindi",
-                "ta": "Tamil",
-                "te": "Telugu",
-                "bn": "Bengali",
-                "mr": "Marathi",
-                "gu": "Gujarati",
-                "kn": "Kannada",
-                "ml": "Malayalam",
-                "pa": "Punjabi",
-                "or": "Odia",
-                "as": "Assamese"
-            }
-            
-            return {
-                "success": True,
-                "detected_language": detected_lang,
-                "language_name": language_names.get(detected_lang, "Unknown"),
-                "confidence": 0.9,  # Placeholder
-                "message": "Language detected successfully"
-            }
-            
-        except Exception as e:
-            logger.error(f"Language detection failed: {e}")
-            return {
-                "success": False,
-                "detected_language": "en",
-                "language_name": "English",
-                "error": str(e),
-                "message": "Language detection failed, defaulting to English"
-            }
-    
-    async def translate_text(
-        self,
-        text: str,
-        source_language: str = "auto",
-        target_language: str = "en"
-    ) -> Dict[str, Any]:
-        """
-        Translate text between languages
-        
-        Args:
-            text: Text to translate
-            source_language: Source language or 'auto'
-            target_language: Target language
-            
-        Returns:
-            Dictionary containing translated text
-        """
-        try:
-            if not self.translator:
-                raise ImportError("googletrans library not available")
-            
-            # Perform translation
-            if source_language == "auto":
-                result = self.translator.translate(text, dest=target_language)
-                detected_source = result.src
-            else:
-                result = self.translator.translate(text, src=source_language, dest=target_language)
-                detected_source = source_language
-            
-            return {
-                "success": True,
-                "translated_text": result.text,
-                "source_language": detected_source,
-                "target_language": target_language,
-                "original_text": text,
-                "message": "Text translated successfully"
-            }
-            
-        except Exception as e:
-            logger.error(f"Translation failed: {e}")
-            return {
-                "success": False,
-                "translated_text": text,  # Return original on failure
-                "error": str(e),
-                "message": "Translation failed, returning original text"
-            }
-    
-    async def _generate_with_fallback(
-        self,
-        prompt: str,
-        platform: str,
-        language: str
-    ) -> str:
-        """
-        Generate content with Mistral primary, Groq fallback
-        
-        Args:
-            prompt: Generation prompt
-            platform: Target platform
-            language: Content language
-            
-        Returns:
-            Generated content string
-        """
-        # Try Mistral first
-        if self.mistral_client:
-            try:
-                response = self.mistral_client.chat(
-                    model="mistral-large-latest",
-                    messages=[
-                        ChatMessage(role="user", content=prompt)
-                    ],
-                    temperature=0.7,
-                    max_tokens=1000
-                )
-                content = response.choices[0].message.content
-                logger.info("Content generated using Mistral AI")
-                return content
-                
-            except Exception as e:
-                logger.warning(f"Mistral AI failed: {e}, trying Groq fallback")
-        
-        # Fallback to Groq
-        if self.groq_client:
-            try:
-                response = self.groq_client.chat.completions.create(
-                    model="mixtral-8x7b-32768",
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7,
-                    max_tokens=1000
-                )
-                content = response.choices[0].message.content
-                logger.info("Content generated using Groq fallback")
-                return content
-                
-            except Exception as e:
-                logger.error(f"Groq fallback also failed: {e}")
-        
-        # Ultimate fallback - return template response
-        logger.warning("Both AI services failed, using template response")
-        return self._get_template_response(platform, language)
-    
-    def _get_reddit_post_prompt(self, **kwargs) -> str:
-        """Generate Reddit post prompt"""
-        domain_context = ""
-        if kwargs.get('domain'):
-            domain_config = self.domain_templates.get(kwargs['domain'], {})
-            domain_context = f"""
-            Domain: {kwargs['domain']}
-            Relevant keywords: {', '.join(domain_config.get('keywords', []))}
-            Target subreddits: {', '.join(domain_config.get('reddit_subreddits', []))}
-            Content themes: {', '.join(domain_config.get('content_themes', []))}
+            Write a natural, helpful response that adds value to the discussion.
             """
-        
-        return f"""
-        Create a Reddit post about {kwargs['topic']} for r/india or related Indian subreddits.
-        
-        Requirements:
-        - Tone: {kwargs['tone']}
-        - Language: {kwargs['language']} (use Hindi words where culturally appropriate)
-        - Target audience: {kwargs['target_audience']}
-        - Length: 100-300 words
-        - Make it engaging and discussion-worthy
-        - Consider Indian cultural context and current trends
-        - Include relevant hashtags sparingly
-        
-        {domain_context}
-        
-        Additional context: {kwargs.get('additional_context', '')}
-        
-        Format as a Reddit post with title and body.
-        """
+            
+            # Try Mistral first
+            if self.mistral_client:
+                try:
+                    response = self.mistral_client.chat(
+                        model="mistral-large-latest",
+                        messages=[ChatMessage(role="user", content=prompt)],
+                        max_tokens=400,
+                        temperature=0.7
+                    )
+                    
+                    answer = response.choices[0].message.content.strip()
+                    
+                    return {
+                        "success": True,
+                        "answer": answer,
+                        "ai_service": "mistral",
+                        "word_count": len(answer.split()),
+                        "character_count": len(answer)
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Mistral Q&A generation failed: {e}")
+            
+            # Fallback to Groq
+            if self.groq_client:
+                try:
+                    response = self.groq_client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model="llama3-70b-8192",
+                        max_tokens=400,
+                        temperature=0.7
+                    )
+                    
+                    answer = response.choices[0].message.content.strip()
+                    
+                    return {
+                        "success": True,
+                        "answer": answer,
+                        "ai_service": "groq",
+                        "word_count": len(answer.split()),
+                        "character_count": len(answer)
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Groq Q&A generation failed: {e}")
+            
+            return {
+                "success": False,
+                "error": "No AI service available for Q&A generation",
+                "answer": "I'd be happy to help, but I'm unable to generate a response right now."
+            }
+            
+        except Exception as e:
+            logger.error(f"Q&A generation failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "answer": "Sorry, I encountered an error while generating the response."
+            }
     
-    def _get_reddit_comment_prompt(self, **kwargs) -> str:
-        """Generate Reddit comment prompt"""
-        return f"""
-        Create a helpful Reddit comment about {kwargs['topic']}.
-        
-        Requirements:
-        - Tone: {kwargs['tone']} but conversational
-        - Language: {kwargs['language']}
-        - Length: 50-150 words
-        - Be helpful and add value to the discussion
-        - Include personal insight or experience if relevant
-        - Use appropriate Reddit culture and etiquette
-        - Consider Indian context if applicable
-        
-        Make it sound natural and human-like.
-        """
+    async def analyze_content_performance(self, content: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze content performance for optimization"""
+        # This would be implemented for analytics features
+        return {"success": True, "analysis": "Performance analysis not implemented yet"}
     
-    def _get_reddit_answer_prompt(self, **kwargs) -> str:
-        """Generate Reddit Q&A answer prompt - FIXED: This method was missing"""
-        domain_context = ""
-        if kwargs.get('domain'):
-            domain_config = self.domain_templates.get(kwargs['domain'], {})
-            domain_context = f"Drawing from {kwargs['domain']} domain expertise"
-        
-        return f"""
-        Create a comprehensive Reddit answer about {kwargs['topic']}.
-        
-        Requirements:
-        - Tone: {kwargs['tone']} but helpful and authoritative
-        - Language: {kwargs['language']}
-        - Length: 100-250 words
-        - Provide practical, actionable advice
-        - Include specific examples or steps where appropriate
-        - Be encouraging and supportive
-        - Consider Indian cultural context
-        - Use Reddit formatting (bold, lists, etc.)
-        
-        {domain_context}
-        
-        Additional context: {kwargs.get('additional_context', '')}
-        
-        Format as a helpful Reddit answer that genuinely helps the questioner.
-        """
+    def get_recommended_subreddits(self, domain: str) -> List[str]:
+        """Get recommended subreddits for a domain"""
+        return self.domain_subreddits.get(domain, ["india", "AskReddit"])
     
-    def _get_twitter_tweet_prompt(self, **kwargs) -> str:
-        """Generate Twitter tweet prompt"""
-        return f"""
-        Create a Twitter/X tweet about {kwargs['topic']}.
+    def get_content_suggestions(self, domain: str, recent_posts: List[Dict]) -> List[str]:
+        """Get content suggestions based on domain and recent posts"""
+        # This would analyze recent posts and suggest new content ideas
+        base_suggestions = {
+            "education": [
+                "Study tips for competitive exams",
+                "Time management strategies",
+                "Motivation and success stories",
+                "Career guidance posts",
+                "Learning technique tutorials"
+            ],
+            "restaurant": [
+                "Recipe sharing and cooking tips",
+                "Restaurant reviews and recommendations", 
+                "Food culture discussions",
+                "Healthy eating advice",
+                "Local cuisine spotlights"
+            ],
+            "technology": [
+                "Programming tutorials and tips",
+                "Career advice for developers",
+                "Tool and technology reviews",
+                "Industry trend discussions",
+                "Project showcases"
+            ],
+            "health": [
+                "Fitness routines and exercises",
+                "Nutrition advice and meal planning",
+                "Mental health and wellness",
+                "Health myth busting",
+                "Lifestyle improvement tips"
+            ],
+            "business": [
+                "Entrepreneurship advice",
+                "Business strategy discussions",
+                "Investment insights",
+                "Success story sharing",
+                "Market analysis posts"
+            ]
+        }
         
-        Requirements:
-        - Tone: {kwargs['tone']}
-        - Language: {kwargs['language']}
-        - Length: Under 280 characters
-        - Include relevant hashtags (2-3 max)
-        - Make it engaging and shareable
-        - Consider Indian context and current trends
-        
-        Additional context: {kwargs.get('additional_context', '')}
-        """
-    
-    def _get_twitter_thread_prompt(self, **kwargs) -> str:
-        """Generate Twitter thread prompt"""
-        return f"""
-        Create a Twitter thread about {kwargs['topic']}.
-        
-        Requirements:
-        - Tone: {kwargs['tone']}
-        - Language: {kwargs['language']}
-        - 3-5 tweets in the thread
-        - Each tweet under 280 characters
-        - Progressive information flow
-        - Include relevant hashtags
-        - Consider Indian context
-        
-        Format as numbered tweets: 1/5, 2/5, etc.
-        """
-    
-    def _get_twitter_reply_prompt(self, **kwargs) -> str:
-        """Generate Twitter reply prompt"""
-        return f"""
-        Create a Twitter reply about {kwargs['topic']}.
-        
-        Requirements:
-        - Tone: {kwargs['tone']} but conversational
-        - Language: {kwargs['language']}
-        - Length: Under 280 characters
-        - Be engaging and add value
-        - Consider context of original tweet
-        """
-    
-    def _get_stackoverflow_answer_prompt(self, **kwargs) -> str:
-        """Generate Stack Overflow answer prompt"""
-        return f"""
-        Create a comprehensive Stack Overflow answer about {kwargs['topic']}.
-        
-        Requirements:
-        - Tone: Technical and professional
-        - Language: English (programming terms)
-        - Include code examples if applicable
-        - Explain the solution step-by-step
-        - Add references or documentation links
-        - Consider different scenarios and edge cases
-        - Format with proper markdown
-        
-        Make it detailed enough to be helpful for other developers.
-        """
-    
-    def _get_stackoverflow_question_prompt(self, **kwargs) -> str:
-        """Generate Stack Overflow question prompt"""
-        return f"""
-        Create a well-structured Stack Overflow question about {kwargs['topic']}.
-        
-        Requirements:
-        - Clear, specific title
-        - Detailed problem description
-        - Include relevant code snippets
-        - Specify expected vs actual behavior
-        - Add relevant tags
-        - Follow SO best practices
-        """
-    
-    def _get_webmd_answer_prompt(self, **kwargs) -> str:
-        """Generate WebMD health answer prompt"""
-        return f"""
-        Create a helpful health information response about {kwargs['topic']}.
-        
-        Requirements:
-        - Tone: Professional, caring, and informative
-        - Language: {kwargs['language']} (simple, non-technical terms)
-        - Include important health disclaimers
-        - Provide general information, not specific medical advice
-        - Suggest when to consult healthcare professionals
-        - Be culturally sensitive to Indian health practices
-        
-        IMPORTANT: Always emphasize consulting qualified medical professionals.
-        """
-    
-    def _get_webmd_advice_prompt(self, **kwargs) -> str:
-        """Generate WebMD health advice prompt"""
-        return f"""
-        Create general health advice about {kwargs['topic']}.
-        
-        Requirements:
-        - Focus on prevention and wellness
-        - Include lifestyle recommendations
-        - Be culturally appropriate for Indian users
-        - Add strong medical disclaimers
-        - Suggest professional consultation
-        """
+        return base_suggestions.get(domain, ["General tips and advice", "Ask Me Anything posts", "Discussion starters"])
