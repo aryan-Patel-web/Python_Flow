@@ -488,13 +488,12 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://agentic-u5lx.onrender.com",
-        "http://localhost:5173",
-        "http://localhost:3000"
+        "http://localhost:3000",
+        "http://localhost:5173", 
+        "https://frontend-agentic-bnc2.onrender.com"  # Add your frontend URL
     ],
     allow_credentials=True,
     allow_methods=["*"],
