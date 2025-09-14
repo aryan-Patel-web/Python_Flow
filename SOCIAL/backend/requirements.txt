@@ -1,8 +1,8 @@
 # Core
-fastapi==0.104.1
+fastapi==0.109.0           # latest FastAPI
 uvicorn==0.23.2
-pydantic==2.6.4
-pydantic-core==2.39.0   # updated to latest compatible wheel
+pydantic==2.39.0
+pydantic-core==2.39.0
 
 python-dotenv==1.0.0
 
@@ -15,10 +15,8 @@ mistralai==0.1.2
 groq==0.4.1
 
 # Database
-# Database
 pymongo==4.15.0
 motor==3.3.2
-
 
 # Authentication
 python-jose[cryptography]==3.3.0
