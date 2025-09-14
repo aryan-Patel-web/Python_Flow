@@ -2,9 +2,7 @@
 fastapi==0.104.1
 uvicorn==0.23.2
 pydantic==2.6.4
-# ⛔ Do not pin pydantic-core manually (Render free tier fails with Rust build)
-# It will auto-install the correct wheel
-# pydantic-core==2.16.2
+pydantic-core==2.39.0   # updated to latest compatible wheel
 
 python-dotenv==1.0.0
 
@@ -27,5 +25,5 @@ python-jose[cryptography]==3.3.0
 python-dateutil==2.8.2
 schedule==1.2.0
 
-# Production (only needed if you deploy with Gunicorn, not Uvicorn directly)
+# Production
 gunicorn==21.2.0
