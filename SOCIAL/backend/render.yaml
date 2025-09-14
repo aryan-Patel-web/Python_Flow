@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: reddit-automation
+    env: python
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    rootDir: SOCIAL/backend
+    healthCheckPath: /health
+    envVars:
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: GROQ_API_KEY  
+        sync: false
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
+      - key: REDDIT_REDIRECT_URI
+        value: https://agentic-u5lx.onrender.com/api/oauth/reddit/callback
+      - key: REDDIT_USER_AGENT
+        value: RedditAutomationPlatform/1.0
+      - key: PORT
+        value: 10000

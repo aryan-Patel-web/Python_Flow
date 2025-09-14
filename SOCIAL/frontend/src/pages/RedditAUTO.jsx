@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-
+// Add this near the top of your component
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://agentic-u5lx.onrender.com';
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -63,31 +64,31 @@ const RedditAutomation = () => {
 
 const domainConfigs = {
   education: { 
-    subreddits: ['IndianStudents', 'EngineeringStudents', 'GetStudying', 'college'], 
+    subreddits: ['test', 'IndianStudents', 'learnprogramming', 'programming'], 
     sampleBusiness: 'JEE coaching institute', 
     icon: '🎓', 
     description: 'Educational services' 
   },
   restaurant: { 
-    subreddits: ['IndianFood', 'food', 'cooking', 'recipes'], 
+    subreddits: ['test', 'IndianFood', 'food', 'cooking'], 
     sampleBusiness: 'Traditional Indian restaurant', 
     icon: '🍽️', 
     description: 'Food & restaurants' 
   },
   tech: { 
-    subreddits: ['developersIndia', 'learnprogramming', 'webdev', 'programming'], 
+    subreddits: ['test', 'developersIndia', 'learnprogramming', 'programming'], 
     sampleBusiness: 'AI automation platform', 
     icon: '💻', 
     description: 'Technology & programming' 
   },
   health: { 
-    subreddits: ['fitness', 'bodyweightfitness', 'nutrition', 'HealthyFood'], 
+    subreddits: ['test', 'fitness', 'nutrition', 'bodyweightfitness'], 
     sampleBusiness: 'Fitness coaching center', 
     icon: '💚', 
     description: 'Health & wellness' 
   },
   business: { 
-    subreddits: ['entrepreneur', 'smallbusiness', 'startups', 'digitalnomad'], 
+    subreddits: ['test', 'entrepreneur', 'smallbusiness', 'startups'], 
     sampleBusiness: 'Business consulting firm', 
     icon: '💼', 
     description: 'Business & entrepreneurship' 
@@ -124,7 +125,12 @@ const domainConfigs = {
     }, 5000);
   }, []);
 
+
+
+
   // FIXED: Enhanced API request with session recovery
+
+
   const makeAPIRequest = useCallback(async (endpoint, method = 'GET', data = null) => {
     try {
       const headers = { 'Content-Type': 'application/json' };
@@ -137,7 +143,7 @@ const domainConfigs = {
         config.body = JSON.stringify({ ...data, use_real_ai: true, test_mode: false });
       }
 
-      const response = await fetch(`http://localhost:8000${endpoint}`, config);
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
       const result = await response.json();
       
       if (response.ok && result.success !== false) {
@@ -164,14 +170,14 @@ const domainConfigs = {
       console.log('🔄 Session recovery started...');
       
       // Check backend session state
-      const debugResponse = await fetch('http://localhost:8000/api/debug/sessions');
+      const debugResponse = await fetch(`${API_BASE_URL}/api/debug/sessions`);
       const debugData = await debugResponse.json();
       
       // If our session doesn't exist, create new one
       if (sessionId && !debugData.user_sessions[sessionId]) {
         console.log('❌ Session lost, creating new session...');
         
-        const response = await fetch('http://localhost:8000/api/auth/create-session', {
+        const response = await fetch(`${API_BASE_URL}/api/auth/create-session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -219,7 +225,7 @@ const domainConfigs = {
           if (savedSessionId && savedUsername) {
             // Verify session with backend
             try {
-              const response = await fetch('http://localhost:8000/api/auth/session-info', {
+              const response = await fetch(`${API_BASE_URL}/api/auth/session-info`, {
                 headers: { 'x-session-id': savedSessionId }
               });
               const result = await response.json();
@@ -248,7 +254,7 @@ const domainConfigs = {
 
         // Test backend connection
         try {
-          const healthResponse = await fetch('http://localhost:8000/health');
+          const healthResponse = await fetch(`${API_BASE_URL}/health`);
           const healthData = await healthResponse.json();
           if (healthData.success) {
             setBackendConnected(true);
@@ -264,7 +270,7 @@ const domainConfigs = {
 
     const createNewSession = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/auth/create-session', {
+        const response = await fetch(`${API_BASE_URL}/api/auth/create-session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
