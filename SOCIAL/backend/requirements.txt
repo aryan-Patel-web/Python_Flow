@@ -1,9 +1,14 @@
-# Core
+# Core Framework
 fastapi==0.104.1
-uvicorn==0.23.2
-pydantic==2.36.0
-pydantic-core==2.36.2
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+python-multipart==0.0.6
+
+# Environment & Security
 python-dotenv==1.0.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+cryptography==41.0.8
 
 # Reddit Integration
 praw==7.7.1
@@ -14,11 +19,8 @@ mistralai==0.1.2
 groq==0.4.1
 
 # Database
-pymongo==4.15.0
+pymongo==4.6.0
 motor==3.3.2
-
-# Authentication
-python-jose[cryptography]==3.3.0
 
 # Utilities
 python-dateutil==2.8.2

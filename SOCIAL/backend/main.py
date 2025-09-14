@@ -1401,13 +1401,14 @@ async def debug_ai_service():
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
-
+    
+PORT = int(os.getenv("PORT", 8000))
 if __name__ == "__main__":
-    print("Starting Reddit Automation Platform with REAL AI CONTENT GENERATION...")
+    print("Starting Reddit Automation Platform...")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=True,
+        port=PORT,  # Use environment PORT
+        reload=False,  # Disable reload in production
         log_level="info"
     )
