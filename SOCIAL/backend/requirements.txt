@@ -1,9 +1,8 @@
 # Core
-fastapi==0.109.0           # latest FastAPI
+fastapi==0.104.1
 uvicorn==0.23.2
-pydantic==2.39.0
-pydantic-core==2.39.0
-
+pydantic==2.36.0
+pydantic-core==2.36.2
 python-dotenv==1.0.0
 
 # Reddit Integration
