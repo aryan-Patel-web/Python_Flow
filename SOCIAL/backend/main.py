@@ -2,6 +2,7 @@
 Complete FastAPI Application with Real Reddit Posting
 Fixed all imports, routes, and username handling for Actual_Pain3385
 REAL POSTING ENABLED - No more test mode
+REAL AI CONTENT GENERATION - No mock content
 """
 
 from fastapi import FastAPI, HTTPException, Request, Query, BackgroundTasks, Header
@@ -22,6 +23,16 @@ import sys
 import traceback
 import uuid
 import os
+
+# CRITICAL: Load environment variables FIRST
+from dotenv import load_dotenv
+load_dotenv()  # This must be called before importing other modules
+
+# Verify API keys are loaded (temporary debug)
+MISTRAL_KEY = os.getenv("MISTRAL_API_KEY")
+GROQ_KEY = os.getenv("GROQ_API_KEY")
+print(f"MISTRAL_API_KEY loaded: {MISTRAL_KEY[:10] + '...' if MISTRAL_KEY else 'NOT FOUND'}")
+print(f"GROQ_API_KEY loaded: {GROQ_KEY[:10] + '...' if GROQ_KEY else 'NOT FOUND'}")
 
 # Configure logging first
 logging.basicConfig(
@@ -78,7 +89,7 @@ try:
         AutoReplyConfig
     )
     AUTOMATION_AVAILABLE = True
-    logger.info("✅ Reddit automation components imported successfully")
+    logger.info("Reddit automation components imported successfully")
 except ImportError as e:
     logger.warning(f"Reddit automation not available: {e}")
     AUTOMATION_AVAILABLE = False
@@ -109,8 +120,19 @@ def generate_session_id() -> str:
     return f"session_{uuid.uuid4().hex[:16]}"
 
 def get_user_from_session(session_id: str) -> Optional[str]:
-    """Get user_id from session_id"""
-    return user_sessions.get(session_id)
+    """Get user_id from session_id with proper validation"""
+    if not session_id:
+        logger.warning("No session ID provided")
+        return None
+    
+    if session_id not in user_sessions:
+        logger.warning(f"Session ID not found in user_sessions: {session_id}")
+        logger.debug(f"Available sessions: {list(user_sessions.keys())}")
+        return None
+    
+    user_id = user_sessions.get(session_id)
+    logger.info(f"Session {session_id} mapped to user {user_id}")
+    return user_id
 
 def create_user_session(user_id: str = None) -> str:
     """Create new user session"""
@@ -166,7 +188,7 @@ class ManualPostRequest(BaseModel):
     contentType: str = "text"
     user_id: Optional[str] = None
 
-# Mock classes for fallback when real services fail
+# Enhanced Mock classes with better error messages
 class MockDatabase:
     async def connect(self): 
         logger.info("Mock database connected")
@@ -184,17 +206,29 @@ class MockDatabase:
         return {"posts_today": 0, "replies_24h": 0, "karma_gained": 0}
 
 class MockAIService:
+    def __init__(self):
+        self.is_mock = True
+        logger.warning("MockAIService initialized - Configure MISTRAL_API_KEY or GROQ_API_KEY for real AI")
+    
     async def generate_reddit_domain_content(self, **kwargs):
+        logger.error("USING MOCK AI SERVICE - Real AI not configured")
         return {
-            "success": True,
-            "title": f"Mock AI Generated Title for {kwargs.get('domain', 'general')} - Configure Real API",
-            "content": f"This is mock content for {kwargs.get('business_type', 'your business')}. Please configure your Mistral API key for real AI generation. This content would normally be tailored for {kwargs.get('target_audience', 'users')} in the {kwargs.get('domain', 'general')} domain.",
-            "body": f"Mock content body for {kwargs.get('domain', 'general')} domain",
-            "ai_service": "mock"
+            "success": False,
+            "error": "Mock AI Service Active",
+            "title": f"CONFIGURE REAL AI - Mock Title for {kwargs.get('domain', 'general')}",
+            "content": f"MOCK CONTENT ALERT: Configure your MISTRAL_API_KEY or GROQ_API_KEY environment variables to generate real AI content. This is placeholder text for {kwargs.get('business_type', 'your business')} in {kwargs.get('domain', 'general')} domain.",
+            "body": "Mock content - needs real AI configuration",
+            "ai_service": "mock",
+            "mock_warning": "Real AI keys not found"
         }
     
     async def test_ai_connection(self):
-        return {"success": False, "primary_service": "mock", "services": {"mistral": False, "groq": False}}
+        return {
+            "success": False, 
+            "error": "Mock AI - no real API keys", 
+            "primary_service": "mock", 
+            "services": {"mistral": False, "groq": False}
+        }
 
 class MockRedditConnector:
     def __init__(self):
@@ -238,11 +272,12 @@ class MockAutomationScheduler:
             "auto_posting": {"config": config_dict, "enabled": True}
         }
         return {
-            "success": True, 
-            "message": "Auto-posting enabled with mock AI - Configure real API keys for production",
+            "success": False, 
+            "error": "Mock scheduler active",
+            "message": "Configure real API keys: MISTRAL_API_KEY, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET",
             "config": config_dict,
-            "scheduler_status": "Mock scheduler running",
-            "next_post_time": "Next available time slot"
+            "scheduler_status": "Mock scheduler - needs real API configuration",
+            "mock_warning": True
         }
         
     async def setup_auto_replies(self, config): 
@@ -252,10 +287,10 @@ class MockAutomationScheduler:
             self.active_configs[user_id] = {}
         self.active_configs[user_id]["auto_replies"] = {"config": config_dict, "enabled": True}
         return {
-            "success": True, 
-            "message": "Auto-replies enabled with mock monitoring",
-            "config": config_dict,
-            "monitoring_status": "Mock monitoring active"
+            "success": False, 
+            "error": "Mock scheduler active",
+            "message": "Configure real API keys for auto-replies",
+            "config": config_dict
         }
         
     async def get_automation_status(self, user_id): 
@@ -276,97 +311,160 @@ class MockAutomationScheduler:
                 "stats": {"total_replies": 0, "successful_replies": 0}
             },
             "daily_stats": {"posts_today": 0, "recent_replies": 0, "total_karma": 0},
-            "scheduler_running": True,
+            "scheduler_running": False,
+            "mock_warning": "Configure real API keys",
             "last_updated": datetime.now().isoformat()
         }
 
-# Application lifespan management
+# Application lifespan management with REAL AI verification
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown with comprehensive error handling"""
     global database_manager, ai_service, reddit_oauth_connector, automation_scheduler
     
-    logger.info("🚀 Starting Reddit Automation System with REAL POSTING...")
-    print("🚀 Initializing Reddit Automation Platform...")
+    logger.info("Starting Reddit Automation System with REAL AI CONTENT...")
+    print("Initializing Reddit Automation Platform with REAL AI...")
+    
+    # Verify environment variables first
+    required_vars = {
+        'MISTRAL_API_KEY': os.getenv('MISTRAL_API_KEY'),
+        'GROQ_API_KEY': os.getenv('GROQ_API_KEY'),
+        'REDDIT_CLIENT_ID': os.getenv('REDDIT_CLIENT_ID'),
+        'REDDIT_CLIENT_SECRET': os.getenv('REDDIT_CLIENT_SECRET')
+    }
+    
+    print("Environment Variables Status:")
+    for var_name, var_value in required_vars.items():
+        status = "FOUND" if var_value else "MISSING"
+        print(f"  {var_name}: {status}")
+        if var_value:
+            logger.info(f"{var_name}: Present")
+        else:
+            logger.warning(f"{var_name}: Missing")
     
     # Initialize Database
     try:
         if DatabaseManager:
             database_manager = DatabaseManager(settings.mongodb_uri)
             await database_manager.connect()
-            logger.info("✅ Database connected successfully")
-            print("✅ Database connected")
+            logger.info("Database connected successfully")
+            print("Database: Connected")
         else:
             raise ImportError("DatabaseManager not available")
     except Exception as e:
         logger.warning(f"Database initialization failed: {e}")
         database_manager = MockDatabase()
         await database_manager.connect()
-        print("⚠️ Using mock database")
+        print("Database: Mock mode")
     
-    # Initialize AI Service
+    # Initialize AI Service with STRICT REAL AI VERIFICATION
     try:
-        if AIService:
+        if AIService and (MISTRAL_KEY or GROQ_KEY):
+            logger.info("Attempting to initialize REAL AI service...")
             ai_service = AIService()
+            
+            # CRITICAL: Test AI connection immediately
             test_result = await ai_service.test_ai_connection()
-            if test_result.get("success"):
+            
+            if test_result.get("success") and test_result.get('primary_service') != 'mock':
                 primary_service = test_result.get('primary_service', 'unknown')
-                logger.info("✅ Real AI service initialized and tested successfully")
-                print(f"✅ AI Service: {primary_service} connected")
+                logger.info(f"REAL AI service initialized successfully: {primary_service}")
+                print(f"AI Service: {primary_service.upper()} CONNECTED")
+                
+                # Double-check by generating test content
+                test_content = await ai_service.generate_reddit_domain_content(
+                    domain="tech",
+                    business_type="test",
+                    business_description="test",
+                    test_mode=False
+                )
+                
+                if test_content.get('ai_service') != 'mock':
+                    logger.info("AI content generation verified - REAL AI active")
+                    print("AI Content Generation: VERIFIED")
+                else:
+                    raise Exception("AI service returning mock content")
+                    
             else:
-                logger.error("❌ AI service test failed")
-                print("❌ AI service connection test failed - using mock")
-                ai_service = MockAIService()
+                raise Exception(f"AI service test failed: {test_result}")
+                
         else:
-            raise ImportError("AIService not available")
+            raise Exception("AI service not available or no API keys")
+            
     except Exception as e:
-        logger.error(f"AI service initialization failed: {e}")
+        logger.error(f"REAL AI service initialization failed: {e}")
+        logger.error("Falling back to MockAIService")
         ai_service = MockAIService()
-        print("❌ Using mock AI service")
+        print("AI Service: MOCK MODE - Configure API keys")
     
     # Initialize Reddit OAuth Connector
     try:
-        if RedditOAuthConnector:
+        if RedditOAuthConnector and os.getenv('REDDIT_CLIENT_ID') and os.getenv('REDDIT_CLIENT_SECRET'):
             config = {
-                'REDDIT_CLIENT_ID': getattr(settings, 'reddit_client_id', None),
-                'REDDIT_CLIENT_SECRET': getattr(settings, 'reddit_client_secret', None),
-                'REDDIT_REDIRECT_URI': getattr(settings, 'reddit_redirect_uri', 'http://localhost:8000/api/oauth/reddit/callback'),
-                'REDDIT_USER_AGENT': getattr(settings, 'reddit_user_agent', 'RedditAutomationPlatform/1.0'),
-                'TOKEN_ENCRYPTION_KEY': getattr(settings, 'token_encryption_key', None)
+                'REDDIT_CLIENT_ID': settings.reddit_client_id,
+                'REDDIT_CLIENT_SECRET': settings.reddit_client_secret,
+                'REDDIT_REDIRECT_URI': settings.reddit_redirect_uri,
+                'REDDIT_USER_AGENT': settings.reddit_user_agent,
+                'TOKEN_ENCRYPTION_KEY': settings.token_encryption_key
             }
             reddit_oauth_connector = RedditOAuthConnector(config)
             if reddit_oauth_connector.is_configured:
-                logger.info("✅ Reddit OAuth connector initialized successfully")
-                print("✅ Reddit OAuth configured")
+                logger.info("Reddit OAuth connector initialized successfully")
+                print("Reddit OAuth: Configured")
             else:
-                logger.warning("⚠️ Reddit OAuth not properly configured")
-                print("⚠️ Reddit OAuth credentials missing")
+                logger.warning("Reddit OAuth not properly configured")
+                print("Reddit OAuth: Configuration incomplete")
         else:
-            raise ImportError("RedditOAuthConnector not available")
+            raise ImportError("RedditOAuthConnector not available or credentials missing")
     except Exception as e:
         logger.warning(f"Reddit OAuth initialization failed: {e}")
         reddit_oauth_connector = MockRedditConnector()
-        print("⚠️ Using mock Reddit connector")
+        print("Reddit OAuth: Mock mode")
     
     # Initialize Reddit Automation System  
     try:
-        if AUTOMATION_AVAILABLE and RedditAutomationScheduler:
+        if (AUTOMATION_AVAILABLE and RedditAutomationScheduler and 
+            not isinstance(ai_service, MockAIService) and 
+            not isinstance(reddit_oauth_connector, MockRedditConnector)):
+            
             automation_scheduler = RedditAutomationScheduler(
                 reddit_oauth_connector, ai_service, database_manager, user_reddit_tokens
             )
             automation_scheduler.start_scheduler()
-            logger.info("✅ Reddit automation system initialized with REAL POSTING")
-            print("✅ Automation scheduler started - REAL POSTING ENABLED")
+            logger.info("REAL Reddit automation system initialized with REAL AI and REAL POSTING")
+            print("Automation Scheduler: REAL MODE - AI + Reddit integrated")
         else:
-            raise ImportError("RedditAutomationScheduler not available")
+            raise ImportError("Real automation components not available")
     except Exception as e:
-        logger.warning(f"Automation system initialization failed: {e}")
+        logger.warning(f"Real automation system initialization failed: {e}")
         automation_scheduler = MockAutomationScheduler()
         automation_scheduler.start_scheduler()
-        print("✅ Mock automation scheduler started")
+        print("Automation Scheduler: Mock mode")
     
-    print("🎉 Application startup completed successfully!")
-    logger.info("Application startup completed successfully")
+    # Final status report
+    real_components = []
+    mock_components = []
+    
+    if not isinstance(ai_service, MockAIService):
+        real_components.append("AI Content Generation")
+    else:
+        mock_components.append("AI (needs MISTRAL_API_KEY or GROQ_API_KEY)")
+        
+    if not isinstance(reddit_oauth_connector, MockRedditConnector):
+        real_components.append("Reddit API")
+    else:
+        mock_components.append("Reddit (needs REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET)")
+        
+    if not isinstance(automation_scheduler, MockAutomationScheduler):
+        real_components.append("Auto-posting")
+    else:
+        mock_components.append("Automation (depends on AI + Reddit)")
+    
+    print(f"\nREAL Components Active: {real_components if real_components else 'None'}")
+    print(f"Mock Components: {mock_components if mock_components else 'None'}")
+    print("Application startup completed!\n")
+    
+    logger.info("Application startup completed")
     
     yield
     
@@ -383,8 +481,8 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="Reddit Automation Platform",
-    description="Complete Reddit Automation System with REAL POSTING",
-    version="4.0.0",
+    description="Complete Reddit Automation System with REAL AI CONTENT GENERATION",
+    version="5.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -422,16 +520,20 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Health check endpoints
 @app.get("/")
 async def root():
+    ai_status = "real" if not isinstance(ai_service, MockAIService) else "mock"
+    reddit_status = "real" if not isinstance(reddit_oauth_connector, MockRedditConnector) else "mock"
+    
     return {
         "success": True,
-        "message": "Reddit Automation Platform API - REAL POSTING ENABLED",
-        "version": "4.0.0",
+        "message": "Reddit Automation Platform API - REAL AI CONTENT GENERATION",
+        "version": "5.0.0",
         "timestamp": datetime.now().isoformat(),
         "status": "running",
-        "real_posting": True,
+        "real_ai_active": ai_status == "real",
+        "real_reddit_active": reddit_status == "real",
         "services": {
-            "reddit": type(reddit_oauth_connector).__name__,
-            "ai": type(ai_service).__name__,
+            "reddit": f"{type(reddit_oauth_connector).__name__} ({reddit_status})",
+            "ai": f"{type(ai_service).__name__} ({ai_status})",
             "database": type(database_manager).__name__,
             "automation": type(automation_scheduler).__name__
         }
@@ -441,10 +543,17 @@ async def root():
 async def health_check():
     try:
         ai_status = "unknown"
+        ai_is_real = not isinstance(ai_service, MockAIService)
+        
         if hasattr(ai_service, 'test_ai_connection'):
             try:
                 test_result = await ai_service.test_ai_connection()
-                ai_status = f"connected_{test_result.get('primary_service', 'unknown')}" if test_result.get("success") else "failed"
+                if ai_is_real and test_result.get("success"):
+                    ai_status = f"connected_{test_result.get('primary_service', 'unknown')}"
+                elif ai_is_real:
+                    ai_status = "real_service_failed"
+                else:
+                    ai_status = "mock_active"
             except Exception as e:
                 ai_status = f"error_{str(e)[:20]}"
         
@@ -453,7 +562,8 @@ async def health_check():
             "health": {
                 "status": "healthy",
                 "timestamp": datetime.now().isoformat(),
-                "real_posting_enabled": True,
+                "real_ai_content_enabled": ai_is_real,
+                "real_posting_enabled": not isinstance(reddit_oauth_connector, MockRedditConnector),
                 "services": {
                     "database": {
                         "success": database_manager is not None and not isinstance(database_manager, MockDatabase), 
@@ -461,9 +571,10 @@ async def health_check():
                         "type": type(database_manager).__name__
                     },
                     "ai_service": {
-                        "success": ai_status.startswith("connected"), 
+                        "success": ai_is_real and ai_status.startswith("connected"), 
                         "status": ai_status,
-                        "type": type(ai_service).__name__
+                        "type": type(ai_service).__name__,
+                        "real_ai": ai_is_real
                     },
                     "reddit_oauth": {
                         "success": reddit_oauth_connector is not None and hasattr(reddit_oauth_connector, 'is_configured') and reddit_oauth_connector.is_configured, 
@@ -524,7 +635,8 @@ async def get_session_info(session_id: str = Header(None, alias="x-session-id"))
             "session_id": session_id,
             "user_id": user_id,
             "reddit_connected": user_id in user_reddit_tokens,
-            "reddit_username": user_reddit_tokens.get(user_id, {}).get("reddit_username")
+            "reddit_username": user_reddit_tokens.get(user_id, {}).get("reddit_username"),
+            "ai_service_active": not isinstance(ai_service, MockAIService)
         }
     except Exception as e:
         logger.error(f"Get session info failed: {e}")
@@ -570,6 +682,11 @@ async def reddit_oauth_authorize(session_id: str = Query(None)):
     except Exception as e:
         logger.error(f"Reddit OAuth authorize failed: {e}")
         return {"success": False, "error": str(e)}
+
+
+
+
+
 
 @app.get("/api/oauth/reddit/callback")
 async def reddit_oauth_callback(code: str, state: str):
@@ -618,7 +735,7 @@ async def reddit_oauth_callback(code: str, state: str):
                 # Clean up OAuth state
                 oauth_states.pop(state, None)
                 
-                logger.info(f"✅ REAL Reddit OAuth successful for user: {username} (Actual_Pain3385), user_id: {user_id}")
+                logger.info(f"Reddit OAuth successful for user: {username} (user_id: {user_id})")
                 
                 return RedirectResponse(
                     url=f"http://localhost:5173/reddit-auto?reddit_connected=true&username={username}&session_id={session_id}&real_connection=true",
@@ -639,51 +756,22 @@ async def reddit_oauth_callback(code: str, state: str):
         
     except Exception as e:
         logger.error(f"Reddit OAuth callback failed: {e}")
+        logger.error(traceback.format_exc())
         return RedirectResponse(
             url=f"http://localhost:5173/reddit-auto?error=oauth_failed&message={str(e)}", 
             status_code=302
         )
 
-@app.get("/api/reddit/connection-status")
-async def get_reddit_connection_status(
-    user_id: str = Query(None),
-    session_id: str = Header(None, alias="x-session-id")
-):
-    """Get Reddit connection status for user - Fixed for Actual_Pain3385"""
-    try:
-        # Get user_id from session if not provided
-        if not user_id:
-            if session_id:
-                user_id = get_user_from_session(session_id)
-            if not user_id:
-                return {"success": False, "error": "User ID or session required"}
-        
-        logger.info(f"Checking connection status for user: {user_id}")
-        
-        if user_id in user_reddit_tokens:
-            creds = user_reddit_tokens[user_id]
-            username = creds.get("reddit_username")
-            logger.info(f"✅ User {user_id} connected as Reddit user: {username}")
-            return {
-                "success": True,
-                "connected": True,
-                "user_id": user_id,
-                "reddit_username": username,
-                "connected_at": creds.get("connected_at"),
-                "message": f"Reddit account connected as {username}",
-                "real_connection": not isinstance(reddit_oauth_connector, MockRedditConnector)
-            }
-        
-        logger.info(f"❌ User {user_id} not connected to Reddit")
-        return {
-            "success": True,
-            "connected": False,
-            "user_id": user_id,
-            "message": "No Reddit connection found"
-        }
-    except Exception as e:
-        logger.error(f"Connection status check failed: {e}")
-        return {"success": False, "error": str(e)}
+
+                 
+                 
+                 
+
+
+
+
+
+
 
 @app.get("/api/reddit/test-connection")
 async def test_reddit_connection(
@@ -692,14 +780,19 @@ async def test_reddit_connection(
 ):
     """Test Reddit API connection - Fixed endpoint"""
     try:
+        logger.info(f"Testing Reddit connection - session_id: {session_id}")
+        
         # Get user_id
         if not user_id and session_id:
             user_id = get_user_from_session(session_id)
+            
         if not user_id:
+            logger.error("Test connection failed - no user authentication")
             return {"success": False, "error": "User authentication required"}
         
         # Check if user has Reddit tokens
         if user_id not in user_reddit_tokens:
+            logger.error(f"No Reddit tokens for user {user_id}")
             return {
                 "success": False,
                 "error": "Reddit not connected",
@@ -708,6 +801,7 @@ async def test_reddit_connection(
         
         # Test with Reddit connector
         if isinstance(reddit_oauth_connector, MockRedditConnector):
+            logger.warning("Mock Reddit connector active")
             return {
                 "success": False,
                 "error": "Mock connector active",
@@ -729,13 +823,70 @@ async def test_reddit_connection(
         logger.error(f"Reddit connection test failed: {e}")
         return {"success": False, "error": str(e)}
 
-# Manual Reddit posting with REAL posting
+@app.get("/api/reddit/connection-status")
+async def get_reddit_connection_status(
+    user_id: str = Query(None),
+    session_id: str = Header(None, alias="x-session-id")
+):
+    """Get Reddit connection status for user - Enhanced Debug Version"""
+    try:
+        logger.info(f"Connection status check - session_id: {session_id}, user_id: {user_id}")
+        logger.info(f"Available user_sessions: {list(user_sessions.keys())}")
+        logger.info(f"Available user_reddit_tokens: {list(user_reddit_tokens.keys())}")
+        
+        # Get user_id from session if not provided
+        if not user_id and session_id:
+            user_id = get_user_from_session(session_id)
+            logger.info(f"Extracted user_id from session: {user_id}")
+            
+        if not user_id:
+            logger.error("No user_id found - authentication failed")
+            return {
+                "success": False, 
+                "error": "User ID or session required",
+                "connected": False,
+                "debug": {
+                    "session_id_provided": bool(session_id),
+                    "user_id_provided": bool(user_id),
+                    "available_sessions": list(user_sessions.keys()),
+                    "session_exists": session_id in user_sessions if session_id else False
+                }
+            }
+        
+        logger.info(f"Checking Reddit tokens for user: {user_id}")
+        
+        if user_id in user_reddit_tokens:
+            creds = user_reddit_tokens[user_id]
+            username = creds.get("reddit_username")
+            logger.info(f"User {user_id} connected as Reddit user: {username}")
+            return {
+                "success": True,
+                "connected": True,
+                "user_id": user_id,
+                "reddit_username": username,
+                "connected_at": creds.get("connected_at"),
+                "message": f"Reddit account connected as {username}",
+                "real_connection": not isinstance(reddit_oauth_connector, MockRedditConnector)
+            }
+        
+        logger.info(f"User {user_id} not connected to Reddit")
+        return {
+            "success": True,
+            "connected": False,
+            "user_id": user_id,
+            "message": "No Reddit connection found"
+        }
+    except Exception as e:
+        logger.error(f"Connection status check failed: {e}")
+        return {"success": False, "error": str(e)}
+
+# Manual Reddit posting with REAL posting and REAL AI content
 @app.post("/api/reddit/post")
 async def manual_reddit_post(
     post_data: ManualPostRequest,
     session_id: str = Header(None, alias="x-session-id")
 ):
-    """Manual Reddit posting - REAL POSTING ENABLED"""
+    """Manual Reddit posting - REAL POSTING with REAL AI CONTENT"""
     try:
         # Get user_id from request or session
         user_id = post_data.user_id
@@ -766,7 +917,7 @@ async def manual_reddit_post(
         reddit_username = user_reddit_tokens[user_id].get("reddit_username", "Unknown")
         access_token = user_reddit_tokens[user_id]["access_token"]
         
-        logger.info(f"🚀 MANUAL POST: {reddit_username} posting to r/{post_data.subreddit}")
+        logger.info(f"MANUAL POST: {reddit_username} posting to r/{post_data.subreddit}")
         logger.info(f"Title: {post_data.title}")
         logger.info(f"Content length: {len(post_data.content)} characters")
         
@@ -781,9 +932,9 @@ async def manual_reddit_post(
         
         # Log the result
         if result.get("success"):
-            logger.info(f"✅ REAL Manual post successful for {reddit_username}: {result.get('post_url')}")
+            logger.info(f"REAL Manual post successful for {reddit_username}: {result.get('post_url')}")
         else:
-            logger.error(f"❌ Manual post failed for {reddit_username}: {result.get('error')}")
+            logger.error(f"Manual post failed for {reddit_username}: {result.get('error')}")
         
         return result
         
@@ -791,13 +942,13 @@ async def manual_reddit_post(
         logger.error(f"Manual Reddit post failed: {e}")
         return {"success": False, "error": str(e)}
 
-# AI Content Generation
+# AI Content Generation with STRICT REAL AI VERIFICATION
 @app.post("/api/automation/test-auto-post")
 async def test_auto_post(
     test_data: TestPostRequest,
     session_id: str = Header(None, alias="x-session-id")
 ):
-    """Test auto-post generation with REAL AI"""
+    """Test auto-post generation with REAL AI - NO MOCK CONTENT"""
     try:
         # Get user_id
         user_id = test_data.user_id
@@ -806,7 +957,18 @@ async def test_auto_post(
         if not user_id:
             user_id = "test_user"  # Fallback for testing
         
-        logger.info(f"🤖 Generating AI content for test: {test_data.domain} - {test_data.business_type}")
+        # STRICT CHECK: Reject if AI service is mock
+        if isinstance(ai_service, MockAIService):
+            logger.error("REJECTING test-auto-post: AI service is mock")
+            return {
+                "success": False,
+                "error": "Mock AI service active",
+                "message": "Configure MISTRAL_API_KEY or GROQ_API_KEY environment variables for real AI content generation",
+                "mock_warning": True,
+                "required_env_vars": ["MISTRAL_API_KEY", "GROQ_API_KEY"]
+            }
+        
+        logger.info(f"Generating REAL AI content for test: {test_data.domain} - {test_data.business_type}")
         
         # Generate content using REAL AI service
         content_result = await ai_service.generate_reddit_domain_content(
@@ -819,14 +981,33 @@ async def test_auto_post(
             test_mode=False  # REAL AI GENERATION
         )
         
+        # STRICT VERIFICATION: Check if AI returned mock content
+        if content_result.get("ai_service") == "mock" or "mock" in content_result.get("content", "").lower():
+            logger.error("AI service returned mock content")
+            return {
+                "success": False,
+                "error": "AI service returned mock content",
+                "message": "Check your API keys configuration",
+                "content_result": content_result
+            }
+        
+        # Ensure we have real content
+        if not content_result.get("success", True):
+            logger.error(f"AI content generation failed: {content_result.get('error')}")
+            return {
+                "success": False,
+                "error": f"AI content generation failed: {content_result.get('error')}",
+                "message": "Check your AI API keys and service availability"
+            }
+        
         content_preview = content_result.get("content", "")
         ai_service_name = content_result.get("ai_service", "unknown")
         
-        logger.info(f"✅ AI generated: {len(content_preview)} characters using {ai_service_name}")
+        logger.info(f"REAL AI generated: {len(content_preview)} characters using {ai_service_name}")
         
         return {
             "success": True,
-            "message": f"Content generated successfully using {ai_service_name}!",
+            "message": f"REAL AI content generated successfully using {ai_service_name}!",
             "post_details": {
                 "title": content_result.get("title", "AI Generated Title"),
                 "subreddit": test_data.subreddits[0] if test_data.subreddits else "test",
@@ -836,6 +1017,7 @@ async def test_auto_post(
             },
             "content_preview": content_preview,
             "ai_service": ai_service_name,
+            "word_count": content_result.get("word_count", len(content_preview.split())),
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -847,7 +1029,7 @@ async def setup_auto_posting(
     config_data: AutoPostingRequest,
     session_id: str = Header(None, alias="x-session-id")
 ):
-    """Setup automatic posting - REAL POSTING ENABLED"""
+    """Setup automatic posting - REAL POSTING with REAL AI CONTENT"""
     try:
         # Get user_id
         user_id = config_data.user_id
@@ -867,7 +1049,7 @@ async def setup_auto_posting(
         # Get Reddit username for logging
         reddit_username = user_reddit_tokens[user_id].get("reddit_username", "Unknown")
         
-        # Check if real Reddit connector is available
+        # STRICT CHECK: Reject if Reddit connector is mock
         if isinstance(reddit_oauth_connector, MockRedditConnector):
             return {
                 "success": False,
@@ -875,8 +1057,17 @@ async def setup_auto_posting(
                 "message": "Please configure REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET environment variables"
             }
         
+        # STRICT CHECK: Reject if AI service is mock
+        if isinstance(ai_service, MockAIService):
+            return {
+                "success": False,
+                "error": "AI service not configured",
+                "message": "Configure MISTRAL_API_KEY or GROQ_API_KEY for real AI content generation",
+                "required_env_vars": ["MISTRAL_API_KEY", "GROQ_API_KEY"]
+            }
+        
         # Test AI service before setup
-        logger.info(f"🧪 Testing AI service for automation setup - user: {reddit_username}")
+        logger.info(f"Testing REAL AI service for automation setup - user: {reddit_username}")
         try:
             test_content = await ai_service.generate_reddit_domain_content(
                 domain=config_data.domain,
@@ -886,16 +1077,20 @@ async def setup_auto_posting(
                 test_mode=False  # REAL AI TEST
             )
             
-            if not test_content.get("success", True):
-                logger.error(f"AI service test failed: {test_content.get('error')}")
+            # Verify AI returned real content
+            if (not test_content.get("success", True) or 
+                test_content.get("ai_service") == "mock" or 
+                "mock" in test_content.get("content", "").lower()):
+                logger.error(f"AI service test failed: {test_content}")
                 return {
                     "success": False,
-                    "error": f"AI service not working: {test_content.get('error')}",
-                    "message": "Please check your AI API configuration (MISTRAL_API_KEY or GROQ_API_KEY)"
+                    "error": "AI service not working properly",
+                    "message": "AI service returned mock content. Check your MISTRAL_API_KEY or GROQ_API_KEY configuration",
+                    "test_result": test_content
                 }
                 
             ai_service_name = test_content.get('ai_service', 'unknown')
-            logger.info(f"✅ AI service test passed for {reddit_username} - using {ai_service_name}")
+            logger.info(f"REAL AI service test passed for {reddit_username} - using {ai_service_name}")
             
         except Exception as e:
             logger.error(f"AI service test failed: {e}")
@@ -911,14 +1106,17 @@ async def setup_auto_posting(
                 "config": config_data.dict(),
                 "enabled": True,
                 "created_at": datetime.now().isoformat(),
-                "reddit_username": reddit_username
+                "reddit_username": reddit_username,
+                "ai_service": ai_service_name,
+                "real_ai": True
             }
         }
         
-        logger.info(f"🚀 Setting up REAL auto-posting for {reddit_username}")
+        logger.info(f"Setting up REAL auto-posting for {reddit_username}")
         logger.info(f"Domain: {config_data.domain}, Posts/day: {config_data.posts_per_day}")
         logger.info(f"Subreddits: {config_data.subreddits}")
         logger.info(f"Posting times: {config_data.posting_times}")
+        logger.info(f"AI Service: {ai_service_name}")
         
         # Setup with automation scheduler
         if automation_scheduler and AUTOMATION_AVAILABLE and not isinstance(automation_scheduler, MockAutomationScheduler):
@@ -942,28 +1140,114 @@ async def setup_auto_posting(
                 result["user_id"] = user_id
                 result["reddit_username"] = reddit_username
                 result["real_posting"] = True
+                result["real_ai"] = True
+                result["ai_service"] = ai_service_name
                 
-                logger.info(f"✅ REAL auto-posting setup successful for {reddit_username}")
+                logger.info(f"REAL auto-posting setup successful for {reddit_username} with {ai_service_name}")
                 return result
             except Exception as e:
                 logger.warning(f"Real automation scheduler failed: {e}")
                 # Continue with fallback
         
-        # Fallback response
+        # Fallback response (should not reach here if everything is configured properly)
         return {
-            "success": True,
-            "message": f"Auto-posting enabled successfully for {reddit_username}!",
-            "config": config_data.dict(),
-            "scheduler_status": "Active - REAL AI integration and posting configured",
-            "next_post_time": config_data.posting_times[0] if config_data.posting_times else "Not set",
-            "user_id": user_id,
-            "reddit_username": reddit_username,
-            "real_posting": True,
-            "note": "Using fallback scheduler - check automation service configuration"
+            "success": False,
+            "error": "Automation scheduler not available",
+            "message": "Real automation scheduler could not be initialized",
+            "debug_info": {
+                "automation_scheduler_type": type(automation_scheduler).__name__ if automation_scheduler else "None",
+                "automation_available": AUTOMATION_AVAILABLE,
+                "user_id": user_id,
+                "reddit_username": reddit_username
+            }
         }
         
     except Exception as e:
         logger.error(f"Auto-posting setup failed: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/automation/setup-auto-replies")
+async def setup_auto_replies(
+    config_data: AutoReplyRequest,
+    session_id: str = Header(None, alias="x-session-id")
+):
+    """Setup automatic replies with REAL AI"""
+    try:
+        # Get user_id
+        user_id = config_data.user_id
+        if not user_id and session_id:
+            user_id = get_user_from_session(session_id)
+        if not user_id:
+            return {"success": False, "error": "User authentication required"}
+        
+        # Check Reddit connection
+        if user_id not in user_reddit_tokens:
+            return {
+                "success": False,
+                "error": "Reddit account not connected",
+                "message": "Please connect your Reddit account first"
+            }
+        
+        # STRICT CHECK: Reject if services are mock
+        if isinstance(reddit_oauth_connector, MockRedditConnector):
+            return {
+                "success": False,
+                "error": "Reddit API not configured",
+                "message": "Configure REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET"
+            }
+        
+        if isinstance(ai_service, MockAIService):
+            return {
+                "success": False,
+                "error": "AI service not configured", 
+                "message": "Configure MISTRAL_API_KEY or GROQ_API_KEY"
+            }
+        
+        reddit_username = user_reddit_tokens[user_id].get("reddit_username", "Unknown")
+        
+        # Store configuration
+        if user_id not in automation_configs:
+            automation_configs[user_id] = {}
+        automation_configs[user_id]["auto_replies"] = {
+            "config": config_data.dict(),
+            "enabled": True,
+            "created_at": datetime.now().isoformat(),
+            "reddit_username": reddit_username
+        }
+        
+        logger.info(f"Setting up REAL auto-replies for {reddit_username}")
+        
+        # Setup with automation scheduler
+        if automation_scheduler and not isinstance(automation_scheduler, MockAutomationScheduler):
+            try:
+                auto_config = AutoReplyConfig(
+                    user_id=user_id,
+                    domain=config_data.domain,
+                    expertise_level=config_data.expertise_level,
+                    subreddits=config_data.subreddits,
+                    keywords=config_data.keywords,
+                    max_replies_per_hour=config_data.max_replies_per_hour,
+                    response_delay_minutes=config_data.response_delay_minutes
+                )
+                
+                result = await automation_scheduler.setup_auto_replies(auto_config)
+                result["user_id"] = user_id
+                result["reddit_username"] = reddit_username
+                result["real_ai"] = True
+                
+                logger.info(f"REAL auto-replies setup successful for {reddit_username}")
+                return result
+            except Exception as e:
+                logger.warning(f"Auto-replies setup failed: {e}")
+        
+        return {
+            "success": False,
+            "error": "Auto-replies scheduler not available",
+            "message": "Configure all required API keys and restart application"
+        }
+        
+    except Exception as e:
+        logger.error(f"Auto-replies setup failed: {e}")
         return {"success": False, "error": str(e)}
 
 @app.get("/api/automation/status")
@@ -986,6 +1270,8 @@ async def get_automation_status(
                 result = await automation_scheduler.get_automation_status(user_id)
                 result["reddit_username"] = reddit_username
                 result["real_posting"] = not isinstance(automation_scheduler, MockAutomationScheduler)
+                result["real_ai"] = not isinstance(ai_service, MockAIService)
+                result["ai_service"] = type(ai_service).__name__
                 return result
             except Exception as e:
                 logger.warning(f"Automation status check failed: {e}")
@@ -1014,14 +1300,60 @@ async def get_automation_status(
                 "total_karma": 0
             },
             "scheduler_running": automation_scheduler.is_running if automation_scheduler else False,
-            "last_updated": datetime.now().isoformat(),
-            "real_posting": not isinstance(automation_scheduler, MockAutomationScheduler) if automation_scheduler else False
+            "real_posting": not isinstance(automation_scheduler, MockAutomationScheduler) if automation_scheduler else False,
+            "real_ai": not isinstance(ai_service, MockAIService),
+            "ai_service": type(ai_service).__name__,
+            "last_updated": datetime.now().isoformat()
         }
     except Exception as e:
         logger.error(f"Status check failed: {e}")
         return {"success": False, "error": str(e)}
 
+@app.post("/api/automation/update-schedule")
+async def update_automation_schedule(
+    update_data: ScheduleUpdateRequest,
+    session_id: str = Header(None, alias="x-session-id")
+):
+    """Update automation schedule settings"""
+    try:
+        user_id = update_data.user_id
+        if not user_id and session_id:
+            user_id = get_user_from_session(session_id)
+        if not user_id:
+            return {"success": False, "error": "User authentication required"}
+        
+        # Update stored config
+        if user_id in automation_configs:
+            if update_data.type in automation_configs[user_id]:
+                automation_configs[user_id][update_data.type]["enabled"] = update_data.enabled
+        
+        logger.info(f"Updated {update_data.type} schedule for user {user_id}: enabled={update_data.enabled}")
+        
+        return {
+            "success": True,
+            "message": f"{update_data.type.replace('_', ' ').title()} {'enabled' if update_data.enabled else 'disabled'}",
+            "user_id": user_id,
+            "type": update_data.type,
+            "enabled": update_data.enabled
+        }
+        
+    except Exception as e:
+        logger.error(f"Schedule update failed: {e}")
+        return {"success": False, "error": str(e)}
+
 # Debug endpoints
+@app.get("/api/debug/sessions")
+async def debug_sessions():
+    """Debug session information"""
+    return {
+        "user_sessions": {k: v for k, v in user_sessions.items()},
+        "user_reddit_tokens": {k: {"username": v.get("reddit_username", "N/A"), "has_token": bool(v.get("access_token"))} for k, v in user_reddit_tokens.items()},
+        "oauth_states": list(oauth_states.keys()),
+        "total_sessions": len(user_sessions),
+        "total_tokens": len(user_reddit_tokens),
+        "automation_configs": {k: {config_type: config_data.get("enabled", False) for config_type, config_data in v.items()} for k, v in automation_configs.items()}
+    }
+
 @app.get("/api/reddit/debug")
 async def debug_reddit_connector():
     """Debug Reddit connector status"""
@@ -1040,11 +1372,38 @@ async def debug_reddit_connector():
             "MISTRAL_API_KEY": bool(os.getenv("MISTRAL_API_KEY")),
             "GROQ_API_KEY": bool(os.getenv("GROQ_API_KEY"))
         },
-        "real_posting_enabled": True
+        "real_posting_enabled": not isinstance(reddit_oauth_connector, MockRedditConnector),
+        "real_ai_enabled": not isinstance(ai_service, MockAIService),
+        "ai_service_type": type(ai_service).__name__
     }
 
+@app.get("/api/ai/debug")
+async def debug_ai_service():
+    """Debug AI service status"""
+    try:
+        ai_test = None
+        if hasattr(ai_service, 'test_ai_connection'):
+            try:
+                ai_test = await ai_service.test_ai_connection()
+            except Exception as e:
+                ai_test = {"error": str(e)}
+        
+        return {
+            "ai_service_available": ai_service is not None,
+            "ai_service_type": type(ai_service).__name__,
+            "is_mock": isinstance(ai_service, MockAIService),
+            "ai_test_result": ai_test,
+            "environment_keys": {
+                "MISTRAL_API_KEY": bool(os.getenv("MISTRAL_API_KEY")),
+                "GROQ_API_KEY": bool(os.getenv("GROQ_API_KEY"))
+            },
+            "real_ai_active": not isinstance(ai_service, MockAIService)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 if __name__ == "__main__":
-    print("Starting Reddit Automation Platform with REAL POSTING...")
+    print("Starting Reddit Automation Platform with REAL AI CONTENT GENERATION...")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

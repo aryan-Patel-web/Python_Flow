@@ -1,143 +1,154 @@
 """
-Enhanced AI Service Module for Multi-Platform Content Generation
-Real Mistral AI integration with Groq fallback for Reddit automation
-NO DEMO DATA - Uses actual API calls for content generation
+Streamlined AI Service - Real Mistral/Groq Integration
+Generates unique, human-like content for Reddit automation
+Under 500 lines, focused on content generation
 """
 
 import asyncio
-import base64
-import io
 import logging
+import os
+import json
+import random
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-import json
-import os
-import random
-
-# Import AI service clients
-try:
-    from mistralai.client import MistralClient
-    from mistralai.models.chat_completion import ChatMessage
-    MISTRAL_AVAILABLE = True
-except ImportError:
-    MISTRAL_AVAILABLE = False
-    print("⚠️ Mistral AI client not available. Install: pip install mistralai")
-
-try:
-    from groq import Groq
-    GROQ_AVAILABLE = True
-except ImportError:
-    GROQ_AVAILABLE = False
-    print("⚠️ Groq client not available. Install: pip install groq")
 
 logger = logging.getLogger(__name__)
 
 class AIService:
-    """Enhanced AI Service with real Mistral integration for Reddit automation"""
+    """Streamlined AI Service for Reddit content generation"""
     
     def __init__(self):
-        """Initialize AI service with real API clients"""
+        """Initialize with real API clients"""
         
-        # Get API keys from environment or config
-        self.mistral_api_key = os.getenv("MISTRAL_API_KEY") or "your_mistral_api_key_here"
-        self.groq_api_key = os.getenv("GROQ_API_KEY") or "your_groq_api_key_here"
-        print(f"Mistral Key: {self.mistral_api_key[:4]}..., Groq Key: {self.groq_api_key[:4]}...")
+        # Load API keys from environment
+        self.mistral_key = os.getenv("MISTRAL_API_KEY", "").strip()
+        self.groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        
+        # Debug key loading
+        print(f"Mistral Key Found: {bool(self.mistral_key and len(self.mistral_key) > 20)}")
+        print(f"Groq Key Found: {bool(self.groq_key and len(self.groq_key) > 20)}")
         
         # Initialize clients
         self.mistral_client = None
         self.groq_client = None
         
-        # Initialize Mistral client
-        if MISTRAL_AVAILABLE and self.mistral_api_key and self.mistral_api_key != "your_mistral_api_key_here":
+        # Setup Mistral
+        if self.mistral_key and len(self.mistral_key) > 20:
             try:
-                self.mistral_client = MistralClient(api_key=self.mistral_api_key)
-                logger.info("✅ Mistral AI client initialized")
+                from mistralai.client import MistralClient
+                from mistralai.models.chat_completion import ChatMessage
+                self.mistral_client = MistralClient(api_key=self.mistral_key)
+                self.ChatMessage = ChatMessage
+                logger.info("Mistral AI initialized successfully")
+                print("✅ Mistral AI client ready")
+            except ImportError:
+                print("❌ Install mistralai: pip install mistralai")
             except Exception as e:
-                logger.error(f"❌ Mistral AI initialization failed: {e}")
+                logger.error(f"Mistral init failed: {e}")
+                print(f"❌ Mistral error: {e}")
         
-        # Initialize Groq client as fallback
-        if GROQ_AVAILABLE and self.groq_api_key and self.groq_api_key != "your_groq_api_key_here":
+        # Setup Groq
+        if self.groq_key and len(self.groq_key) > 20:
             try:
-                self.groq_client = Groq(api_key=self.groq_api_key)
-                logger.info("✅ Groq AI client initialized")
+                from groq import Groq
+                self.groq_client = Groq(api_key=self.groq_key)
+                logger.info("Groq AI initialized successfully")
+                print("✅ Groq AI client ready")
+            except ImportError:
+                print("❌ Install groq: pip install groq")
             except Exception as e:
-                logger.error(f"❌ Groq AI initialization failed: {e}")
+                logger.error(f"Groq init failed: {e}")
+                print(f"❌ Groq error: {e}")
         
-        # Domain-specific subreddit mappings
-        self.domain_subreddits = {
-            "education": ["JEE", "NEET", "IndianStudents", "india", "StudyTips", "GetStudying"],
-            "restaurant": ["IndianFood", "food", "FoodPorn", "recipes", "bangalore", "mumbai"],
-            "technology": ["developersIndia", "programming", "coding", "tech", "india"],
-            "health": ["fitness", "HealthyFood", "nutrition", "india", "HealthyEating"],
-            "business": ["entrepreneur", "IndiaInvestments", "business", "startup", "india"]
+        # Content variety templates
+        self.content_styles = {
+            "question": ["Have you ever wondered...", "What's your experience with...", "How do you handle..."],
+            "tip": ["Here's a practical tip:", "Something that helped me:", "A technique worth trying:"],
+            "story": ["I recently discovered...", "Here's what I learned...", "My experience with..."],
+            "discussion": ["Let's talk about...", "What are your thoughts on...", "I'm curious about..."],
+            "advice": ["If you're struggling with...", "Here's what works for...", "Consider this approach:"]
         }
         
-        # Content style templates
-        self.style_prompts = {
-            "engaging": "Write in a conversational, engaging tone that encourages discussion",
-            "informative": "Write in a clear, educational tone with practical information",
-            "promotional": "Write in a subtle promotional tone that provides value first",
-            "helpful": "Write in a supportive, helpful tone like giving advice to a friend"
+        self.domain_contexts = {
+            "education": {
+                "topics": ["study techniques", "exam strategies", "time management", "motivation", "career planning"],
+                "audiences": ["JEE aspirants", "NEET students", "college students", "working professionals"],
+                "pain_points": ["exam stress", "time management", "concentration issues", "career confusion"]
+            },
+            "tech": {
+                "topics": ["programming tips", "career advice", "tool recommendations", "learning paths", "project ideas"],
+                "audiences": ["new developers", "experienced programmers", "career switchers", "students"],
+                "pain_points": ["learning curve", "imposter syndrome", "staying updated", "work-life balance"]
+            },
+            "health": {
+                "topics": ["fitness routines", "nutrition tips", "mental wellness", "healthy habits", "workout motivation"],
+                "audiences": ["fitness beginners", "health enthusiasts", "busy professionals", "students"],
+                "pain_points": ["lack of time", "motivation issues", "diet confusion", "stress management"]
+            },
+            "business": {
+                "topics": ["startup advice", "business strategies", "marketing tips", "financial planning", "productivity"],
+                "audiences": ["entrepreneurs", "small business owners", "freelancers", "corporate professionals"],
+                "pain_points": ["funding challenges", "market competition", "work-life balance", "scaling issues"]
+            }
         }
     
     async def test_ai_connection(self) -> Dict[str, Any]:
         """Test AI service connections"""
         try:
             services = {}
-            primary_service = None
+            primary = None
             
             # Test Mistral
             if self.mistral_client:
                 try:
-                    # Test with a simple message
                     response = self.mistral_client.chat(
-                        model="mistral-large-latest",
-                        messages=[ChatMessage(role="user", content="Hello, test connection.")],
-                        max_tokens=10
+                        model="mistral-small",
+                        messages=[self.ChatMessage(role="user", content="Hi")],
+                        max_tokens=5
                     )
-                    services["mistral"] = {"status": "connected", "response_length": len(response.choices[0].message.content)}
-                    primary_service = "mistral"
-                    logger.info("✅ Mistral AI test successful")
+                    services["mistral"] = "connected"
+                    primary = "mistral"
+                    logger.info("Mistral test successful")
                 except Exception as e:
-                    services["mistral"] = {"status": "failed", "error": str(e)}
-                    logger.error(f"❌ Mistral AI test failed: {e}")
+                    services["mistral"] = f"failed: {str(e)[:50]}"
+                    logger.error(f"Mistral test failed: {e}")
             else:
-                services["mistral"] = {"status": "not_configured", "error": "API key not set"}
+                services["mistral"] = "not configured"
             
             # Test Groq
             if self.groq_client:
                 try:
                     response = self.groq_client.chat.completions.create(
-                        messages=[{"role": "user", "content": "Hello, test connection."}],
+                        messages=[{"role": "user", "content": "Hi"}],
                         model="llama3-8b-8192",
-                        max_tokens=10
+                        max_tokens=5
                     )
-                    services["groq"] = {"status": "connected", "response_length": len(response.choices[0].message.content)}
-                    if not primary_service:
-                        primary_service = "groq"
-                    logger.info("✅ Groq AI test successful")
+                    services["groq"] = "connected"
+                    if not primary:
+                        primary = "groq"
+                    logger.info("Groq test successful")
                 except Exception as e:
-                    services["groq"] = {"status": "failed", "error": str(e)}
-                    logger.error(f"❌ Groq AI test failed: {e}")
+                    services["groq"] = f"failed: {str(e)[:50]}"
+                    logger.error(f"Groq test failed: {e}")
             else:
-                services["groq"] = {"status": "not_configured", "error": "API key not set"}
+                services["groq"] = "not configured"
             
-            success = any(service.get("status") == "connected" for service in services.values())
+            success = primary is not None
             
             return {
                 "success": success,
-                "primary_service": primary_service,
+                "primary_service": primary,
                 "services": services,
-                "message": f"Primary service: {primary_service}" if primary_service else "No AI services available"
+                "message": f"Primary: {primary}" if primary else "No AI services available"
             }
             
         except Exception as e:
-            logger.error(f"AI connection test failed: {e}")
+            logger.error(f"AI test failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "services": {},
-                "primary_service": None
+                "primary_service": None,
+                "services": {}
             }
     
     async def generate_reddit_domain_content(
@@ -151,74 +162,74 @@ class AIService:
         test_mode: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
-        """Generate domain-specific Reddit content using real AI"""
+        """Generate unique, human-like Reddit content"""
         
         try:
-            # Create comprehensive prompt for the domain
-            prompt = self._create_reddit_content_prompt(
-                domain=domain,
-                business_type=business_type,
-                business_description=business_description,
-                target_audience=target_audience,
-                language=language,
-                content_style=content_style,
-                test_mode=test_mode
+            logger.info(f"Generating content for {domain} domain using AI")
+            
+            # Create unique prompt
+            prompt = self._create_human_like_prompt(
+                domain, business_type, business_description, 
+                target_audience, content_style
             )
             
-            # Try Mistral first
+            # Try Mistral first (primary)
             if self.mistral_client:
                 try:
-                    logger.info("🔄 Generating content using Mistral AI...")
+                    logger.info("Using Mistral AI for content generation")
                     
                     response = self.mistral_client.chat(
-                        model="mistral-large-latest",
-                        messages=[ChatMessage(role="user", content=prompt)],
-                        max_tokens=800,
-                        temperature=0.8
+                        model="mistral-small",
+                        messages=[self.ChatMessage(role="user", content=prompt)],
+                        max_tokens=600,
+                        temperature=0.9,  # Higher for more creativity
+                        top_p=0.95
                     )
                     
                     content = response.choices[0].message.content.strip()
-                    parsed_content = self._parse_reddit_content(content)
+                    parsed = self._parse_content(content, domain, business_type)
                     
-                    if parsed_content.get("title") and parsed_content.get("content"):
-                        parsed_content["ai_service"] = "mistral"
-                        parsed_content["success"] = True
-                        logger.info(f"✅ Mistral generated {len(parsed_content['content'])} characters")
-                        return parsed_content
+                    if parsed.get("title") and parsed.get("content"):
+                        parsed["ai_service"] = "mistral"
+                        parsed["success"] = True
+                        logger.info(f"Mistral generated {len(parsed['content'])} chars")
+                        return parsed
                     
                 except Exception as e:
-                    logger.error(f"❌ Mistral generation failed: {e}")
+                    logger.error(f"Mistral generation failed: {e}")
             
             # Fallback to Groq
             if self.groq_client:
                 try:
-                    logger.info("🔄 Falling back to Groq AI...")
+                    logger.info("Using Groq AI for content generation")
                     
                     response = self.groq_client.chat.completions.create(
                         messages=[{"role": "user", "content": prompt}],
                         model="llama3-70b-8192",
-                        max_tokens=800,
-                        temperature=0.8
+                        max_tokens=600,
+                        temperature=0.9,
+                        top_p=0.95
                     )
                     
                     content = response.choices[0].message.content.strip()
-                    parsed_content = self._parse_reddit_content(content)
+                    parsed = self._parse_content(content, domain, business_type)
                     
-                    if parsed_content.get("title") and parsed_content.get("content"):
-                        parsed_content["ai_service"] = "groq"
-                        parsed_content["success"] = True
-                        logger.info(f"✅ Groq generated {len(parsed_content['content'])} characters")
-                        return parsed_content
+                    if parsed.get("title") and parsed.get("content"):
+                        parsed["ai_service"] = "groq"
+                        parsed["success"] = True
+                        logger.info(f"Groq generated {len(parsed['content'])} chars")
+                        return parsed
                     
                 except Exception as e:
-                    logger.error(f"❌ Groq generation failed: {e}")
+                    logger.error(f"Groq generation failed: {e}")
             
-            # If all AI services fail
+            # No AI services available - this should NOT happen with your keys
+            logger.error("No AI services available for content generation")
             return {
                 "success": False,
-                "error": "All AI services failed or not configured",
-                "title": "AI Service Unavailable",
-                "content": "Please configure your Mistral or Groq API keys to generate content.",
+                "error": "No AI services configured",
+                "title": "AI Configuration Error",
+                "content": "AI services not properly configured. Check API keys.",
                 "ai_service": "none"
             }
             
@@ -227,170 +238,183 @@ class AIService:
             return {
                 "success": False,
                 "error": str(e),
-                "title": "Content Generation Error",
-                "content": f"Error occurred: {str(e)}",
+                "title": "Generation Error",
+                "content": f"Content generation failed: {str(e)}",
                 "ai_service": "error"
             }
     
-    def _create_reddit_content_prompt(
-        self,
-        domain: str,
-        business_type: str,
+    def _create_human_like_prompt(
+        self, 
+        domain: str, 
+        business_type: str, 
         business_description: str,
         target_audience: str,
-        language: str,
-        content_style: str,
-        test_mode: bool = False
+        content_style: str
     ) -> str:
-        """Create comprehensive prompts for Reddit content generation"""
+        """Create prompts that generate rule-compliant, human-like content"""
         
-        # Base context
-        audience_context = {
-            "indian_students": "Indian students preparing for competitive exams like JEE, NEET, and other entrance exams",
-            "indian_users": "Indian users interested in practical solutions and local insights",
-            "tech_professionals": "Technology professionals and developers in India",
-            "food_lovers": "Food enthusiasts and people interested in Indian cuisine",
-            "health_conscious": "Health-conscious individuals looking for fitness and nutrition advice"
-        }.get(target_audience, "General Indian audience")
+        # Get domain context
+        context = self.domain_contexts.get(domain, {
+            "topics": ["general advice", "tips", "experiences"],
+            "audiences": ["users", "people interested"],
+            "pain_points": ["common challenges", "daily issues"]
+        })
         
-        style_instruction = self.style_prompts.get(content_style, "Write in an engaging, conversational tone")
+        # Random elements for variety
+        topic = random.choice(context["topics"])
+        audience = random.choice(context["audiences"])
+        pain_point = random.choice(context["pain_points"])
+        style_opener = random.choice(self.content_styles[random.choice(list(self.content_styles.keys()))])
         
-        # Domain-specific content requirements
-        domain_instructions = {
-            "education": f"""
-            Create educational content about {business_type}. Focus on:
-            - Study tips and strategies
-            - Exam preparation advice
-            - Career guidance
-            - Success stories or motivation
-            - Practical learning techniques
-            Target subreddits like r/JEE, r/NEET, r/IndianStudents
+        # Subreddit-specific rules and guidelines
+        subreddit_rules = {
+            "education": """
+            Educational subreddit rules:
+            - NO direct promotion or advertising
+            - Share genuine study experiences and tips
+            - Focus on helping students, not selling services
+            - Use clear, helpful language
+            - Include practical advice that anyone can use
+            - No "my coaching institute" mentions
             """,
-            "restaurant": f"""
-            Create food and restaurant content about {business_type}. Focus on:
-            - Food recommendations and reviews
-            - Cooking tips and recipes
-            - Restaurant experiences
-            - Food culture and traditions
-            - Health and nutrition aspects
-            Target subreddits like r/IndianFood, r/food, r/recipes
+            "tech": """
+            Tech subreddit rules:
+            - NO self-promotion without value
+            - Share genuine technical insights
+            - Focus on helping developers
+            - Include code examples or practical tips
+            - No company/service promotion
+            - Ask technical questions that spark discussion
             """,
-            "technology": f"""
-            Create technology content about {business_type}. Focus on:
-            - Technical tips and tutorials
-            - Career advice in tech
-            - Tool recommendations
-            - Industry insights
-            - Programming and development
-            Target subreddits like r/developersIndia, r/programming
+            "health": """
+            Health subreddit rules:
+            - NO medical advice or claims
+            - Share personal fitness experiences only
+            - Focus on lifestyle and motivation
+            - No supplement or service promotion
+            - Use disclaimers like "this worked for me"
+            - Encourage consulting professionals
             """,
-            "health": f"""
-            Create health and fitness content about {business_type}. Focus on:
-            - Fitness tips and workout routines
-            - Nutrition advice
-            - Health awareness
-            - Wellness strategies
-            - Lifestyle improvements
-            Target subreddits like r/fitness, r/HealthyFood
+            "business": """
+            Business subreddit rules:
+            - NO direct business promotion
+            - Share genuine business experiences
+            - Focus on lessons learned, not success stories
+            - Ask for community input and advice
+            - No service selling or client hunting
+            - Be humble and authentic
             """,
-            "business": f"""
-            Create business content about {business_type}. Focus on:
-            - Business advice and strategies
-            - Entrepreneurship tips
-            - Investment insights
-            - Success stories
-            - Market analysis
-            Target subreddits like r/entrepreneur, r/IndiaInvestments
+            "general": """
+            General Reddit rules:
+            - NO spam or self-promotion
+            - Provide value first, always
+            - Be authentic and conversational
+            - Follow reddiquette guidelines
             """
-        }.get(domain, f"Create engaging content about {business_type}")
+        }
         
-        test_indicator = "[TEST MODE] " if test_mode else ""
+        rules = subreddit_rules.get(domain, subreddit_rules["general"])
         
-        prompt = f"""
-        {test_indicator}Create a Reddit post for {audience_context}.
+        # Create rule-compliant prompt
+        prompt = f"""Write a Reddit post that strictly follows subreddit rules and sounds genuinely human.
 
-        Business: {business_type}
-        {f"Description: {business_description}" if business_description else ""}
-        Domain: {domain}
-        Style: {style_instruction}
+{rules}
 
-        {domain_instructions}
+Context:
+- You're someone with experience in {domain}
+- Topic focus: {topic}
+- Audience: {audience}
+- Common challenge: {pain_point}
 
-        Requirements:
-        1. Write for Indian context and audience
-        2. Make it authentic and valuable, not promotional
-        3. Use a natural, conversational tone
-        4. Include practical tips or insights
-        5. Make it engaging to encourage comments
-        6. Keep title under 150 characters
-        7. Keep content between 150-400 words
-        
-        Format your response exactly as:
-        
-        TITLE: [Your engaging title here]
-        
-        CONTENT: [Your detailed post content here]
-        
-        Make sure the content provides real value and doesn't sound like an advertisement.
-        """
+CRITICAL REQUIREMENTS:
+- NO business promotion whatsoever
+- NO mentions of services, products, or companies
+- Write as a regular person sharing experience
+- Focus 100% on helping others
+- Use casual, conversational tone
+- Include personal struggles or learning moments
+- Ask genuine questions to the community
+- Be humble and relatable
+- Length: 150-300 words
+- Indian context is fine but subtle
+
+Format your response as:
+TITLE: [Helpful, non-promotional title - max 100 characters]
+
+CONTENT: [Genuine, rule-compliant content that provides real value]
+
+Examples of what NOT to do:
+- "My coaching institute helps..."
+- "Our service provides..."
+- "Contact me for..."
+- "Check out my..."
+
+Examples of what TO do:
+- "I struggled with... here's what helped"
+- "Has anyone else noticed..."
+- "What's your experience with..."
+- "Here's something I learned..."
+
+Write like you're genuinely helping the Reddit community, not promoting anything.
+Current context: {datetime.now().strftime('%B %Y')}"""
         
         return prompt
     
-    def _parse_reddit_content(self, ai_response: str) -> Dict[str, Any]:
-        """Parse AI response into title and content"""
+    def _parse_content(self, ai_response: str, domain: str, business_type: str) -> Dict[str, Any]:
+        """Parse AI response into structured content"""
         try:
-            lines = ai_response.strip().split('\n')
             title = ""
             content = ""
             
-            # Find title
-            for line in lines:
+            # Extract title and content
+            lines = ai_response.strip().split('\n')
+            
+            for i, line in enumerate(lines):
                 if line.upper().startswith('TITLE:'):
-                    title = line[6:].strip()
+                    title = line[6:].strip().replace('"', '').replace("'", "")
                     break
             
-            # Find content
+            # Extract content after CONTENT: marker
             content_started = False
             content_lines = []
             
             for line in lines:
                 if line.upper().startswith('CONTENT:'):
                     content_started = True
-                    content_line = line[8:].strip()
-                    if content_line:
-                        content_lines.append(content_line)
+                    content_part = line[8:].strip()
+                    if content_part:
+                        content_lines.append(content_part)
                 elif content_started and line.strip():
                     content_lines.append(line.strip())
             
-            content = '\n\n'.join(content_lines)
+            content = '\n\n'.join(content_lines) if content_lines else ""
             
-            # Fallback parsing if structured format not found
+            # Fallback parsing
             if not title or not content:
                 paragraphs = [p.strip() for p in ai_response.split('\n\n') if p.strip()]
-                if len(paragraphs) >= 2:
-                    title = paragraphs[0][:150]  # First paragraph as title
-                    content = '\n\n'.join(paragraphs[1:])  # Rest as content
-                elif len(paragraphs) == 1:
-                    # Single paragraph - create title and content
-                    full_text = paragraphs[0]
-                    if len(full_text) > 100:
-                        title = full_text[:80] + "..."
-                        content = full_text
+                if paragraphs:
+                    # Use first line/paragraph as title
+                    potential_title = paragraphs[0].split('\n')[0]
+                    title = potential_title[:100] if len(potential_title) > 10 else f"{business_type} Tips for {domain.title()}"
+                    
+                    # Use rest as content
+                    if len(paragraphs) > 1:
+                        content = '\n\n'.join(paragraphs[1:])
                     else:
-                        title = full_text
-                        content = full_text
+                        content = paragraphs[0]
             
-            # Clean up title (remove quotes, extra formatting)
-            title = title.replace('"', '').replace("'", "").strip()
+            # Ensure content quality
+            if len(content.strip()) < 100:
+                content += f"\n\nWhat's your experience with {domain}? Share your thoughts below!"
             
-            # Ensure minimum content length
-            if len(content.strip()) < 50:
-                content += f"\n\nWhat are your thoughts on this? Have you had similar experiences?\n\nFeel free to share your insights in the comments!"
+            # Clean up title
+            if len(title) > 150:
+                title = title[:147] + "..."
             
             return {
                 "title": title,
                 "content": content,
-                "body": content,  # For backward compatibility
+                "body": content,
                 "word_count": len(content.split()),
                 "character_count": len(content),
                 "parsed_successfully": bool(title and content)
@@ -398,10 +422,11 @@ class AIService:
             
         except Exception as e:
             logger.error(f"Content parsing failed: {e}")
+            # Return the raw content if parsing fails
             return {
-                "title": "AI Generated Content",
-                "content": ai_response[:500] if ai_response else "Content generation failed",
-                "body": ai_response[:500] if ai_response else "Content generation failed",
+                "title": f"{business_type} - {domain.title()} Insights",
+                "content": ai_response[:400] if ai_response else "Content generation failed",
+                "body": ai_response[:400] if ai_response else "Content generation failed",
                 "word_count": len(ai_response.split()) if ai_response else 0,
                 "character_count": len(ai_response) if ai_response else 0,
                 "parsed_successfully": False
@@ -413,85 +438,64 @@ class AIService:
         question: str,
         domain: str = None,
         expertise_level: str = "intermediate",
-        language: str = "en",
-        context: Dict[str, Any] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """Generate Q&A answers for auto-replies"""
         
+        prompt = f"""Answer this {platform} question naturally and helpfully:
+
+Question: {question}
+
+Requirements:
+- Write like a knowledgeable person, not a bot
+- Provide practical, actionable advice
+- Keep it 100-250 words
+- Be conversational and friendly
+- Include personal touch if relevant
+- Don't be promotional
+{f"- Focus on {domain} expertise" if domain else ""}
+
+Write a helpful, human-like response that adds real value."""
+        
         try:
-            context = context or {}
-            
-            # Create Q&A prompt
-            prompt = f"""
-            Answer this {platform} question with expertise level: {expertise_level}
-            
-            Question: {question}
-            
-            Requirements:
-            1. Provide a helpful, accurate answer
-            2. Use a friendly, knowledgeable tone
-            3. Include practical tips if relevant
-            4. Keep response between 100-300 words
-            5. Make it valuable to the person asking
-            6. Don't be promotional or salesy
-            {f"7. Focus on {domain} domain knowledge" if domain else ""}
-            
-            Context: {json.dumps(context) if context else "None"}
-            
-            Write a natural, helpful response that adds value to the discussion.
-            """
-            
             # Try Mistral first
             if self.mistral_client:
-                try:
-                    response = self.mistral_client.chat(
-                        model="mistral-large-latest",
-                        messages=[ChatMessage(role="user", content=prompt)],
-                        max_tokens=400,
-                        temperature=0.7
-                    )
-                    
-                    answer = response.choices[0].message.content.strip()
-                    
-                    return {
-                        "success": True,
-                        "answer": answer,
-                        "ai_service": "mistral",
-                        "word_count": len(answer.split()),
-                        "character_count": len(answer)
-                    }
-                    
-                except Exception as e:
-                    logger.error(f"Mistral Q&A generation failed: {e}")
+                response = self.mistral_client.chat(
+                    model="mistral-small",
+                    messages=[self.ChatMessage(role="user", content=prompt)],
+                    max_tokens=400,
+                    temperature=0.8
+                )
+                
+                answer = response.choices[0].message.content.strip()
+                return {
+                    "success": True,
+                    "answer": answer,
+                    "ai_service": "mistral",
+                    "word_count": len(answer.split())
+                }
             
             # Fallback to Groq
             if self.groq_client:
-                try:
-                    response = self.groq_client.chat.completions.create(
-                        messages=[{"role": "user", "content": prompt}],
-                        model="llama3-70b-8192",
-                        max_tokens=400,
-                        temperature=0.7
-                    )
-                    
-                    answer = response.choices[0].message.content.strip()
-                    
-                    return {
-                        "success": True,
-                        "answer": answer,
-                        "ai_service": "groq",
-                        "word_count": len(answer.split()),
-                        "character_count": len(answer)
-                    }
-                    
-                except Exception as e:
-                    logger.error(f"Groq Q&A generation failed: {e}")
+                response = self.groq_client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model="llama3-70b-8192",
+                    max_tokens=400,
+                    temperature=0.8
+                )
+                
+                answer = response.choices[0].message.content.strip()
+                return {
+                    "success": True,
+                    "answer": answer,
+                    "ai_service": "groq",
+                    "word_count": len(answer.split())
+                }
             
             return {
                 "success": False,
-                "error": "No AI service available for Q&A generation",
-                "answer": "I'd be happy to help, but I'm unable to generate a response right now."
+                "error": "No AI service available",
+                "answer": "Unable to generate response - AI service not configured"
             }
             
         except Exception as e:
@@ -499,57 +503,5 @@ class AIService:
             return {
                 "success": False,
                 "error": str(e),
-                "answer": "Sorry, I encountered an error while generating the response."
+                "answer": "Error generating response"
             }
-    
-    async def analyze_content_performance(self, content: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze content performance for optimization"""
-        # This would be implemented for analytics features
-        return {"success": True, "analysis": "Performance analysis not implemented yet"}
-    
-    def get_recommended_subreddits(self, domain: str) -> List[str]:
-        """Get recommended subreddits for a domain"""
-        return self.domain_subreddits.get(domain, ["india", "AskReddit"])
-    
-    def get_content_suggestions(self, domain: str, recent_posts: List[Dict]) -> List[str]:
-        """Get content suggestions based on domain and recent posts"""
-        # This would analyze recent posts and suggest new content ideas
-        base_suggestions = {
-            "education": [
-                "Study tips for competitive exams",
-                "Time management strategies",
-                "Motivation and success stories",
-                "Career guidance posts",
-                "Learning technique tutorials"
-            ],
-            "restaurant": [
-                "Recipe sharing and cooking tips",
-                "Restaurant reviews and recommendations", 
-                "Food culture discussions",
-                "Healthy eating advice",
-                "Local cuisine spotlights"
-            ],
-            "technology": [
-                "Programming tutorials and tips",
-                "Career advice for developers",
-                "Tool and technology reviews",
-                "Industry trend discussions",
-                "Project showcases"
-            ],
-            "health": [
-                "Fitness routines and exercises",
-                "Nutrition advice and meal planning",
-                "Mental health and wellness",
-                "Health myth busting",
-                "Lifestyle improvement tips"
-            ],
-            "business": [
-                "Entrepreneurship advice",
-                "Business strategy discussions",
-                "Investment insights",
-                "Success story sharing",
-                "Market analysis posts"
-            ]
-        }
-        
-        return base_suggestions.get(domain, ["General tips and advice", "Ask Me Anything posts", "Discussion starters"])
