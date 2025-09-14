@@ -3,10 +3,6 @@ import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import RedditAUTO from './pages/RedditAUTO';
 import './App.css';
 
-// Import your other page components here
-// import HomePage from './pages/HomePage';
-// import OtherPage from './pages/OtherPage';
-
 function App() {
   return (
     <Router>
@@ -20,7 +16,6 @@ function App() {
           <div className="nav-links">
             <Link to="/" className="nav-link">Home</Link>
             <Link to="/reddit-auto" className="nav-link">Reddit Automation</Link>
-            {/* Add other navigation links here */}
           </div>
         </nav>
 
@@ -28,7 +23,6 @@ function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/reddit-auto" element={<RedditAUTO />} />
-            {/* Add other routes here */}
           </Routes>
         </main>
       </div>
@@ -36,7 +30,7 @@ function App() {
   );
 }
 
-// Simple HomePage component (replace with your actual component)
+// Simple HomePage component - keep this in the same file
 const HomePage = () => {
   return (
     <div className="home-page">
@@ -49,7 +43,6 @@ const HomePage = () => {
             Get Started →
           </Link>
         </div>
-        {/* Add more feature cards as needed */}
       </div>
     </div>
   );
