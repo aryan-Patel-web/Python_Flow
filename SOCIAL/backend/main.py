@@ -640,12 +640,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS configuration for frontend connection
+# ADD TO TOP OF main.py
+# from fastapi.middleware.cors import CORSMiddleware
+
+# ADD AFTER app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://frontend-agentic-bnc2.onrender.com",
+        "http://localhost:8000"
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 

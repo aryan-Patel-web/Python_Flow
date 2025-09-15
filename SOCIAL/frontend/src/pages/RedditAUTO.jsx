@@ -543,6 +543,13 @@ const RedditAutomation = () => {
           ))}
         </nav>
 
+
+        
+
+
+
+
+
         <div style={{ padding: '24px', borderTop: '1px solid rgba(0, 0, 0, 0.1)' }}>
           {redditConnected ? (
             <div>
@@ -609,7 +616,21 @@ const RedditAutomation = () => {
         </div>
       </div>
 
+
+
+
+
+
+
+
+
+
       {/* Main Content */}
+
+
+
+
+      
       <div style={{ flex: 1, marginLeft: '280px', background: 'rgba(255, 255, 255, 0.1)', backdropFilter: 'blur(10px)' }}>
         <header style={{ padding: '32px 40px', background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(0, 0, 0, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>

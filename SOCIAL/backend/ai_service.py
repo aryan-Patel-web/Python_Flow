@@ -131,7 +131,7 @@ class AIService:
         
         try:
             payload = {
-                "model": kwargs.get("model", "llama3-70b-8192"),
+                "model": kwargs.get("model", "gemma2-9b-it"),
                 "messages": messages,
                 "max_tokens": kwargs.get("max_tokens", 600),
                 "temperature": kwargs.get("temperature", 0.9),
@@ -273,7 +273,7 @@ class AIService:
                     
                     content = await self._call_groq_api(
                         messages,
-                        model="llama3-70b-8192",
+                        model="gemma2-9b-it",
                         max_tokens=600,
                         temperature=0.9,
                         top_p=0.95
@@ -549,7 +549,7 @@ Write a helpful, human-like response that adds real value."""
             if self.groq_available:
                 answer = await self._call_groq_api(
                     messages,
-                    model="llama3-70b-8192",
+                    model="gemma2-9b-it",
                     max_tokens=400,
                     temperature=0.8
                 )
