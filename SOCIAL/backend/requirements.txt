@@ -16,13 +16,7 @@ praw==7.7.1
 # Basic auth (minimal version)
 python-jose==3.3.0
 
-# AI Services
-mistralai==0.4.2
-groq==0.4.1
 
-# Database
-motor==3.3.2
-pymongo==4.6.0
 
 # Reddit API
 praw==7.7.1
