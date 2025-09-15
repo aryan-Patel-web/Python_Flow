@@ -10,7 +10,7 @@ pymongo==4.15.0
 bcrypt==4.1.2
 PyJWT==2.8.0
 python-jose[cryptography]==3.3.0
-cryptography==41.0.7   # stable prebuilt
+cryptography==41.0.7
 
 # HTTP Requests
 requests==2.31.0
@@ -23,8 +23,8 @@ groq==0.4.1
 python-dotenv==1.0.0
 
 # Data Validation
-pydantic[email]==2.9.2   # upgraded → compatible with 3.11–3.13
-pydantic-core==2.39.0    # upgraded → ships wheels for 3.13
+pydantic[email]==2.9.2
+pydantic-core==2.23.4
 
 # Scheduling & Background Tasks
 schedule==1.2.0
@@ -36,5 +36,5 @@ python-multipart==0.0.6
 aiofiles==23.2.1
 python-dateutil==2.8.2
 
-# Development & Debugging (Optional)
+# Development & Debugging
 rich==13.7.0
