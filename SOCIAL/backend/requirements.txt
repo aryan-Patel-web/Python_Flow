@@ -12,11 +12,11 @@ PyJWT==2.8.0
 python-jose[cryptography]==3.3.0
 cryptography==41.0.7
 
-# HTTP Requests
+# HTTP Requests (replaces mistralai)
 requests==2.31.0
+httpx>=0.25.2
 
-# AI Services
-mistralai==0.1.2
+# AI Services - HTTP API only (no pyarrow dependencies)
 groq==0.4.1
 
 # Configuration & Environment

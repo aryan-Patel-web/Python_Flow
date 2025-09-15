@@ -1,31 +1,43 @@
-# Essential Core
+# Core FastAPI and ASGI Server
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-pydantic==2.5.0
-python-dotenv==1.0.0
 
-# Reddit Integration
-praw==7.7.1
-httpx==0.25.2
+# Database - MongoDB
+motor==3.3.2
+pymongo==4.15.0
+
+# Authentication & Security
+bcrypt==4.1.2
+PyJWT==2.8.0
+python-jose[cryptography]==3.3.0
+cryptography==41.0.7
+
+# HTTP Requests
+requests==2.31.0
+
+# Force pyarrow to use prebuilt wheels only - no compilation
+pyarrow>=15.0.0 --only-binary :all:
 
 # AI Services
 mistralai==0.1.2
 groq==0.4.1
 
-# Database
+# Configuration & Environment
+python-dotenv==1.0.0
 
-pymongo==4.6.0
-motor==3.3.2
+# Data Validation
+pydantic[email]==2.9.2
+pydantic-core==2.23.4
 
-# Authentication
-python-jose[cryptography]==3.3.0
-cryptography==41.0.8
-
-
-# Utilities
-
-python-dateutil==2.8.2
+# Scheduling & Background Tasks
 schedule==1.2.0
 
-# Production
-gunicorn==21.2.0
+# File Upload & Form Handling
+python-multipart==0.0.6
+
+# Additional Dependencies for Production
+aiofiles==23.2.1
+python-dateutil==2.8.2
+
+# Development & Debugging
+rich==13.7.0

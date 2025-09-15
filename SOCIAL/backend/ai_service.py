@@ -1,7 +1,7 @@
 """
 Streamlined AI Service - Real Mistral/Groq Integration
+Uses direct HTTP API calls instead of mistralai library to avoid pyarrow dependency
 Generates unique, human-like content for Reddit automation
-Under 500 lines, focused on content generation
 """
 
 import asyncio
@@ -9,16 +9,17 @@ import logging
 import os
 import json
 import random
+import httpx
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 class AIService:
-    """Streamlined AI Service for Reddit content generation"""
+    """Streamlined AI Service for Reddit content generation using HTTP APIs"""
     
     def __init__(self):
-        """Initialize with real API clients"""
+        """Initialize with HTTP clients for APIs"""
         
         # Load API keys from environment
         self.mistral_key = os.getenv("MISTRAL_API_KEY", "").strip()
@@ -28,37 +29,36 @@ class AIService:
         print(f"Mistral Key Found: {bool(self.mistral_key and len(self.mistral_key) > 20)}")
         print(f"Groq Key Found: {bool(self.groq_key and len(self.groq_key) > 20)}")
         
-        # Initialize clients
-        self.mistral_client = None
-        self.groq_client = None
+        # API endpoints
+        self.mistral_url = "https://api.mistral.ai/v1/chat/completions"
+        self.groq_url = "https://api.groq.com/openai/v1/chat/completions"
         
-        # Setup Mistral
-        if self.mistral_key and len(self.mistral_key) > 20:
-            try:
-                from mistralai.client import MistralClient
-                from mistralai.models.chat_completion import ChatMessage
-                self.mistral_client = MistralClient(api_key=self.mistral_key)
-                self.ChatMessage = ChatMessage
-                logger.info("Mistral AI initialized successfully")
-                print("✅ Mistral AI client ready")
-            except ImportError:
-                print("❌ Install mistralai: pip install mistralai")
-            except Exception as e:
-                logger.error(f"Mistral init failed: {e}")
-                print(f"❌ Mistral error: {e}")
+        # HTTP headers
+        self.mistral_headers = {
+            "Authorization": f"Bearer {self.mistral_key}",
+            "Content-Type": "application/json"
+        } if self.mistral_key else {}
         
-        # Setup Groq
-        if self.groq_key and len(self.groq_key) > 20:
-            try:
-                from groq import Groq
-                self.groq_client = Groq(api_key=self.groq_key)
-                logger.info("Groq AI initialized successfully")
-                print("✅ Groq AI client ready")
-            except ImportError:
-                print("❌ Install groq: pip install groq")
-            except Exception as e:
-                logger.error(f"Groq init failed: {e}")
-                print(f"❌ Groq error: {e}")
+        self.groq_headers = {
+            "Authorization": f"Bearer {self.groq_key}",
+            "Content-Type": "application/json"
+        } if self.groq_key else {}
+        
+        # Initialize status
+        self.mistral_available = bool(self.mistral_key and len(self.mistral_key) > 20)
+        self.groq_available = bool(self.groq_key and len(self.groq_key) > 20)
+        
+        if self.mistral_available:
+            print("✅ Mistral AI HTTP client ready")
+            logger.info("Mistral AI HTTP client initialized")
+        
+        if self.groq_available:
+            print("✅ Groq AI HTTP client ready")
+            logger.info("Groq AI HTTP client initialized")
+        
+        if not (self.mistral_available or self.groq_available):
+            print("❌ No AI services configured - check API keys")
+            logger.warning("No AI services available")
         
         # Content variety templates
         self.content_styles = {
@@ -92,6 +92,70 @@ class AIService:
             }
         }
     
+    async def _call_mistral_api(self, messages: List[Dict], **kwargs) -> Optional[str]:
+        """Call Mistral API directly via HTTP"""
+        if not self.mistral_available:
+            return None
+        
+        try:
+            payload = {
+                "model": kwargs.get("model", "mistral-small"),
+                "messages": messages,
+                "max_tokens": kwargs.get("max_tokens", 600),
+                "temperature": kwargs.get("temperature", 0.9),
+                "top_p": kwargs.get("top_p", 0.95)
+            }
+            
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    self.mistral_url,
+                    headers=self.mistral_headers,
+                    json=payload
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    return data["choices"][0]["message"]["content"].strip()
+                else:
+                    logger.error(f"Mistral API error: {response.status_code} - {response.text}")
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"Mistral API call failed: {e}")
+            return None
+    
+    async def _call_groq_api(self, messages: List[Dict], **kwargs) -> Optional[str]:
+        """Call Groq API directly via HTTP"""
+        if not self.groq_available:
+            return None
+        
+        try:
+            payload = {
+                "model": kwargs.get("model", "llama3-70b-8192"),
+                "messages": messages,
+                "max_tokens": kwargs.get("max_tokens", 600),
+                "temperature": kwargs.get("temperature", 0.9),
+                "top_p": kwargs.get("top_p", 0.95)
+            }
+            
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    self.groq_url,
+                    headers=self.groq_headers,
+                    json=payload
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    return data["choices"][0]["message"]["content"].strip()
+                else:
+                    logger.error(f"Groq API error: {response.status_code} - {response.text}")
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"Groq API call failed: {e}")
+            return None
+    
     async def test_ai_connection(self) -> Dict[str, Any]:
         """Test AI service connections"""
         try:
@@ -99,16 +163,17 @@ class AIService:
             primary = None
             
             # Test Mistral
-            if self.mistral_client:
+            if self.mistral_available:
                 try:
-                    response = self.mistral_client.chat(
-                        model="mistral-small",
-                        messages=[self.ChatMessage(role="user", content="Hi")],
-                        max_tokens=5
-                    )
-                    services["mistral"] = "connected"
-                    primary = "mistral"
-                    logger.info("Mistral test successful")
+                    messages = [{"role": "user", "content": "Hi"}]
+                    response = await self._call_mistral_api(messages, max_tokens=5)
+                    
+                    if response:
+                        services["mistral"] = "connected"
+                        primary = "mistral"
+                        logger.info("Mistral HTTP test successful")
+                    else:
+                        services["mistral"] = "failed to get response"
                 except Exception as e:
                     services["mistral"] = f"failed: {str(e)[:50]}"
                     logger.error(f"Mistral test failed: {e}")
@@ -116,17 +181,18 @@ class AIService:
                 services["mistral"] = "not configured"
             
             # Test Groq
-            if self.groq_client:
+            if self.groq_available:
                 try:
-                    response = self.groq_client.chat.completions.create(
-                        messages=[{"role": "user", "content": "Hi"}],
-                        model="llama3-8b-8192",
-                        max_tokens=5
-                    )
-                    services["groq"] = "connected"
-                    if not primary:
-                        primary = "groq"
-                    logger.info("Groq test successful")
+                    messages = [{"role": "user", "content": "Hi"}]
+                    response = await self._call_groq_api(messages, max_tokens=5)
+                    
+                    if response:
+                        services["groq"] = "connected"
+                        if not primary:
+                            primary = "groq"
+                        logger.info("Groq HTTP test successful")
+                    else:
+                        services["groq"] = "failed to get response"
                 except Exception as e:
                     services["groq"] = f"failed: {str(e)[:50]}"
                     logger.error(f"Groq test failed: {e}")
@@ -162,10 +228,10 @@ class AIService:
         test_mode: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
-        """Generate unique, human-like Reddit content"""
+        """Generate unique, human-like Reddit content using HTTP APIs"""
         
         try:
-            logger.info(f"Generating content for {domain} domain using AI")
+            logger.info(f"Generating content for {domain} domain using AI HTTP APIs")
             
             # Create unique prompt
             prompt = self._create_human_like_prompt(
@@ -173,57 +239,59 @@ class AIService:
                 target_audience, content_style
             )
             
+            messages = [{"role": "user", "content": prompt}]
+            
             # Try Mistral first (primary)
-            if self.mistral_client:
+            if self.mistral_available:
                 try:
-                    logger.info("Using Mistral AI for content generation")
+                    logger.info("Using Mistral AI HTTP API for content generation")
                     
-                    response = self.mistral_client.chat(
+                    content = await self._call_mistral_api(
+                        messages,
                         model="mistral-small",
-                        messages=[self.ChatMessage(role="user", content=prompt)],
                         max_tokens=600,
-                        temperature=0.9,  # Higher for more creativity
+                        temperature=0.9,
                         top_p=0.95
                     )
                     
-                    content = response.choices[0].message.content.strip()
-                    parsed = self._parse_content(content, domain, business_type)
-                    
-                    if parsed.get("title") and parsed.get("content"):
-                        parsed["ai_service"] = "mistral"
-                        parsed["success"] = True
-                        logger.info(f"Mistral generated {len(parsed['content'])} chars")
-                        return parsed
+                    if content:
+                        parsed = self._parse_content(content, domain, business_type)
+                        
+                        if parsed.get("title") and parsed.get("content"):
+                            parsed["ai_service"] = "mistral"
+                            parsed["success"] = True
+                            logger.info(f"Mistral generated {len(parsed['content'])} chars")
+                            return parsed
                     
                 except Exception as e:
                     logger.error(f"Mistral generation failed: {e}")
             
             # Fallback to Groq
-            if self.groq_client:
+            if self.groq_available:
                 try:
-                    logger.info("Using Groq AI for content generation")
+                    logger.info("Using Groq AI HTTP API for content generation")
                     
-                    response = self.groq_client.chat.completions.create(
-                        messages=[{"role": "user", "content": prompt}],
+                    content = await self._call_groq_api(
+                        messages,
                         model="llama3-70b-8192",
                         max_tokens=600,
                         temperature=0.9,
                         top_p=0.95
                     )
                     
-                    content = response.choices[0].message.content.strip()
-                    parsed = self._parse_content(content, domain, business_type)
-                    
-                    if parsed.get("title") and parsed.get("content"):
-                        parsed["ai_service"] = "groq"
-                        parsed["success"] = True
-                        logger.info(f"Groq generated {len(parsed['content'])} chars")
-                        return parsed
+                    if content:
+                        parsed = self._parse_content(content, domain, business_type)
+                        
+                        if parsed.get("title") and parsed.get("content"):
+                            parsed["ai_service"] = "groq"
+                            parsed["success"] = True
+                            logger.info(f"Groq generated {len(parsed['content'])} chars")
+                            return parsed
                     
                 except Exception as e:
                     logger.error(f"Groq generation failed: {e}")
             
-            # No AI services available - this should NOT happen with your keys
+            # No AI services available
             logger.error("No AI services available for content generation")
             return {
                 "success": False,
@@ -458,39 +526,41 @@ Requirements:
 Write a helpful, human-like response that adds real value."""
         
         try:
+            messages = [{"role": "user", "content": prompt}]
+            
             # Try Mistral first
-            if self.mistral_client:
-                response = self.mistral_client.chat(
+            if self.mistral_available:
+                answer = await self._call_mistral_api(
+                    messages,
                     model="mistral-small",
-                    messages=[self.ChatMessage(role="user", content=prompt)],
                     max_tokens=400,
                     temperature=0.8
                 )
                 
-                answer = response.choices[0].message.content.strip()
-                return {
-                    "success": True,
-                    "answer": answer,
-                    "ai_service": "mistral",
-                    "word_count": len(answer.split())
-                }
+                if answer:
+                    return {
+                        "success": True,
+                        "answer": answer,
+                        "ai_service": "mistral",
+                        "word_count": len(answer.split())
+                    }
             
             # Fallback to Groq
-            if self.groq_client:
-                response = self.groq_client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
+            if self.groq_available:
+                answer = await self._call_groq_api(
+                    messages,
                     model="llama3-70b-8192",
                     max_tokens=400,
                     temperature=0.8
                 )
                 
-                answer = response.choices[0].message.content.strip()
-                return {
-                    "success": True,
-                    "answer": answer,
-                    "ai_service": "groq",
-                    "word_count": len(answer.split())
-                }
+                if answer:
+                    return {
+                        "success": True,
+                        "answer": answer,
+                        "ai_service": "groq",
+                        "word_count": len(answer.split())
+                    }
             
             return {
                 "success": False,
