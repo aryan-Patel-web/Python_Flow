@@ -23,7 +23,8 @@ import sys
 import traceback
 import uuid
 import os
-
+import requests
+import base64
 
 # CRITICAL: Load environment variables FIRST
 from dotenv import load_dotenv
@@ -75,7 +76,7 @@ except ImportError:
             mongodb_uri = "mongodb://localhost:27017/socialMedia"
             reddit_client_id = os.getenv("REDDIT_CLIENT_ID")
             reddit_client_secret = os.getenv("REDDIT_CLIENT_SECRET")
-            reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI", "http://localhost:8000/api/oauth/reddit/callback")
+            reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI", "https://agentic-u5lx.onrender.com/api/oauth/reddit/callback")
             reddit_user_agent = "RedditAutomationPlatform/1.0"
             token_encryption_key = os.getenv("TOKEN_ENCRYPTION_KEY")
             mistral_api_key = os.getenv("MISTRAL_API_KEY")
@@ -489,9 +490,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# FIXED: CORS configuration for frontend connection
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for now
+    allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -642,12 +644,6 @@ async def get_session_info(session_id: str = Header(None, alias="x-session-id"))
         logger.error(f"Get session info failed: {e}")
         return {"success": False, "error": str(e)}
 
-
-
-
-
-
-
 # Reddit OAuth endpoints
 @app.get("/api/oauth/reddit/authorize")
 async def reddit_oauth_authorize(session_id: str = Query(None)):
@@ -695,9 +691,11 @@ async def reddit_oauth_authorize(session_id: str = Query(None)):
 
 
 
+
+
 @app.get("/api/oauth/reddit/callback")
 async def reddit_oauth_callback(code: str, state: str):
-    """Handle Reddit OAuth callback - COMPLETE FIXED VERSION"""
+    """Handle Reddit OAuth callback - FIXED FOR /reddit-auto REDIRECT"""
     try:
         logger.info(f"OAuth callback received: code={code[:10]}..., state={state}")
         
@@ -706,7 +704,7 @@ async def reddit_oauth_callback(code: str, state: str):
         if not session_id:
             logger.error(f"Invalid OAuth state: {state}")
             return RedirectResponse(
-                url="https://frontend-agentic-bnc2.onrender.com/?error=invalid_oauth_state",
+                url="https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=invalid_oauth_state",
                 status_code=302
             )
         
@@ -714,7 +712,7 @@ async def reddit_oauth_callback(code: str, state: str):
         if not user_id:
             logger.error(f"Invalid session: {session_id}")
             return RedirectResponse(
-                url="https://frontend-agentic-bnc2.onrender.com/?error=invalid_session", 
+                url="https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=invalid_session", 
                 status_code=302
             )
         
@@ -728,13 +726,9 @@ async def reddit_oauth_callback(code: str, state: str):
         if not reddit_client_id or not reddit_client_secret:
             logger.error("Reddit credentials missing from environment")
             return RedirectResponse(
-                url="https://frontend-agentic-bnc2.onrender.com/?error=missing_credentials",
+                url="https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=missing_credentials",
                 status_code=302
             )
-        
-        # Manual token exchange using requests
-        import requests
-        import base64
         
         # Prepare token exchange request
         auth_string = f"{reddit_client_id}:{reddit_client_secret}"
@@ -820,21 +814,21 @@ async def reddit_oauth_callback(code: str, state: str):
                 
                 logger.info(f"Reddit OAuth successful for user: {username} (user_id: {user_id})")
                 
-                # FIXED: Redirect to root path with success parameters
+                # FIXED: Redirect to /reddit-auto page with success parameters
                 return RedirectResponse(
-                    url=f"https://frontend-agentic-bnc2.onrender.com/?reddit_connected=true&username={username}&session_id={session_id}&real_connection=true",
+                    url=f"https://frontend-agentic-bnc2.onrender.com/reddit-auto?reddit_connected=true&username={username}&session_id={session_id}&real_connection=true",
                     status_code=302
                 )
             else:
                 logger.error("No access token in response")
                 return RedirectResponse(
-                    url="https://frontend-agentic-bnc2.onrender.com/?error=no_access_token",
+                    url="https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=no_access_token",
                     status_code=302
                 )
         else:
             logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
             return RedirectResponse(
-                url=f"https://frontend-agentic-bnc2.onrender.com/?error=token_exchange_failed&status={response.status_code}",
+                url=f"https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=token_exchange_failed&status={response.status_code}",
                 status_code=302
             )
         
@@ -842,62 +836,9 @@ async def reddit_oauth_callback(code: str, state: str):
         logger.error(f"Reddit OAuth callback failed: {e}")
         logger.error(traceback.format_exc())
         return RedirectResponse(
-            url=f"https://frontend-agentic-bnc2.onrender.com/?error=oauth_failed&message={str(e)}", 
+            url=f"https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=oauth_failed&message={str(e)}", 
             status_code=302
         )
-
-
-@app.get("/api/oauth/reddit/authorize")
-async def reddit_oauth_authorize(session_id: str = Query(None)):
-    """Start Reddit OAuth flow - FIXED VERSION"""
-    try:
-        # Create session if not provided
-        if not session_id:
-            session_id = create_user_session()
-            logger.info(f"Created new session for OAuth: {session_id}")
-        
-        # Generate OAuth state
-        state = f"oauth_{uuid.uuid4().hex[:16]}"
-        oauth_states[state] = session_id
-        
-        logger.info(f"Starting OAuth for session {session_id} with state {state}")
-        
-        # Check if we have real Reddit credentials
-        reddit_client_id = os.getenv("REDDIT_CLIENT_ID")
-        reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI") or "https://agentic-u5lx.onrender.com/api/oauth/reddit/callback"
-        
-        if not reddit_client_id or reddit_client_id == "mock":
-            logger.error("REDDIT_CLIENT_ID not found or is 'mock'")
-            return {
-                "success": False,
-                "error": "Reddit credentials not configured",
-                "message": "Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in environment variables"
-            }
-        
-        # Generate REAL Reddit OAuth URL using environment variables
-        real_oauth_url = f"https://www.reddit.com/api/v1/authorize?client_id={reddit_client_id}&response_type=code&state={state}&redirect_uri={reddit_redirect_uri}&duration=permanent&scope=submit,edit,read"
-        
-        logger.info(f"Generated REAL OAuth URL with client_id: {reddit_client_id[:8]}...")
-        
-        return {
-            "success": True,
-            "redirect_url": real_oauth_url,
-            "state": state,
-            "session_id": session_id,
-            "real_oauth": True
-        }
-        
-    except Exception as e:
-        logger.error(f"Reddit OAuth authorize failed: {e}")
-        return {"success": False, "error": str(e)}
-
-
-
-
-
-
-
-
 
 @app.get("/api/reddit/test-connection")
 async def test_reddit_connection(
@@ -1527,7 +1468,7 @@ async def debug_ai_service():
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
-    
+
 PORT = int(os.getenv("PORT", 8000))
 if __name__ == "__main__":
     print("Starting Reddit Automation Platform...")

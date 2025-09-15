@@ -1,17 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
+
 // Add this near the top of your component
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://agentic-u5lx.onrender.com';
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false };
   }
+  
   static getDerivedStateFromError(error) {
     return { hasError: true };
   }
+  
   componentDidCatch(error, errorInfo) {
     console.error('Error Boundary caught an error:', error, errorInfo);
   }
+  
   render() {
     if (this.state.hasError) {
       return <div style={{ padding: '20px', textAlign: 'center' }}>
@@ -62,38 +67,38 @@ const RedditAutomation = () => {
     successRate: 95
   });
 
-const domainConfigs = {
-  education: { 
-    subreddits: ['test', 'IndianStudents', 'learnprogramming', 'programming'], 
-    sampleBusiness: 'JEE coaching institute', 
-    icon: '🎓', 
-    description: 'Educational services' 
-  },
-  restaurant: { 
-    subreddits: ['test', 'IndianFood', 'food', 'cooking'], 
-    sampleBusiness: 'Traditional Indian restaurant', 
-    icon: '🍽️', 
-    description: 'Food & restaurants' 
-  },
-  tech: { 
-    subreddits: ['test', 'developersIndia', 'learnprogramming', 'programming'], 
-    sampleBusiness: 'AI automation platform', 
-    icon: '💻', 
-    description: 'Technology & programming' 
-  },
-  health: { 
-    subreddits: ['test', 'fitness', 'nutrition', 'bodyweightfitness'], 
-    sampleBusiness: 'Fitness coaching center', 
-    icon: '💚', 
-    description: 'Health & wellness' 
-  },
-  business: { 
-    subreddits: ['test', 'entrepreneur', 'smallbusiness', 'startups'], 
-    sampleBusiness: 'Business consulting firm', 
-    icon: '💼', 
-    description: 'Business & entrepreneurship' 
-  }
-};
+  const domainConfigs = {
+    education: { 
+      subreddits: ['test', 'IndianStudents', 'learnprogramming', 'programming'], 
+      sampleBusiness: 'JEE coaching institute', 
+      icon: '🎓', 
+      description: 'Educational services' 
+    },
+    restaurant: { 
+      subreddits: ['test', 'IndianFood', 'food', 'cooking'], 
+      sampleBusiness: 'Traditional Indian restaurant', 
+      icon: '🍽️', 
+      description: 'Food & restaurants' 
+    },
+    tech: { 
+      subreddits: ['test', 'developersIndia', 'learnprogramming', 'programming'], 
+      sampleBusiness: 'AI automation platform', 
+      icon: '💻', 
+      description: 'Technology & programming' 
+    },
+    health: { 
+      subreddits: ['test', 'fitness', 'nutrition', 'bodyweightfitness'], 
+      sampleBusiness: 'Fitness coaching center', 
+      icon: '💚', 
+      description: 'Health & wellness' 
+    },
+    business: { 
+      subreddits: ['test', 'entrepreneur', 'smallbusiness', 'startups'], 
+      sampleBusiness: 'Business consulting firm', 
+      icon: '💼', 
+      description: 'Business & entrepreneurship' 
+    }
+  };
 
   const targetAudienceOptions = {
     'indian_students': { label: 'Indian Students', icon: '🎓' },
@@ -125,12 +130,17 @@ const domainConfigs = {
     }, 5000);
   }, []);
 
+  // Debug logging for state changes
+  useEffect(() => {
+    console.log('🔍 Component state update:', {
+      redditConnected,
+      redditUsername,
+      sessionId,
+      backendConnected
+    });
+  }, [redditConnected, redditUsername, sessionId, backendConnected]);
 
-
-
-  // FIXED: Enhanced API request with session recovery
-
-
+  // Enhanced API request with session recovery
   const makeAPIRequest = useCallback(async (endpoint, method = 'GET', data = null) => {
     try {
       const headers = { 'Content-Type': 'application/json' };
@@ -164,7 +174,7 @@ const domainConfigs = {
     }
   }, [sessionId]);
 
-  // FIXED: Session recovery function
+  // Session recovery function
   const recoverSession = useCallback(async () => {
     try {
       console.log('🔄 Session recovery started...');
@@ -203,47 +213,83 @@ const domainConfigs = {
   useEffect(() => {
     const initApp = async () => {
       try {
-        // Handle OAuth callback first
+        console.log('🚀 Initializing Reddit Auto component...');
+        console.log('Current URL:', window.location.href);
+        
+        // Handle OAuth callback first - IMPROVED VERSION
         const urlParams = new URLSearchParams(window.location.search);
         const redditConnectedParam = urlParams.get('reddit_connected');
         const usernameParam = urlParams.get('username');
         const sessionIdParam = urlParams.get('session_id');
+        const errorParam = urlParams.get('error');
 
+        // Handle OAuth errors first
+        if (errorParam) {
+          console.error('OAuth error:', errorParam);
+          showNotification(`Connection failed: ${errorParam}`, 'error');
+          window.history.replaceState({}, '', window.location.pathname);
+          return;
+        }
+
+        // Handle successful OAuth
         if (redditConnectedParam === 'true' && sessionIdParam) {
+          console.log('✅ OAuth success detected:', { username: usernameParam, session: sessionIdParam });
+          
           setSessionId(sessionIdParam);
           setRedditUsername(usernameParam || '');
           setRedditConnected(true);
+          
           localStorage.setItem('reddit_session_id', sessionIdParam);
           localStorage.setItem('reddit_username', usernameParam || '');
-          showNotification(`Reddit connected! Welcome ${usernameParam}!`, 'success');
-          window.history.replaceState({}, '', window.location.pathname);
-        } else {
-          // Try to restore session from localStorage
-          const savedSessionId = localStorage.getItem('reddit_session_id');
-          const savedUsername = localStorage.getItem('reddit_username');
           
-          if (savedSessionId && savedUsername) {
-            // Verify session with backend
+          showNotification(`Reddit connected! Welcome ${usernameParam}!`, 'success');
+          
+          // Clean URL
+          window.history.replaceState({}, '', window.location.pathname);
+          
+          // Test the connection immediately
+          setTimeout(async () => {
             try {
-              const response = await fetch(`${API_BASE_URL}/api/auth/session-info`, {
-                headers: { 'x-session-id': savedSessionId }
+              const testResponse = await fetch(`${API_BASE_URL}/api/reddit/connection-status`, {
+                headers: { 'x-session-id': sessionIdParam }
               });
-              const result = await response.json();
-              
-              if (result.success && result.reddit_connected) {
-                setSessionId(savedSessionId);
-                setRedditUsername(result.reddit_username);
-                setRedditConnected(true);
-              } else {
-                // Session invalid, create new one
-                await createNewSession();
-              }
+              const testResult = await testResponse.json();
+              console.log('Connection test result:', testResult);
             } catch (error) {
+              console.error('Connection test failed:', error);
+            }
+          }, 1000);
+          
+          return; // Exit early for OAuth success
+        }
+
+        // Try to restore session from localStorage
+        const savedSessionId = localStorage.getItem('reddit_session_id');
+        const savedUsername = localStorage.getItem('reddit_username');
+        
+        if (savedSessionId && savedUsername) {
+          // Verify session with backend
+          try {
+            const response = await fetch(`${API_BASE_URL}/api/auth/session-info`, {
+              headers: { 'x-session-id': savedSessionId }
+            });
+            const result = await response.json();
+            
+            if (result.success && result.reddit_connected) {
+              setSessionId(savedSessionId);
+              setRedditUsername(result.reddit_username);
+              setRedditConnected(true);
+              console.log('✅ Session restored from localStorage');
+            } else {
+              console.log('❌ Stored session invalid, creating new one');
               await createNewSession();
             }
-          } else {
+          } catch (error) {
+            console.log('❌ Session verification failed, creating new one');
             await createNewSession();
           }
+        } else {
+          await createNewSession();
         }
 
         // Load saved profile
@@ -278,6 +324,7 @@ const domainConfigs = {
         if (result.success) {
           setSessionId(result.session_id);
           localStorage.setItem('reddit_session_id', result.session_id);
+          console.log('✅ New session created:', result.session_id);
         }
       } catch (error) {
         console.error('Session creation failed:', error);
@@ -311,18 +358,26 @@ const domainConfigs = {
       setLoading(true);
       showNotification('Connecting to Reddit...', 'info');
       
+      console.log('🔗 Starting Reddit OAuth with session:', sessionId);
+      
       if (!sessionId) {
+        console.log('❌ No session ID, recovering session...');
         await recoverSession();
         return;
       }
 
       const response = await makeAPIRequest('/api/oauth/reddit/authorize', 'GET', { session_id: sessionId });
+      console.log('OAuth authorize response:', response);
+      
       if (response.success && response.redirect_url) {
+        console.log('✅ Redirecting to Reddit OAuth:', response.redirect_url);
         window.location.href = response.redirect_url;
       } else {
+        console.error('❌ OAuth authorization failed:', response);
         showNotification(response.error || 'Failed to start Reddit authorization', 'error');
       }
     } catch (error) {
+      console.error('❌ Connection error:', error);
       showNotification('Connection failed: ' + error.message, 'error');
     } finally {
       setLoading(false);
@@ -345,7 +400,7 @@ const domainConfigs = {
     }
   }, [makeAPIRequest, showNotification]);
 
-  // FIXED: Real AI content generation
+  // Real AI content generation
   const generateContent = useCallback(async () => {
     if (!userProfile.businessType) {
       showNotification('Please configure your profile first', 'error');
@@ -375,54 +430,14 @@ const domainConfigs = {
         }));
         showNotification(`Content generated using ${response.ai_service}!`, 'success');
       } else {
-        // Fallback: Direct Mistral API call
-        await generateWithMistral();
+        showNotification(response.error || 'AI content generation failed', 'error');
       }
     } catch (error) {
-      await generateWithMistral();
+      showNotification('AI generation failed: ' + error.message, 'error');
     } finally {
       setManualPost(prev => ({ ...prev, isGenerating: false }));
     }
   }, [userProfile, manualPost.subreddit, makeAPIRequest, showNotification]);
-
-  // Direct Mistral API fallback
-  const generateWithMistral = async () => {
-    try {
-      const mistralKey = process.env.REACT_APP_MISTRAL_API_KEY;
-      if (!mistralKey) {
-        showNotification('AI service unavailable - configure REACT_APP_MISTRAL_API_KEY', 'error');
-        return;
-      }
-
-      const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${mistralKey}`
-        },
-        body: JSON.stringify({
-          model: 'mistral-medium',
-          messages: [{
-            role: 'user',
-            content: `Generate a Reddit post for a ${userProfile.businessType} in the ${userProfile.domain} domain. Target audience: ${userProfile.targetAudience}. Style: ${userProfile.contentStyle}. Include title and content.`
-          }],
-          max_tokens: 500
-        })
-      });
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content || 'Generated content using Mistral API';
-      
-      setManualPost(prev => ({
-        ...prev,
-        title: 'AI Generated Title',
-        content: content
-      }));
-      showNotification('Content generated using direct Mistral API!', 'success');
-    } catch (error) {
-      showNotification('AI generation failed: ' + error.message, 'error');
-    }
-  };
 
   const handleManualPost = useCallback(async (e) => {
     e.preventDefault();
