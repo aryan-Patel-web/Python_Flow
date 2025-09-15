@@ -6,7 +6,6 @@ uvicorn[standard]==0.24.0
 motor==3.3.2
 pymongo==4.15.0
 
-
 # Authentication & Security
 bcrypt==4.1.2
 PyJWT==2.8.0
@@ -24,7 +23,8 @@ groq==0.4.1
 python-dotenv==1.0.0
 
 # Data Validation
-pydantic[email]==2.4.2   # 👈 use 2.4.2 (ships prebuilt wheels)
+pydantic[email]==2.9.2   # upgraded → compatible with 3.11–3.13
+pydantic-core==2.39.0    # upgraded → ships wheels for 3.13
 
 # Scheduling & Background Tasks
 schedule==1.2.0
@@ -38,7 +38,3 @@ python-dateutil==2.8.2
 
 # Development & Debugging (Optional)
 rich==13.7.0
-
-
-pydantic-core==2.10.1 --only-binary :all:
-
