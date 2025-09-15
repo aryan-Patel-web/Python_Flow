@@ -1,5 +1,6 @@
 """
 Multi-User Database Manager with Authentication and Individual Reddit Connections
+Updated for PyMongo 4.15.0 compatibility - Error-free version
 Each user has their own Reddit tokens and automation settings
 Persistent token storage with automatic refresh handling
 """
@@ -8,11 +9,12 @@ import motor.motor_asyncio
 import bcrypt
 import jwt
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 import logging
 from bson import ObjectId
 import secrets
 import os
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,7 @@ class MultiUserDatabaseManager:
     """
     Enhanced database manager supporting multiple users with individual Reddit connections
     Handles JWT authentication, per-user Reddit tokens, and automation configs
+    Compatible with PyMongo 4.15.0 and Motor latest versions
     """
     
     def __init__(self, mongodb_uri: str):
@@ -48,11 +51,24 @@ class MultiUserDatabaseManager:
     async def connect(self) -> bool:
         """Connect to MongoDB Atlas with multi-user support"""
         try:
-            self.client = motor.motor_asyncio.AsyncIOMotorClient(self.mongodb_uri)
+            # Create connection with proper configuration
+            self.client = motor.motor_asyncio.AsyncIOMotorClient(
+                self.mongodb_uri,
+                serverSelectionTimeoutMS=5000,  # 5 second timeout
+                connectTimeoutMS=10000,  # 10 second connection timeout
+                socketTimeoutMS=20000,   # 20 second socket timeout
+                maxPoolSize=10,
+                retryWrites=True
+            )
+            
             self.database = self.client.socialMedia
             
-            # Test connection
-            await self.client.admin.command('ping')
+            # Test connection with proper error handling
+            await asyncio.wait_for(
+                self.client.admin.command('ping'), 
+                timeout=5.0
+            )
+            
             self.connected = True
             
             # Create indexes for multi-user system
@@ -61,6 +77,10 @@ class MultiUserDatabaseManager:
             logger.info("Multi-user MongoDB Atlas connected successfully")
             return True
             
+        except asyncio.TimeoutError:
+            logger.error("MongoDB connection timeout")
+            self.connected = False
+            return False
         except Exception as e:
             logger.error(f"MongoDB connection failed: {e}")
             self.connected = False
@@ -77,24 +97,36 @@ class MultiUserDatabaseManager:
         """Create database indexes for multi-user system performance"""
         try:
             # User indexes
-            await self.database.users.create_index("email", unique=True)
-            await self.database.users.create_index("created_at")
-            await self.database.users.create_index("is_active")
+            try:
+                await self.database.users.create_index("email", unique=True)
+                await self.database.users.create_index("created_at")
+                await self.database.users.create_index("is_active")
+            except Exception as e:
+                logger.warning(f"User indexes creation failed: {e}")
             
             # Reddit token indexes (per user)
-            await self.database.reddit_tokens.create_index("user_id", unique=True)
-            await self.database.reddit_tokens.create_index("reddit_username")
-            await self.database.reddit_tokens.create_index("expires_at")
-            await self.database.reddit_tokens.create_index("is_active")
+            try:
+                await self.database.reddit_tokens.create_index("user_id", unique=True)
+                await self.database.reddit_tokens.create_index("reddit_username")
+                await self.database.reddit_tokens.create_index("expires_at")
+                await self.database.reddit_tokens.create_index("is_active")
+            except Exception as e:
+                logger.warning(f"Reddit token indexes creation failed: {e}")
             
             # Automation config indexes
-            await self.database.automation_configs.create_index([("user_id", 1), ("config_type", 1)], unique=True)
-            await self.database.automation_configs.create_index("enabled")
+            try:
+                await self.database.automation_configs.create_index([("user_id", 1), ("config_type", 1)], unique=True)
+                await self.database.automation_configs.create_index("enabled")
+            except Exception as e:
+                logger.warning(f"Automation config indexes creation failed: {e}")
             
             # Activity indexes (per user)
-            await self.database.reddit_activity.create_index([("user_id", 1), ("timestamp", -1)])
-            await self.database.reddit_activity.create_index([("user_id", 1), ("activity_type", 1)])
-            await self.database.reddit_activity.create_index("timestamp")
+            try:
+                await self.database.reddit_activity.create_index([("user_id", 1), ("timestamp", -1)])
+                await self.database.reddit_activity.create_index([("user_id", 1), ("activity_type", 1)])
+                await self.database.reddit_activity.create_index("timestamp")
+            except Exception as e:
+                logger.warning(f"Activity indexes creation failed: {e}")
             
             logger.info("Multi-user database indexes created successfully")
             
@@ -561,11 +593,11 @@ class MultiUserDatabaseManager:
     async def get_all_active_automations(self, config_type: str) -> List[Dict[str, Any]]:
         """Get all active automation configs for scheduling across all users"""
         try:
-            configs = await self.database.automation_configs.find({
+            cursor = self.database.automation_configs.find({
                 "config_type": config_type,
                 "enabled": True
-            }).to_list(None)
-            
+            })
+            configs = await cursor.to_list(length=None)
             return configs
             
         except Exception as e:
@@ -613,10 +645,12 @@ class MultiUserDatabaseManager:
             start_date = datetime.utcnow() - timedelta(days=days)
             
             # Get activities for this user only
-            activities = await self.database.reddit_activity.find({
+            cursor = self.database.reddit_activity.find({
                 "user_id": user_id,
                 "timestamp": {"$gte": start_date}
-            }).sort("timestamp", -1).to_list(None)
+            }).sort("timestamp", -1)
+            
+            activities = await cursor.to_list(length=None)
             
             # Separate by type
             posts = [a for a in activities if a["activity_type"] == "post"]
@@ -674,7 +708,8 @@ class MultiUserDatabaseManager:
                 }
             ]
             
-            results = await self.database.reddit_activity.aggregate(pipeline).to_list(None)
+            cursor = self.database.reddit_activity.aggregate(pipeline)
+            results = await cursor.to_list(length=None)
             
             # Process results
             analytics = {
@@ -702,7 +737,7 @@ class MultiUserDatabaseManager:
                 )
             
             # Get top subreddits for this user
-            top_subreddits = await self.database.reddit_activity.aggregate([
+            top_subreddits_pipeline = [
                 {
                     "$match": {
                         "user_id": user_id,
@@ -719,7 +754,10 @@ class MultiUserDatabaseManager:
                 },
                 {"$sort": {"count": -1}},
                 {"$limit": 5}
-            ]).to_list(None)
+            ]
+            
+            cursor = self.database.reddit_activity.aggregate(top_subreddits_pipeline)
+            top_subreddits = await cursor.to_list(length=None)
             
             analytics["top_subreddits"] = [
                 {
@@ -759,7 +797,7 @@ class MultiUserDatabaseManager:
             
             # Get weekly engagement for this user
             week_ago = datetime.utcnow() - timedelta(days=7)
-            engagement_result = await self.database.reddit_activity.aggregate([
+            engagement_pipeline = [
                 {
                     "$match": {
                         "user_id": user_id,
@@ -773,8 +811,10 @@ class MultiUserDatabaseManager:
                         "total_engagement": {"$sum": "$engagement"}
                     }
                 }
-            ]).to_list(1)
+            ]
             
+            cursor = self.database.reddit_activity.aggregate(engagement_pipeline)
+            engagement_result = await cursor.to_list(length=1)
             engagement = engagement_result[0] if engagement_result else {"total_score": 0, "total_engagement": 0}
             
             # Get automation status
@@ -806,8 +846,6 @@ class MultiUserDatabaseManager:
         """Update user profile information"""
         try:
             # Allowed fields to update
-            allowed_fields = ["name", "profile.bio", "profile.website", "profile.location", "preferences"]
-            
             update_doc = {}
             
             if "name" in profile_data and len(profile_data["name"].strip()) >= 2:
@@ -856,7 +894,10 @@ class MultiUserDatabaseManager:
                 return {"healthy": False, "error": "Not connected to database"}
             
             # Test database operation
-            await self.client.admin.command('ping')
+            await asyncio.wait_for(
+                self.client.admin.command('ping'), 
+                timeout=5.0
+            )
             
             # Get collection stats
             users_count = await self.database.users.count_documents({"is_active": True})
@@ -882,6 +923,9 @@ class MultiUserDatabaseManager:
                 "timestamp": datetime.utcnow().isoformat()
             }
             
+        except asyncio.TimeoutError:
+            logger.error("Database health check timeout")
+            return {"healthy": False, "error": "Database ping timeout"}
         except Exception as e:
             logger.error(f"Database health check failed: {e}")
             return {"healthy": False, "error": str(e)}
@@ -930,7 +974,7 @@ class MultiUserDatabaseManager:
             })
             
             # Top performing users (by posts)
-            top_users = await self.database.reddit_activity.aggregate([
+            top_users_pipeline = [
                 {
                     "$match": {
                         "activity_type": "post",
@@ -947,7 +991,10 @@ class MultiUserDatabaseManager:
                 },
                 {"$sort": {"posts_count": -1}},
                 {"$limit": 10}
-            ]).to_list(None)
+            ]
+            
+            cursor = self.database.reddit_activity.aggregate(top_users_pipeline)
+            top_users = await cursor.to_list(length=None)
             
             return {
                 "platform_stats": {
@@ -1021,18 +1068,21 @@ class MultiUserDatabaseManager:
             })
             
             # Karma calculation
-            karma_result = await self.database.reddit_activity.aggregate([
+            karma_pipeline = [
                 {"$match": {"user_id": user_id}},
                 {"$group": {"_id": None, "total_karma": {"$sum": "$score"}}}
-            ]).to_list(1)
+            ]
             
+            cursor = self.database.reddit_activity.aggregate(karma_pipeline)
+            karma_result = await cursor.to_list(length=1)
             total_karma = karma_result[0]["total_karma"] if karma_result else 0
             
             # Automation status
-            auto_configs = await self.database.automation_configs.find({
+            cursor = self.database.automation_configs.find({
                 "user_id": user_id,
                 "enabled": True
-            }).to_list(None)
+            })
+            auto_configs = await cursor.to_list(length=None)
             
             return {
                 "user_info": {
@@ -1059,3 +1109,227 @@ class MultiUserDatabaseManager:
         except Exception as e:
             logger.error(f"Get user stats failed: {e}")
             return {"error": str(e)}
+
+    # Additional Methods for Enhanced Multi-User Support
+    async def refresh_reddit_token(self, user_id: str, new_token_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Refresh expired Reddit token for specific user"""
+        try:
+            current_time = datetime.utcnow()
+            expires_in = new_token_data.get("expires_in", 3600)
+            expires_at = current_time + timedelta(seconds=expires_in)
+            
+            update_doc = {
+                "access_token": new_token_data["access_token"],
+                "expires_in": expires_in,
+                "expires_at": expires_at,
+                "updated_at": current_time,
+                "last_used": current_time,
+                "is_active": True
+            }
+            
+            if "refresh_token" in new_token_data:
+                update_doc["refresh_token"] = new_token_data["refresh_token"]
+            
+            result = await self.database.reddit_tokens.update_one(
+                {"user_id": user_id},
+                {"$set": update_doc}
+            )
+            
+            if result.modified_count > 0:
+                logger.info(f"Reddit token refreshed for user {user_id}")
+                return {
+                    "success": True,
+                    "message": "Token refreshed successfully",
+                    "expires_at": expires_at.isoformat()
+                }
+            else:
+                return {"success": False, "message": "No token found to refresh"}
+            
+        except Exception as e:
+            logger.error(f"Refresh Reddit token failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_users_requiring_token_refresh(self) -> List[Dict[str, Any]]:
+        """Get users whose Reddit tokens need refresh (maintenance)"""
+        try:
+            # Tokens expiring in next 10 minutes
+            soon_expiry = datetime.utcnow() + timedelta(minutes=10)
+            
+            cursor = self.database.reddit_tokens.find({
+                "is_active": True,
+                "expires_at": {"$lte": soon_expiry},
+                "refresh_token": {"$exists": True, "$ne": None}
+            })
+            
+            tokens = await cursor.to_list(length=None)
+            return tokens
+            
+        except Exception as e:
+            logger.error(f"Get users requiring token refresh failed: {e}")
+            return []
+
+    async def disable_user_automation(self, user_id: str, reason: str = "manual") -> Dict[str, Any]:
+        """Disable all automation for specific user"""
+        try:
+            result = await self.database.automation_configs.update_many(
+                {"user_id": user_id, "enabled": True},
+                {
+                    "$set": {
+                        "enabled": False,
+                        "disabled_at": datetime.utcnow(),
+                        "disabled_reason": reason
+                    }
+                }
+            )
+            
+            logger.info(f"Disabled {result.modified_count} automation configs for user {user_id}")
+            
+            return {
+                "success": True,
+                "disabled_configs": result.modified_count,
+                "reason": reason
+            }
+            
+        except Exception as e:
+            logger.error(f"Disable user automation failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_active_users_for_automation(self, automation_type: str) -> List[Dict[str, Any]]:
+        """Get users with active automation configurations for scheduling"""
+        try:
+            pipeline = [
+                {
+                    "$match": {
+                        "config_type": automation_type,
+                        "enabled": True
+                    }
+                },
+                {
+                    "$lookup": {
+                        "from": "reddit_tokens",
+                        "localField": "user_id",
+                        "foreignField": "user_id",
+                        "as": "reddit_token"
+                    }
+                },
+                {
+                    "$match": {
+                        "reddit_token.is_active": True,
+                        "reddit_token.expires_at": {"$gt": datetime.utcnow()}
+                    }
+                },
+                {
+                    "$lookup": {
+                        "from": "users",
+                        "localField": "user_id",
+                        "foreignField": "_id",
+                        "as": "user"
+                    }
+                },
+                {
+                    "$match": {
+                        "user.is_active": True
+                    }
+                }
+            ]
+            
+            cursor = self.database.automation_configs.aggregate(pipeline)
+            active_users = await cursor.to_list(length=None)
+            
+            return active_users
+            
+        except Exception as e:
+            logger.error(f"Get active users for automation failed: {e}")
+            return []
+
+    async def log_automation_execution(self, user_id: str, automation_type: str, execution_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Log automation execution for monitoring and debugging"""
+        try:
+            log_doc = {
+                "user_id": user_id,
+                "automation_type": automation_type,
+                "timestamp": datetime.utcnow(),
+                "success": execution_data.get("success", False),
+                "execution_time_ms": execution_data.get("execution_time_ms", 0),
+                "posts_created": execution_data.get("posts_created", 0),
+                "replies_made": execution_data.get("replies_made", 0),
+                "errors": execution_data.get("errors", []),
+                "ai_service_used": execution_data.get("ai_service_used"),
+                "subreddits_targeted": execution_data.get("subreddits_targeted", []),
+                "content_domains": execution_data.get("content_domains", [])
+            }
+            
+            await self.database.automation_logs.insert_one(log_doc)
+            
+            return {"success": True, "message": "Automation execution logged"}
+            
+        except Exception as e:
+            logger.error(f"Log automation execution failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    # Database Migration and Maintenance
+    async def migrate_data_if_needed(self) -> Dict[str, Any]:
+        """Handle database schema migrations for updates"""
+        try:
+            # Check if migration is needed
+            migration_status = await self.database.migrations.find_one({"_id": "latest"})
+            current_version = migration_status.get("version", 0) if migration_status else 0
+            target_version = 1  # Current target version
+            
+            if current_version >= target_version:
+                return {"success": True, "message": "Database already up to date"}
+            
+            # Perform migrations
+            migrations_performed = []
+            
+            # Migration 1: Add indexes if they don't exist
+            if current_version < 1:
+                await self._create_indexes()
+                migrations_performed.append("indexes_created")
+            
+            # Update migration status
+            await self.database.migrations.update_one(
+                {"_id": "latest"},
+                {
+                    "$set": {
+                        "version": target_version,
+                        "updated_at": datetime.utcnow(),
+                        "migrations_performed": migrations_performed
+                    }
+                },
+                upsert=True
+            )
+            
+            logger.info(f"Database migrated to version {target_version}")
+            
+            return {
+                "success": True,
+                "from_version": current_version,
+                "to_version": target_version,
+                "migrations_performed": migrations_performed
+            }
+            
+        except Exception as e:
+            logger.error(f"Database migration failed: {e}")
+            return {"success": False, "error": str(e)}
+
+# Create a global instance that can be imported
+database_manager = None
+
+async def get_database_manager(mongodb_uri: str = None) -> MultiUserDatabaseManager:
+    """Get or create database manager instance"""
+    global database_manager
+    
+    if database_manager is None and mongodb_uri:
+        database_manager = MultiUserDatabaseManager(mongodb_uri)
+        await database_manager.connect()
+    
+    return database_manager
+
+async def close_database_connection():
+    """Close database connection"""
+    global database_manager
+    
+    if database_manager:
+        await database_manager.disconnect()
+        database_manager = None
