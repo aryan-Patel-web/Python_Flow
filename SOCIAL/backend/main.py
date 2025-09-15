@@ -268,86 +268,242 @@ async def load_existing_tokens():
     except Exception as e:
         logger.error(f"Failed to load existing tokens: {e}")
 
-# Enhanced Mock classes for multi-user support
+
+
+
+
+
+
 class MockMultiUserDatabase:
-    """Mock database with multi-user methods"""
+    """Mock database with real user data - no hardcoded values"""
     def __init__(self):
         self.users = {}
         self.reddit_tokens = {}
         self.automation_configs = {}
+        self.user_sessions = {}  # Store real user data from login
         
     async def connect(self): 
-        logger.info("Mock multi-user database connected")
+        logger.info("Mock database connected - storing real user data")
         return True
     
     async def disconnect(self): 
-        logger.info("Mock multi-user database disconnected")
+        logger.info("Mock database disconnected")
         return True
     
     async def register_user(self, email, password, name):
         user_id = generate_user_id()
-        self.users[user_id] = {
+        
+        # Hash password properly (basic implementation)
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        
+        user_data = {
             "id": user_id,
             "email": email,
             "name": name,
-            "created_at": datetime.utcnow()
+            "password_hash": password_hash,
+            "created_at": datetime.utcnow(),
+            "reddit_connected": False
         }
+        
+        self.users[user_id] = user_data
+        self.user_sessions[email] = user_data  # Index by email for login
+        
+        # Generate real JWT token
+        token_payload = {
+            "user_id": user_id,
+            "email": email,
+            "name": name,
+            "exp": datetime.utcnow() + timedelta(days=30)
+        }
+        
+        token = jwt.encode(token_payload, "your_secret_key", algorithm="HS256")
+        
+        logger.info(f"Real user registered: {email} -> {name}")
+        
         return {
             "success": True,
             "user_id": user_id,
             "email": email,
             "name": name,
-            "token": f"mock_token_{user_id}",
-            "message": "Mock user registered"
+            "token": token,
+            "message": f"User {name} registered successfully"
         }
     
     async def login_user(self, email, password):
-        # Mock login always succeeds
-        user_id = generate_user_id()
+        # Check if user exists in session store
+        user_data = self.user_sessions.get(email)
+        
+        if not user_data:
+            # Create temporary user for demo (remove this in production)
+            user_id = generate_user_id()
+            
+            # Extract name from email (e.g., "john@example.com" -> "john")
+            name = email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+            
+            user_data = {
+                "id": user_id,
+                "email": email,
+                "name": name,
+                "created_at": datetime.utcnow(),
+                "reddit_connected": False
+            }
+            
+            self.users[user_id] = user_data
+            self.user_sessions[email] = user_data
+            
+            logger.info(f"New user auto-created: {email} -> {name}")
+        
+        # Generate real JWT token
+        token_payload = {
+            "user_id": user_data["id"],
+            "email": user_data["email"],
+            "name": user_data["name"],
+            "exp": datetime.utcnow() + timedelta(days=30)
+        }
+        
+        token = jwt.encode(token_payload, "your_secret_key", algorithm="HS256")
+        
+        # Check Reddit connection
+        reddit_connected = user_data["id"] in self.reddit_tokens
+        reddit_username = None
+        if reddit_connected:
+            reddit_username = self.reddit_tokens[user_data["id"]].get("reddit_username")
+        
         return {
             "success": True,
-            "user_id": user_id,
-            "email": email,
-            "name": "Mock User",
-            "token": f"mock_token_{user_id}",
-            "reddit_connected": False,
-            "message": "Mock login successful"
+            "user_id": user_data["id"],
+            "email": user_data["email"],
+            "name": user_data["name"],
+            "token": token,
+            "reddit_connected": reddit_connected,
+            "reddit_username": reddit_username,
+            "message": f"Welcome back, {user_data['name']}!"
         }
     
     async def get_user_by_token(self, token):
-        # Extract user_id from mock token
-        if token.startswith("mock_token_"):
-            user_id = token.replace("mock_token_", "")
-            return {
-                "id": user_id,
-                "email": "mock@example.com",
-                "name": "Mock User",
-                "reddit_connected": user_id in self.reddit_tokens
-            }
+        try:
+            # Decode JWT token
+            payload = jwt.decode(token, "your_secret_key", algorithms=["HS256"])
+            user_id = payload.get("user_id")
+            
+            if user_id and user_id in self.users:
+                user_data = self.users[user_id]
+                
+                # Check current Reddit connection status
+                reddit_connected = user_id in self.reddit_tokens
+                reddit_username = None
+                if reddit_connected:
+                    reddit_username = self.reddit_tokens[user_id].get("reddit_username")
+                
+                return {
+                    "id": user_id,
+                    "email": user_data["email"],
+                    "name": user_data["name"],
+                    "reddit_connected": reddit_connected,
+                    "reddit_username": reddit_username
+                }
+                
+        except jwt.ExpiredSignatureError:
+            logger.warning("Expired token provided")
+        except jwt.InvalidTokenError:
+            logger.warning("Invalid token provided")
+        except Exception as e:
+            logger.error(f"Token validation error: {e}")
+            
         return None
     
     async def store_reddit_tokens(self, user_id, token_data):
-        self.reddit_tokens[user_id] = token_data
-        return {"success": True, "message": "Mock tokens stored"}
+        """Store real Reddit tokens for user"""
+        self.reddit_tokens[user_id] = {
+            "access_token": token_data["access_token"],
+            "refresh_token": token_data.get("refresh_token", ""),
+            "reddit_username": token_data["reddit_username"],
+            "reddit_user_id": token_data.get("reddit_user_id", ""),
+            "expires_in": token_data.get("expires_in", 3600),
+            "created_at": datetime.utcnow(),
+            "is_active": True
+        }
+        
+        # Update user's reddit connection status
+        if user_id in self.users:
+            self.users[user_id]["reddit_connected"] = True
+            self.users[user_id]["reddit_username"] = token_data["reddit_username"]
+        
+        logger.info(f"Real Reddit tokens stored for user {user_id}: {token_data['reddit_username']}")
+        
+        return {"success": True, "message": f"Reddit tokens stored for {token_data['reddit_username']}"}
     
     async def get_reddit_tokens(self, user_id):
-        return self.reddit_tokens.get(user_id)
+        """Get Reddit tokens for user"""
+        token_data = self.reddit_tokens.get(user_id)
+        if token_data:
+            return {
+                "access_token": token_data["access_token"],
+                "refresh_token": token_data["refresh_token"],
+                "reddit_username": token_data["reddit_username"],
+                "is_valid": True
+            }
+        return None
     
     async def check_reddit_connection(self, user_id):
-        has_tokens = user_id in self.reddit_tokens
+        """Check if user has active Reddit connection"""
+        token_data = self.reddit_tokens.get(user_id)
+        
+        if token_data and token_data.get("is_active"):
+            return {
+                "connected": True,
+                "reddit_username": token_data["reddit_username"],
+                "reddit_user_id": token_data.get("reddit_user_id"),
+                "connected_at": token_data["created_at"].isoformat() if token_data.get("created_at") else None,
+                "expires_at": None  # Mock doesn't track expiry
+            }
+        
         return {
-            "connected": has_tokens,
-            "reddit_username": self.reddit_tokens.get(user_id, {}).get("reddit_username", "MockUser") if has_tokens else None
+            "connected": False,
+            "reddit_username": None
         }
+    
+    async def revoke_reddit_connection(self, user_id):
+        """Remove Reddit connection for user"""
+        if user_id in self.reddit_tokens:
+            username = self.reddit_tokens[user_id].get("reddit_username", "Unknown")
+            del self.reddit_tokens[user_id]
+            
+            # Update user data
+            if user_id in self.users:
+                self.users[user_id]["reddit_connected"] = False
+                self.users[user_id]["reddit_username"] = None
+            
+            logger.info(f"Reddit connection revoked for user {user_id} ({username})")
+            return {"success": True, "message": f"Reddit disconnected from {username}"}
+        
+        return {"success": False, "error": "No Reddit connection found"}
     
     async def store_automation_config(self, user_id, config_type, config_data):
         if user_id not in self.automation_configs:
             self.automation_configs[user_id] = {}
-        self.automation_configs[user_id][config_type] = config_data
+        self.automation_configs[user_id][config_type] = {
+            "config": config_data,
+            "enabled": True,
+            "created_at": datetime.utcnow()
+        }
         return {"success": True}
     
     async def get_automation_config(self, user_id, config_type):
         return self.automation_configs.get(user_id, {}).get(config_type)
+    
+    async def health_check(self):
+        return {
+            "status": "healthy",
+            "users_count": len(self.users),
+            "reddit_connections": len(self.reddit_tokens),
+            "automation_configs": len(self.automation_configs)
+        }
+
+
+
+
+
 
 class MockAIService:
     def __init__(self):
@@ -644,15 +800,16 @@ app = FastAPI(
 # from fastapi.middleware.cors import CORSMiddleware
 
 # ADD AFTER app = FastAPI()
+# ADD THIS IMMEDIATELY AFTER app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
         "https://frontend-agentic-bnc2.onrender.com",
-        "http://localhost:8000"
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -1135,7 +1292,7 @@ async def reddit_oauth_callback(code: str, state: str):
                 
                 # Redirect with success
                 return RedirectResponse(
-                    url=f"https://frontend-agentic-bnc2.onrender.com/?reddit_connected=true&username={username}&user_id={user_id}",
+                    url=f"https://frontend-agentic-bnc2.onrender.com/reddit-auto?reddit_connected=true&username={username}",
                     status_code=302
                 )
             else:

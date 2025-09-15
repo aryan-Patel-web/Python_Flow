@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../quickpage/AuthContext';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://agentic-u5lx.onrender.com';
+// Replace process.env with conditional import for Vite or fallback
+const API_BASE_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
+    ? import.meta.env.VITE_API_URL
+    : (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL)
+      ? process.env.REACT_APP_API_URL
+      : 'https://agentic-u5lx.onrender.com';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -130,103 +136,129 @@ const RedditAutomation = () => {
     }, 5000);
   }, []);
 
-  // Initialize app state
-  useEffect(() => {
-    const initApp = async () => {
-      try {
-        console.log('🚀 Initializing Reddit Auto component for user:', user?.email);
+
+
+
+
+
+
+// Initialize app state - Clear any cached mock data
+useEffect(() => {
+  const initApp = async () => {
+    try {
+      console.log('🚀 Initializing Reddit Auto component for real user:', user?.email);
+      
+      // Clear any mock data from localStorage
+      const keys = Object.keys(localStorage);
+      keys.forEach(key => {
+        if (key.includes('mock') || key.includes('Mock')) {
+          localStorage.removeItem(key);
+        }
+      });
+      
+      // Set initial Reddit connection state from user data (REAL data only)
+      if (user?.reddit_connected && user?.reddit_username) {
+        setRedditConnected(true);
+        setRedditUsername(user.reddit_username);
+        console.log('✅ Real Reddit connection detected:', user.reddit_username);
+      }
+
+      // Handle OAuth callback with real username
+      const urlParams = new URLSearchParams(window.location.search);
+      const redditConnectedParam = urlParams.get('reddit_connected');
+      const usernameParam = urlParams.get('username');
+      const errorParam = urlParams.get('error');
+
+      if (errorParam) {
+        console.error('OAuth error:', errorParam);
+        showNotification(`Connection failed: ${errorParam}`, 'error');
+        window.history.replaceState({}, '', window.location.pathname);
+        return;
+      }
+
+      if (redditConnectedParam === 'true' && usernameParam) {
+        console.log('✅ Real Reddit OAuth success:', { username: usernameParam });
         
-        // Set initial Reddit connection state from user data
-        if (user?.reddit_connected) {
+        setRedditUsername(usernameParam);
+        setRedditConnected(true);
+        
+        // Update user context with real data
+        updateUser({
+          reddit_connected: true,
+          reddit_username: usernameParam
+        });
+        
+        showNotification(`Reddit connected! Welcome u/${usernameParam}!`, 'success');
+        window.history.replaceState({}, '', window.location.pathname);
+        
+        return;
+      }
+
+      // Check existing Reddit connection (real data only)
+      try {
+        const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
+        const result = await response.json();
+        
+        if (result.success && result.connected && result.reddit_username) {
           setRedditConnected(true);
-          setRedditUsername(user.reddit_username || '');
-        }
-
-        // Handle OAuth callback
-        const urlParams = new URLSearchParams(window.location.search);
-        const redditConnectedParam = urlParams.get('reddit_connected');
-        const usernameParam = urlParams.get('username');
-        const errorParam = urlParams.get('error');
-
-        if (errorParam) {
-          console.error('OAuth error:', errorParam);
-          showNotification(`Connection failed: ${errorParam}`, 'error');
-          window.history.replaceState({}, '', window.location.pathname);
-          return;
-        }
-
-        if (redditConnectedParam === 'true' && usernameParam) {
-          console.log('✅ OAuth success detected:', { username: usernameParam });
-          
-          setRedditUsername(usernameParam);
-          setRedditConnected(true);
-          
-          // Update user context
+          setRedditUsername(result.reddit_username);
           updateUser({
             reddit_connected: true,
-            reddit_username: usernameParam
+            reddit_username: result.reddit_username
           });
-          
-          showNotification(`Reddit connected! Welcome ${usernameParam}!`, 'success');
-          window.history.replaceState({}, '', window.location.pathname);
-          
-          // Test connection
-          setTimeout(async () => {
-            try {
-              const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
-              const result = await response.json();
-              console.log('Connection verification:', result);
-            } catch (error) {
-              console.error('Connection verification failed:', error);
-            }
-          }, 1000);
-          
-          return;
-        }
-
-        // Check existing Reddit connection
-        try {
-          const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
-          const result = await response.json();
-          
-          if (result.success && result.connected) {
-            setRedditConnected(true);
-            setRedditUsername(result.reddit_username || '');
-            updateUser({
-              reddit_connected: true,
-              reddit_username: result.reddit_username
-            });
-          }
-        } catch (error) {
-          console.error('Failed to check Reddit connection:', error);
-        }
-
-        // Load saved profile
-        const savedProfile = localStorage.getItem('redditUserProfile');
-        if (savedProfile) {
-          setUserProfile(JSON.parse(savedProfile));
-        }
-
-        // Test backend connection
-        try {
-          const healthResponse = await fetch(`${API_BASE_URL}/health`);
-          const healthData = await healthResponse.json();
-          if (healthData.success) {
-            setBackendConnected(true);
-          }
-        } catch (error) {
-          setBackendConnected(false);
+          console.log('✅ Existing Reddit connection verified:', result.reddit_username);
+        } else {
+          console.log('No existing Reddit connection found');
+          setRedditConnected(false);
+          setRedditUsername('');
         }
       } catch (error) {
-        console.error('App initialization failed:', error);
-        showNotification('App initialization failed', 'error');
+        console.error('Failed to check Reddit connection:', error);
       }
-    };
 
-    if (user) {
-      initApp();
+      // Load saved profile (clear if contains mock data)
+      try {
+        const savedProfile = localStorage.getItem('redditUserProfile');
+        if (savedProfile) {
+          const profile = JSON.parse(savedProfile);
+          // Only use if it doesn't contain mock data
+          if (!JSON.stringify(profile).toLowerCase().includes('mock')) {
+            setUserProfile(profile);
+          } else {
+            localStorage.removeItem('redditUserProfile');
+          }
+        }
+      } catch (error) {
+        console.error('Error loading profile:', error);
+        localStorage.removeItem('redditUserProfile');
+      }
+
+      // Test backend connection
+      try {
+        const healthResponse = await fetch(`${API_BASE_URL}/health`);
+        const healthData = await healthResponse.json();
+        if (healthData.success) {
+          setBackendConnected(true);
+          console.log('✅ Backend connection verified');
+        }
+      } catch (error) {
+        console.error('Backend connection failed:', error);
+        setBackendConnected(false);
+      }
+    } catch (error) {
+      console.error('App initialization failed:', error);
+      showNotification('App initialization failed', 'error');
     }
-  }, [user, makeAuthenticatedRequest, updateUser, showNotification]);
+  };
+
+  if (user && user.email && !user.email.includes('mock')) {
+    initApp();
+  }
+}, [user, makeAuthenticatedRequest, updateUser, showNotification]);
+
+
+
+
 
   const saveUserProfile = useCallback(() => {
     try {
@@ -550,80 +582,222 @@ const RedditAutomation = () => {
 
 
 
-        <div style={{ padding: '24px', borderTop: '1px solid rgba(0, 0, 0, 0.1)' }}>
+
+
+
+{/* Reddit Connection Section - No Mock Data */}
+        <div style={{ 
+          padding: '20px 24px', 
+          borderTop: '1px solid rgba(0, 0, 0, 0.05)',
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(240,240,255,0.05))',
+          backdropFilter: 'blur(10px)'
+        }}>
           {redditConnected ? (
             <div>
+              {/* Connected Status Card */}
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
-                padding: '12px 16px',
-                borderRadius: '8px',
-                fontSize: '14px',
-                fontWeight: '500',
-                background: 'rgba(34, 197, 94, 0.1)',
-                color: '#16a34a'
+                gap: '12px',
+                padding: '16px 20px',
+                borderRadius: '12px',
+                fontSize: '15px',
+                fontWeight: '600',
+                background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(16, 185, 129, 0.1))',
+                color: '#047857',
+                border: '2px solid rgba(34, 197, 94, 0.3)',
+                boxShadow: '0 4px 20px rgba(34, 197, 94, 0.15)',
+                marginBottom: '12px'
               }}>
-                <span style={{ width: '8px', height: '8px', backgroundColor: '#22c55e', borderRadius: '50%' }}></span>
-                <span>Reddit Connected</span>
+                <div style={{
+                  width: '12px',
+                  height: '12px',
+                  background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                  borderRadius: '50%',
+                  boxShadow: '0 0 8px rgba(34, 197, 94, 0.5)',
+                  animation: 'pulse 2s infinite'
+                }}></div>
+                <span style={{ 
+                  fontSize: '16px',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                }}>✅ Reddit Connected</span>
               </div>
+              
+              {/* Real Username Display */}
               {redditUsername && (
-                <div style={{ fontSize: '12px', color: '#666', margin: '8px 0' }}>
+                <div style={{ 
+                  fontSize: '13px', 
+                  color: '#059669',
+                  fontWeight: '500',
+                  margin: '0 0 16px 32px',
+                  fontFamily: 'monospace',
+                  background: 'rgba(34, 197, 94, 0.08)',
+                  padding: '6px 12px',
+                  borderRadius: '20px',
+                  display: 'inline-block'
+                }}>
                   u/{redditUsername}
                 </div>
               )}
+              
+              {/* Test Connection Button */}
               <button 
                 onClick={testConnection}
                 disabled={loading}
                 style={{
                   width: '100%',
-                  padding: '8px 12px',
-                  marginTop: '8px',
-                  fontSize: '12px',
-                  background: 'linear-gradient(135deg, #667eea, #764ba2)',
+                  padding: '12px 16px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  background: loading ? 
+                    'linear-gradient(135deg, #d1d5db, #9ca3af)' : 
+                    'linear-gradient(135deg, #22c55e, #16a34a)',
                   color: 'white',
                   border: 'none',
-                  borderRadius: '8px',
-                  cursor: 'pointer'
+                  borderRadius: '10px',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  boxShadow: loading ? 
+                    'none' : 
+                    '0 4px 15px rgba(34, 197, 94, 0.3)',
+                  transform: loading ? 'none' : 'translateY(0)',
+                  transition: 'all 0.3s ease',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                }}
+                onMouseOver={(e) => {
+                  if (!loading) {
+                    e.target.style.transform = 'translateY(-1px)';
+                    e.target.style.boxShadow = '0 6px 20px rgba(34, 197, 94, 0.4)';
+                  }
+                }}
+                onMouseOut={(e) => {
+                  if (!loading) {
+                    e.target.style.transform = 'translateY(0)';
+                    e.target.style.boxShadow = '0 4px 15px rgba(34, 197, 94, 0.3)';
+                  }
                 }}
               >
-                Test Connection
+                {loading ? 'Testing...' : '🔍 Test Connection'}
               </button>
             </div>
           ) : (
-            <button 
-              onClick={handleRedditConnect} 
-              disabled={loading}
-              style={{
-                width: '100%',
+            <div>
+              {/* Disconnected Status Card */}
+              <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                padding: '12px',
-                background: 'linear-gradient(135deg, #667eea, #764ba2)',
-                color: 'white',
-                border: 'none',
+                gap: '12px',
+                padding: '16px 20px',
+                borderRadius: '12px',
+                fontSize: '15px',
+                fontWeight: '600',
+                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(220, 38, 38, 0.1))',
+                color: '#dc2626',
+                border: '2px solid rgba(239, 68, 68, 0.3)',
+                boxShadow: '0 4px 20px rgba(239, 68, 68, 0.15)',
+                marginBottom: '12px'
+              }}>
+                <div style={{
+                  width: '12px',
+                  height: '12px',
+                  background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                  borderRadius: '50%',
+                  boxShadow: '0 0 8px rgba(239, 68, 68, 0.5)',
+                  animation: 'pulse 2s infinite'
+                }}></div>
+                <span style={{ 
+                  fontSize: '16px',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                }}>❌ Reddit Not Connected</span>
+              </div>
+              
+              {/* Connection Required Message */}
+              <div style={{
+                fontSize: '12px',
+                color: '#dc2626',
+                textAlign: 'center',
+                marginBottom: '16px',
+                padding: '8px 12px',
+                background: 'rgba(239, 68, 68, 0.08)',
                 borderRadius: '8px',
-                fontWeight: '500',
-                cursor: 'pointer'
-              }}
-            >
-              <span>🔗</span>
-              <span>{loading ? 'Connecting...' : 'Connect Reddit'}</span>
-            </button>
+                border: '1px dashed rgba(239, 68, 68, 0.3)'
+              }}>
+                🔐 One-time Reddit authorization required
+              </div>
+              
+              {/* Connect Button - Extra Highlighted */}
+              <button 
+                onClick={handleRedditConnect} 
+                disabled={loading}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '12px',
+                  padding: '16px 20px',
+                  fontSize: '16px',
+                  fontWeight: '700',
+                  background: loading ? 
+                    'linear-gradient(135deg, #d1d5db, #9ca3af)' : 
+                    'linear-gradient(135deg, #ef4444, #dc2626)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '12px',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  boxShadow: loading ? 
+                    'none' : 
+                    '0 6px 25px rgba(239, 68, 68, 0.4)',
+                  transform: loading ? 'none' : 'translateY(0)',
+                  transition: 'all 0.3s ease',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                  position: 'relative',
+                  overflow: 'hidden'
+                }}
+                onMouseOver={(e) => {
+                  if (!loading) {
+                    e.target.style.transform = 'translateY(-2px) scale(1.02)';
+                    e.target.style.boxShadow = '0 8px 30px rgba(239, 68, 68, 0.5)';
+                  }
+                }}
+                onMouseOut={(e) => {
+                  if (!loading) {
+                    e.target.style.transform = 'translateY(0) scale(1)';
+                    e.target.style.boxShadow = '0 6px 25px rgba(239, 68, 68, 0.4)';
+                  }
+                }}
+              >
+                {/* Animated Glow Effect */}
+                <div style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: '-100%',
+                  width: '100%',
+                  height: '100%',
+                  background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
+                  animation: loading ? 'none' : 'shimmer 3s infinite',
+                  zIndex: 1
+                }}></div>
+                
+                <span style={{ fontSize: '20px', zIndex: 2 }}>🔗</span>
+                <span style={{ zIndex: 2 }}>
+                  {loading ? 'Connecting...' : 'Connect Reddit Account'}
+                </span>
+              </button>
+              
+              {/* Help Text */}
+              <div style={{
+                fontSize: '11px',
+                color: '#6b7280',
+                textAlign: 'center',
+                marginTop: '10px',
+                lineHeight: '1.4'
+              }}>
+                Safe OAuth connection • No password required
+              </div>
+            </div>
           )}
         </div>
       </div>
-
-
-
-
-
-
-
-
-
 
       {/* Main Content */}
 
@@ -1113,7 +1287,7 @@ const RedditAutomation = () => {
         </div>
       </div>
 
-      <style jsx>{`
+      <style>{`
         @keyframes spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
@@ -1121,7 +1295,7 @@ const RedditAutomation = () => {
       `}</style>
     </div>
   );
-};
+}
 
 export default function App() {
   return (

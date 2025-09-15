@@ -2,7 +2,13 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext();
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://agentic-u5lx.onrender.com';
+// Use import.meta.env for Vite, or window._env_ for other setups
+const API_BASE_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
+    ? import.meta.env.VITE_API_URL
+    : (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL)
+      ? process.env.REACT_APP_API_URL
+      : 'https://agentic-u5lx.onrender.com';
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
