@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../quickpage/AuthContext';
 
-// Add this near the top of your component
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://agentic-u5lx.onrender.com';
 
 class ErrorBoundary extends React.Component {
@@ -29,13 +29,13 @@ class ErrorBoundary extends React.Component {
 }
 
 const RedditAutomation = () => {
+  const { user, makeAuthenticatedRequest, updateUser } = useAuth();
   const [activeTab, setActiveTab] = useState('setup');
   const [loading, setLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [backendConnected, setBackendConnected] = useState(false);
   const [redditConnected, setRedditConnected] = useState(false);
   const [redditUsername, setRedditUsername] = useState('');
-  const [sessionId, setSessionId] = useState(null);
   const [connectionError, setConnectionError] = useState('');
   
   const [userProfile, setUserProfile] = useState({
@@ -130,100 +130,24 @@ const RedditAutomation = () => {
     }, 5000);
   }, []);
 
-  // Debug logging for state changes
-  useEffect(() => {
-    console.log('🔍 Component state update:', {
-      redditConnected,
-      redditUsername,
-      sessionId,
-      backendConnected
-    });
-  }, [redditConnected, redditUsername, sessionId, backendConnected]);
-
-  // Enhanced API request with session recovery
-  const makeAPIRequest = useCallback(async (endpoint, method = 'GET', data = null) => {
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (sessionId) {
-        headers['x-session-id'] = sessionId;
-      }
-
-      const config = { method, headers };
-      if (data && method !== 'GET') {
-        config.body = JSON.stringify({ ...data, use_real_ai: true, test_mode: false });
-      }
-
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
-      const result = await response.json();
-      
-      if (response.ok && result.success !== false) {
-        setBackendConnected(true);
-        setConnectionError('');
-        return result;
-      } else {
-        // Handle authentication errors
-        if (result.error === "User authentication required") {
-          await recoverSession();
-        }
-        return result;
-      }
-    } catch (error) {
-      setBackendConnected(false);
-      setConnectionError('Backend not available');
-      return { success: false, error: error.message };
-    }
-  }, [sessionId]);
-
-  // Session recovery function
-  const recoverSession = useCallback(async () => {
-    try {
-      console.log('🔄 Session recovery started...');
-      
-      // Check backend session state
-      const debugResponse = await fetch(`${API_BASE_URL}/api/debug/sessions`);
-      const debugData = await debugResponse.json();
-      
-      // If our session doesn't exist, create new one
-      if (sessionId && !debugData.user_sessions[sessionId]) {
-        console.log('❌ Session lost, creating new session...');
-        
-        const response = await fetch(`${API_BASE_URL}/api/auth/create-session`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-          setSessionId(result.session_id);
-          localStorage.setItem('reddit_session_id', result.session_id);
-          
-          // Reset Reddit connection state
-          setRedditConnected(false);
-          setRedditUsername('');
-          localStorage.removeItem('reddit_username');
-          showNotification('Session recovered - please reconnect Reddit', 'info');
-        }
-      }
-    } catch (error) {
-      console.error('Session recovery failed:', error);
-    }
-  }, [sessionId, showNotification]);
-
-  // FIXED: Initialize app with better session handling
+  // Initialize app state
   useEffect(() => {
     const initApp = async () => {
       try {
-        console.log('🚀 Initializing Reddit Auto component...');
-        console.log('Current URL:', window.location.href);
+        console.log('🚀 Initializing Reddit Auto component for user:', user?.email);
         
-        // Handle OAuth callback first - IMPROVED VERSION
+        // Set initial Reddit connection state from user data
+        if (user?.reddit_connected) {
+          setRedditConnected(true);
+          setRedditUsername(user.reddit_username || '');
+        }
+
+        // Handle OAuth callback
         const urlParams = new URLSearchParams(window.location.search);
         const redditConnectedParam = urlParams.get('reddit_connected');
         const usernameParam = urlParams.get('username');
-        const sessionIdParam = urlParams.get('session_id');
         const errorParam = urlParams.get('error');
 
-        // Handle OAuth errors first
         if (errorParam) {
           console.error('OAuth error:', errorParam);
           showNotification(`Connection failed: ${errorParam}`, 'error');
@@ -231,65 +155,50 @@ const RedditAutomation = () => {
           return;
         }
 
-        // Handle successful OAuth
-        if (redditConnectedParam === 'true' && sessionIdParam) {
-          console.log('✅ OAuth success detected:', { username: usernameParam, session: sessionIdParam });
+        if (redditConnectedParam === 'true' && usernameParam) {
+          console.log('✅ OAuth success detected:', { username: usernameParam });
           
-          setSessionId(sessionIdParam);
-          setRedditUsername(usernameParam || '');
+          setRedditUsername(usernameParam);
           setRedditConnected(true);
           
-          localStorage.setItem('reddit_session_id', sessionIdParam);
-          localStorage.setItem('reddit_username', usernameParam || '');
+          // Update user context
+          updateUser({
+            reddit_connected: true,
+            reddit_username: usernameParam
+          });
           
           showNotification(`Reddit connected! Welcome ${usernameParam}!`, 'success');
-          
-          // Clean URL
           window.history.replaceState({}, '', window.location.pathname);
           
-          // Test the connection immediately
+          // Test connection
           setTimeout(async () => {
             try {
-              const testResponse = await fetch(`${API_BASE_URL}/api/reddit/connection-status`, {
-                headers: { 'x-session-id': sessionIdParam }
-              });
-              const testResult = await testResponse.json();
-              console.log('Connection test result:', testResult);
+              const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
+              const result = await response.json();
+              console.log('Connection verification:', result);
             } catch (error) {
-              console.error('Connection test failed:', error);
+              console.error('Connection verification failed:', error);
             }
           }, 1000);
           
-          return; // Exit early for OAuth success
+          return;
         }
 
-        // Try to restore session from localStorage
-        const savedSessionId = localStorage.getItem('reddit_session_id');
-        const savedUsername = localStorage.getItem('reddit_username');
-        
-        if (savedSessionId && savedUsername) {
-          // Verify session with backend
-          try {
-            const response = await fetch(`${API_BASE_URL}/api/auth/session-info`, {
-              headers: { 'x-session-id': savedSessionId }
+        // Check existing Reddit connection
+        try {
+          const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
+          const result = await response.json();
+          
+          if (result.success && result.connected) {
+            setRedditConnected(true);
+            setRedditUsername(result.reddit_username || '');
+            updateUser({
+              reddit_connected: true,
+              reddit_username: result.reddit_username
             });
-            const result = await response.json();
-            
-            if (result.success && result.reddit_connected) {
-              setSessionId(savedSessionId);
-              setRedditUsername(result.reddit_username);
-              setRedditConnected(true);
-              console.log('✅ Session restored from localStorage');
-            } else {
-              console.log('❌ Stored session invalid, creating new one');
-              await createNewSession();
-            }
-          } catch (error) {
-            console.log('❌ Session verification failed, creating new one');
-            await createNewSession();
           }
-        } else {
-          await createNewSession();
+        } catch (error) {
+          console.error('Failed to check Reddit connection:', error);
         }
 
         // Load saved profile
@@ -314,25 +223,10 @@ const RedditAutomation = () => {
       }
     };
 
-    const createNewSession = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/auth/create-session`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        });
-        const result = await response.json();
-        if (result.success) {
-          setSessionId(result.session_id);
-          localStorage.setItem('reddit_session_id', result.session_id);
-          console.log('✅ New session created:', result.session_id);
-        }
-      } catch (error) {
-        console.error('Session creation failed:', error);
-      }
-    };
-
-    initApp();
-  }, [showNotification]);
+    if (user) {
+      initApp();
+    }
+  }, [user, makeAuthenticatedRequest, updateUser, showNotification]);
 
   const saveUserProfile = useCallback(() => {
     try {
@@ -358,23 +252,17 @@ const RedditAutomation = () => {
       setLoading(true);
       showNotification('Connecting to Reddit...', 'info');
       
-      console.log('🔗 Starting Reddit OAuth with session:', sessionId);
-      
-      if (!sessionId) {
-        console.log('❌ No session ID, recovering session...');
-        await recoverSession();
-        return;
-      }
+      console.log('🔗 Starting Reddit OAuth for user:', user?.email);
 
-      const response = await makeAPIRequest('/api/oauth/reddit/authorize', 'GET', { session_id: sessionId });
-      console.log('OAuth authorize response:', response);
+      const response = await makeAuthenticatedRequest('/api/oauth/reddit/authorize');
+      const result = await response.json();
       
-      if (response.success && response.redirect_url) {
-        console.log('✅ Redirecting to Reddit OAuth:', response.redirect_url);
-        window.location.href = response.redirect_url;
+      if (result.success && result.redirect_url) {
+        console.log('✅ Redirecting to Reddit OAuth:', result.redirect_url);
+        window.location.href = result.redirect_url;
       } else {
-        console.error('❌ OAuth authorization failed:', response);
-        showNotification(response.error || 'Failed to start Reddit authorization', 'error');
+        console.error('❌ OAuth authorization failed:', result);
+        showNotification(result.error || 'Failed to start Reddit authorization', 'error');
       }
     } catch (error) {
       console.error('❌ Connection error:', error);
@@ -382,25 +270,26 @@ const RedditAutomation = () => {
     } finally {
       setLoading(false);
     }
-  }, [sessionId, makeAPIRequest, recoverSession, showNotification]);
+  }, [makeAuthenticatedRequest, user, showNotification]);
 
   const testConnection = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await makeAPIRequest('/api/reddit/test-connection');
-      if (response.success) {
-        showNotification(`Connection test successful for ${response.username}!`, 'success');
+      const response = await makeAuthenticatedRequest('/api/reddit/test-connection');
+      const result = await response.json();
+      
+      if (result.success) {
+        showNotification(`Connection test successful for ${result.username}!`, 'success');
       } else {
-        showNotification('Connection test failed: ' + response.error, 'error');
+        showNotification('Connection test failed: ' + result.error, 'error');
       }
     } catch (error) {
       showNotification('Test failed: ' + error.message, 'error');
     } finally {
       setLoading(false);
     }
-  }, [makeAPIRequest, showNotification]);
+  }, [makeAuthenticatedRequest, showNotification]);
 
-  // Real AI content generation
   const generateContent = useCallback(async () => {
     if (!userProfile.businessType) {
       showNotification('Please configure your profile first', 'error');
@@ -411,33 +300,37 @@ const RedditAutomation = () => {
       setManualPost(prev => ({ ...prev, isGenerating: true }));
       showNotification('Generating content with REAL AI...', 'info');
       
-      // Try backend first
-      const response = await makeAPIRequest('/api/automation/test-auto-post', 'POST', {
-        domain: userProfile.domain,
-        business_type: userProfile.businessType,
-        business_description: userProfile.businessDescription,
-        target_audience: userProfile.targetAudience,
-        language: userProfile.language,
-        subreddits: [manualPost.subreddit],
-        content_style: userProfile.contentStyle
+      const response = await makeAuthenticatedRequest('/api/automation/test-auto-post', {
+        method: 'POST',
+        body: JSON.stringify({
+          domain: userProfile.domain,
+          business_type: userProfile.businessType,
+          business_description: userProfile.businessDescription,
+          target_audience: userProfile.targetAudience,
+          language: userProfile.language,
+          subreddits: [manualPost.subreddit],
+          content_style: userProfile.contentStyle
+        })
       });
 
-      if (response.success) {
+      const result = await response.json();
+
+      if (result.success) {
         setManualPost(prev => ({
           ...prev,
-          title: response.post_details?.title || 'Generated Title',
-          content: response.content_preview
+          title: result.post_details?.title || 'Generated Title',
+          content: result.content_preview
         }));
-        showNotification(`Content generated using ${response.ai_service}!`, 'success');
+        showNotification(`Content generated using ${result.ai_service}!`, 'success');
       } else {
-        showNotification(response.error || 'AI content generation failed', 'error');
+        showNotification(result.error || 'AI content generation failed', 'error');
       }
     } catch (error) {
       showNotification('AI generation failed: ' + error.message, 'error');
     } finally {
       setManualPost(prev => ({ ...prev, isGenerating: false }));
     }
-  }, [userProfile, manualPost.subreddit, makeAPIRequest, showNotification]);
+  }, [userProfile, manualPost.subreddit, makeAuthenticatedRequest, showNotification]);
 
   const handleManualPost = useCallback(async (e) => {
     e.preventDefault();
@@ -456,17 +349,22 @@ const RedditAutomation = () => {
       setLoading(true);
       showNotification('Posting to Reddit...', 'info');
       
-      const response = await makeAPIRequest('/api/reddit/post', 'POST', {
-        subreddit: manualPost.subreddit,
-        title: manualPost.title,
-        content: manualPost.content,
-        contentType: 'text'
+      const response = await makeAuthenticatedRequest('/api/reddit/post', {
+        method: 'POST',
+        body: JSON.stringify({
+          subreddit: manualPost.subreddit,
+          title: manualPost.title,
+          content: manualPost.content,
+          contentType: 'text'
+        })
       });
       
-      if (response.success) {
+      const result = await response.json();
+      
+      if (result.success) {
         showNotification(`Post created successfully as ${redditUsername}!`, 'success');
-        if (response.post_url) {
-          showNotification(`View post: ${response.post_url}`, 'info');
+        if (result.post_url) {
+          showNotification(`View post: ${result.post_url}`, 'info');
         }
         
         setPerformanceData(prev => ({
@@ -481,14 +379,14 @@ const RedditAutomation = () => {
           isGenerating: false
         });
       } else {
-        showNotification(response.error || 'Posting failed', 'error');
+        showNotification(result.error || 'Posting failed', 'error');
       }
     } catch (error) {
       showNotification('Posting failed: ' + error.message, 'error');
     } finally {
       setLoading(false);
     }
-  }, [manualPost, makeAPIRequest, redditUsername, redditConnected, showNotification]);
+  }, [manualPost, makeAuthenticatedRequest, redditUsername, redditConnected, showNotification]);
 
   const startAutoPosting = useCallback(async () => {
     if (!userProfile.isConfigured) {
@@ -518,23 +416,28 @@ const RedditAutomation = () => {
         content_style: userProfile.contentStyle
       };
 
-      const response = await makeAPIRequest('/api/automation/setup-auto-posting', 'POST', config);
+      const response = await makeAuthenticatedRequest('/api/automation/setup-auto-posting', {
+        method: 'POST',
+        body: JSON.stringify(config)
+      });
       
-      if (response.success) {
+      const result = await response.json();
+      
+      if (result.success) {
         setAutoPostConfig(prev => ({ ...prev, enabled: true }));
         showNotification(`Auto-posting started for ${redditUsername}!`, 'success');
-        if (response.next_post_time) {
-          showNotification(`Next post: ${response.next_post_time}`, 'info');
+        if (result.next_post_time) {
+          showNotification(`Next post: ${result.next_post_time}`, 'info');
         }
       } else {
-        showNotification(response.error || 'Automation setup failed', 'error');
+        showNotification(result.error || 'Automation setup failed', 'error');
       }
     } catch (error) {
       showNotification('Setup failed: ' + error.message, 'error');
     } finally {
       setLoading(false);
     }
-  }, [userProfile, redditConnected, autoPostConfig, makeAPIRequest, redditUsername, showNotification]);
+  }, [userProfile, redditConnected, autoPostConfig, makeAuthenticatedRequest, redditUsername, showNotification]);
 
   const addTestTime = () => {
     const now = new Date();
@@ -603,7 +506,7 @@ const RedditAutomation = () => {
       <div style={{ width: '280px', background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(10px)', height: '100vh', position: 'fixed', display: 'flex', flexDirection: 'column', boxShadow: '2px 0 20px rgba(0, 0, 0, 0.1)' }}>
         <div style={{ padding: '32px 24px', borderBottom: '1px solid rgba(0, 0, 0, 0.1)', textAlign: 'center', background: 'linear-gradient(135deg, #667eea, #764ba2)' }}>
           <h2 style={{ fontSize: '24px', fontWeight: '700', color: 'white', margin: 0, marginBottom: '4px' }}>Reddit Auto</h2>
-          <div style={{ fontSize: '14px', color: 'rgba(255, 255, 255, 0.9)', fontWeight: '500' }}>REAL AI-Powered Platform</div>
+          <div style={{ fontSize: '14px', color: 'rgba(255, 255, 255, 0.9)', fontWeight: '500' }}>Welcome, {user?.name}</div>
         </div>
         
         <nav style={{ flex: 1, padding: '24px 16px' }}>
@@ -711,7 +614,7 @@ const RedditAutomation = () => {
         <header style={{ padding: '32px 40px', background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(0, 0, 0, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ fontSize: '32px', fontWeight: '700', color: '#333', marginBottom: '8px' }}>Reddit Automation Dashboard</h1>
-            <p style={{ fontSize: '16px', color: '#666' }}>REAL AI-powered Reddit automation for {redditUsername || 'your account'}</p>
+            <p style={{ fontSize: '16px', color: '#666' }}>AI-powered Reddit automation for {redditUsername || user?.name || 'your account'}</p>
             <div style={{ fontSize: '12px', color: '#95a5a6', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
               Status: {backendConnected ? 'Live Backend' : 'Offline'}
             </div>
@@ -873,6 +776,7 @@ const RedditAutomation = () => {
               </div>
             )}
 
+            {/* Manual Post Tab */}
             {activeTab === 'manual' && (
               <div>
                 <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>Manual Posting with AI</h2>
@@ -951,13 +855,14 @@ const RedditAutomation = () => {
                         boxShadow: '0 4px 15px rgba(52, 211, 153, 0.3)'
                       }}
                     >
-                      {loading ? 'Posting...' : `Post as ${redditUsername || 'Reddit User'}`}
+                      {loading ? 'Posting...' : `Post as ${redditUsername || user?.name || 'Reddit User'}`}
                     </button>
                   </div>
                 </form>
               </div>
             )}
 
+            {/* Schedule Tab */}
             {activeTab === 'schedule' && (
               <div>
                 <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>Auto-Post Schedule</h2>
@@ -1081,6 +986,7 @@ const RedditAutomation = () => {
               </div>
             )}
 
+            {/* Status Tab */}
             {activeTab === 'status' && (
               <div>
                 <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>System Status & Analytics</h2>

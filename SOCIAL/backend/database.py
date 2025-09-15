@@ -1,63 +1,52 @@
 """
-Database Manager for Multi-Platform Automation System
-Handles MongoDB operations, user data, platform credentials, and analytics
+Multi-User Database Manager with Authentication and Individual Reddit Connections
+Each user has their own Reddit tokens and automation settings
+Persistent token storage with automatic refresh handling
 """
 
 import motor.motor_asyncio
-from pymongo import MongoClient
-import asyncio
+import bcrypt
+import jwt
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import logging
 from bson import ObjectId
-import json
+import secrets
+import os
 
 logger = logging.getLogger(__name__)
 
-class DatabaseManager:
+class MultiUserDatabaseManager:
     """
-    Production-ready MongoDB database manager with async operations
+    Enhanced database manager supporting multiple users with individual Reddit connections
+    Handles JWT authentication, per-user Reddit tokens, and automation configs
     """
     
-    def __init__(self, mongodb_uri: str = "mongodb://localhost:27017/socialMedia"):
-        """
-        Initialize database manager
-        
-        Args:
-            mongodb_uri: MongoDB connection URI
-        """
+    def __init__(self, mongodb_uri: str):
         self.mongodb_uri = mongodb_uri
         self.client = None
         self.database = None
         self.connected = False
         
-        # Collection names for different platforms
+        # JWT secret from environment or generate secure one
+        self.jwt_secret = os.getenv("JWT_SECRET_KEY") or secrets.token_urlsafe(32)
+        if len(self.jwt_secret) < 32:
+            self.jwt_secret = secrets.token_urlsafe(32)
+            logger.warning("JWT_SECRET_KEY too short, generated new one")
+        
+        # Collections for multi-user system
         self.collections = {
             "users": "users",
-            "reddit_data": "reddit_posts",
-            "reddit_credentials": "reddit_credentials", 
-            "reddit_activity": "reddit_activity",
-            "twitter_data": "twitter_posts",
-            "twitter_credentials": "twitter_credentials",
-            "twitter_activity": "twitter_activity",
-            "stackoverflow_data": "stackoverflow_answers",
-            "stackoverflow_credentials": "stackoverflow_credentials",
-            "stackoverflow_activity": "stackoverflow_activity",
-            "webmd_data": "webmd_answers",
-            "webmd_activity": "webmd_activity",
+            "user_sessions": "user_sessions", 
+            "reddit_tokens": "reddit_tokens",  # Per-user Reddit tokens
+            "reddit_activity": "reddit_activity",  # Per-user activity
+            "automation_configs": "automation_configs",  # Per-user automation settings
             "ai_usage": "ai_content_generation",
-            "analytics": "platform_analytics",
-            "scheduled_content": "scheduled_posts",
-            "earnings": "user_earnings"
+            "analytics": "platform_analytics"
         }
-    
+
     async def connect(self) -> bool:
-        """
-        Connect to MongoDB database
-        
-        Returns:
-            Boolean indicating connection success
-        """
+        """Connect to MongoDB Atlas with multi-user support"""
         try:
             self.client = motor.motor_asyncio.AsyncIOMotorClient(self.mongodb_uri)
             self.database = self.client.socialMedia
@@ -66,179 +55,541 @@ class DatabaseManager:
             await self.client.admin.command('ping')
             self.connected = True
             
-            # Create indexes for better performance
+            # Create indexes for multi-user system
             await self._create_indexes()
             
-            logger.info("MongoDB connected successfully to socialMedia database")
+            logger.info("Multi-user MongoDB Atlas connected successfully")
             return True
             
         except Exception as e:
             logger.error(f"MongoDB connection failed: {e}")
             self.connected = False
             return False
-    
+
     async def disconnect(self) -> None:
         """Disconnect from MongoDB"""
         if self.client:
             self.client.close()
             self.connected = False
             logger.info("MongoDB disconnected")
-    
+
     async def _create_indexes(self) -> None:
-        """Create database indexes for better performance"""
+        """Create database indexes for multi-user system performance"""
         try:
             # User indexes
             await self.database.users.create_index("email", unique=True)
             await self.database.users.create_index("created_at")
+            await self.database.users.create_index("is_active")
             
-            # Reddit indexes
-            await self.database.reddit_posts.create_index([("user_id", 1), ("created_at", -1)])
-            await self.database.reddit_posts.create_index("post_id", unique=True)
+            # Reddit token indexes (per user)
+            await self.database.reddit_tokens.create_index("user_id", unique=True)
+            await self.database.reddit_tokens.create_index("reddit_username")
+            await self.database.reddit_tokens.create_index("expires_at")
+            await self.database.reddit_tokens.create_index("is_active")
+            
+            # Automation config indexes
+            await self.database.automation_configs.create_index([("user_id", 1), ("config_type", 1)], unique=True)
+            await self.database.automation_configs.create_index("enabled")
+            
+            # Activity indexes (per user)
             await self.database.reddit_activity.create_index([("user_id", 1), ("timestamp", -1)])
+            await self.database.reddit_activity.create_index([("user_id", 1), ("activity_type", 1)])
+            await self.database.reddit_activity.create_index("timestamp")
             
-            # Platform activity indexes
-            await self.database.platform_analytics.create_index([("user_id", 1), ("platform", 1), ("date", -1)])
-            await self.database.ai_content_generation.create_index([("user_id", 1), ("created_at", -1)])
-            
-            logger.info("Database indexes created successfully")
+            logger.info("Multi-user database indexes created successfully")
             
         except Exception as e:
             logger.warning(f"Index creation failed: {e}")
-    
-    async def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
+
+    # User Authentication Methods
+    async def register_user(self, email: str, password: str, name: str) -> Dict[str, Any]:
         """
-        Create new user in database
+        Register new user with email and password
         
         Args:
-            user_data: User information
+            email: User email (unique identifier)
+            password: Plain text password (will be hashed)
+            name: User display name
             
         Returns:
-            Creation result
+            Registration result with user_id and JWT token
         """
         try:
+            # Normalize email
+            email = email.lower().strip()
+            
+            # Check if user already exists
+            existing_user = await self.database.users.find_one({"email": email})
+            if existing_user:
+                return {
+                    "success": False,
+                    "error": "User already exists",
+                    "message": "An account with this email already exists"
+                }
+            
+            # Validate inputs
+            if len(password) < 6:
+                return {
+                    "success": False,
+                    "error": "Password too short",
+                    "message": "Password must be at least 6 characters long"
+                }
+            
+            if len(name.strip()) < 2:
+                return {
+                    "success": False,
+                    "error": "Invalid name",
+                    "message": "Name must be at least 2 characters long"
+                }
+            
+            # Hash password securely
+            password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+            
+            # Create user document
             user_doc = {
-                "email": user_data["email"],
-                "name": user_data["name"],
-                "password_hash": user_data.get("password_hash"),
-                "created_at": datetime.now(),
+                "email": email,
+                "name": name.strip(),
+                "password_hash": password_hash,
+                "created_at": datetime.utcnow(),
                 "last_login": None,
-                "subscription_tier": "free",
                 "is_active": True,
+                "subscription_tier": "free",
                 "platforms_connected": [],
                 "total_posts": 0,
-                "total_earnings": 0.0
+                "total_earnings": 0.0,
+                "preferences": {
+                    "auto_posting": False,
+                    "auto_replies": False,
+                    "notification_email": True,
+                    "timezone": "UTC"
+                },
+                "profile": {
+                    "bio": "",
+                    "website": "",
+                    "location": ""
+                }
             }
             
+            # Insert user into database
             result = await self.database.users.insert_one(user_doc)
+            user_id = str(result.inserted_id)
+            
+            # Generate JWT token
+            token = self._generate_jwt_token(user_id, email, name)
+            
+            logger.info(f"New user registered: {email} (ID: {user_id})")
             
             return {
                 "success": True,
-                "user_id": str(result.inserted_id),
-                "message": "User created successfully"
+                "user_id": user_id,
+                "email": email,
+                "name": name,
+                "token": token,
+                "message": "User registered successfully",
+                "expires_in": "7 days"
             }
             
         except Exception as e:
-            logger.error(f"User creation failed: {e}")
+            logger.error(f"User registration failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "message": "Failed to create user"
+                "message": "Registration failed due to server error"
             }
     
-    async def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def login_user(self, email: str, password: str) -> Dict[str, Any]:
         """
-        Get user by ID
+        Login user with email and password
         
         Args:
-            user_id: User ID
+            email: User email
+            password: Plain text password
             
         Returns:
-            User document or None
+            Login result with user info and JWT token
         """
         try:
-            user = await self.database.users.find_one({"_id": ObjectId(user_id)})
+            # Normalize email
+            email = email.lower().strip()
+            
+            # Find user by email
+            user = await self.database.users.find_one({"email": email, "is_active": True})
+            if not user:
+                return {
+                    "success": False,
+                    "error": "Invalid credentials",
+                    "message": "Email or password is incorrect"
+                }
+            
+            # Verify password
+            if not bcrypt.checkpw(password.encode('utf-8'), user['password_hash']):
+                return {
+                    "success": False,
+                    "error": "Invalid credentials", 
+                    "message": "Email or password is incorrect"
+                }
+            
+            # Update last login
+            user_id = str(user['_id'])
+            await self.database.users.update_one(
+                {"_id": user['_id']},
+                {"$set": {"last_login": datetime.utcnow()}}
+            )
+            
+            # Generate JWT token
+            token = self._generate_jwt_token(user_id, email, user['name'])
+            
+            # Check Reddit connection status
+            reddit_status = await self.check_reddit_connection(user_id)
+            
+            logger.info(f"User logged in: {email} (ID: {user_id})")
+            
+            return {
+                "success": True,
+                "user_id": user_id,
+                "email": user['email'],
+                "name": user['name'],
+                "token": token,
+                "reddit_connected": reddit_status.get("connected", False),
+                "reddit_username": reddit_status.get("reddit_username"),
+                "message": "Login successful",
+                "expires_in": "7 days"
+            }
+            
+        except Exception as e:
+            logger.error(f"User login failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Login failed due to server error"
+            }
+    
+    def _generate_jwt_token(self, user_id: str, email: str, name: str) -> str:
+        """Generate JWT token for user authentication"""
+        payload = {
+            'user_id': user_id,
+            'email': email,
+            'name': name,
+            'exp': datetime.utcnow() + timedelta(days=7),  # Token expires in 7 days
+            'iat': datetime.utcnow(),
+            'type': 'access_token'
+        }
+        return jwt.encode(payload, self.jwt_secret, algorithm='HS256')
+    
+    def verify_jwt_token(self, token: str) -> Dict[str, Any]:
+        """Verify JWT token and return user info"""
+        try:
+            payload = jwt.decode(token, self.jwt_secret, algorithms=['HS256'])
+            return {
+                "valid": True,
+                "user_id": payload['user_id'],
+                "email": payload['email'],
+                "name": payload.get('name', ''),
+                "expires": payload.get('exp')
+            }
+        except jwt.ExpiredSignatureError:
+            return {"valid": False, "error": "Token expired"}
+        except jwt.InvalidTokenError:
+            return {"valid": False, "error": "Invalid token"}
+
+    async def get_user_by_token(self, token: str) -> Optional[Dict[str, Any]]:
+        """Get user information from JWT token"""
+        token_data = self.verify_jwt_token(token)
+        if not token_data.get("valid"):
+            return None
+        
+        try:
+            user = await self.database.users.find_one({
+                "_id": ObjectId(token_data["user_id"]),
+                "is_active": True
+            })
+            
             if user:
                 user["id"] = str(user["_id"])
                 del user["_id"]
+                del user["password_hash"]  # Never return password hash
+                
+                # Add Reddit connection status
+                reddit_status = await self.check_reddit_connection(user["id"])
+                user["reddit_connected"] = reddit_status["connected"]
+                if reddit_status["connected"]:
+                    user["reddit_username"] = reddit_status.get("reddit_username")
+                
             return user
-            
         except Exception as e:
-            logger.error(f"Get user failed: {e}")
+            logger.error(f"Get user by token failed: {e}")
             return None
-    
-    async def store_reddit_credentials(self, user_id: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get user by ID without password hash"""
+        try:
+            user = await self.database.users.find_one({
+                "_id": ObjectId(user_id),
+                "is_active": True
+            })
+            if user:
+                user["id"] = str(user["_id"])
+                del user["_id"]
+                del user["password_hash"]  # Never return password hash
+            return user
+        except Exception as e:
+            logger.error(f"Get user by ID failed: {e}")
+            return None
+
+    # Reddit Token Management (Per-User)
+    async def store_reddit_tokens(self, user_id: str, token_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Store Reddit API credentials for user
+        Store Reddit tokens for specific user permanently
         
         Args:
-            user_id: User ID
-            credentials: Reddit credentials
+            user_id: Unique user identifier
+            token_data: Reddit OAuth token information
             
         Returns:
             Storage result
         """
         try:
-            cred_doc = {
-                "user_id": user_id,
-                "platform": "reddit",
-                "username": credentials.get("username"),
-                "access_token": credentials.get("access_token"),  # Encrypted in production
-                "refresh_token": credentials.get("refresh_token"),  # Encrypted in production
-                "created_at": datetime.now(),
-                "last_used": datetime.now(),
-                "is_active": True
+            current_time = datetime.utcnow()
+            expires_in = token_data.get("expires_in", 3600)
+            expires_at = current_time + timedelta(seconds=expires_in)
+            
+            token_doc = {
+                "user_id": user_id,  # Links to specific user
+                "access_token": token_data["access_token"],
+                "refresh_token": token_data.get("refresh_token"),
+                "token_type": token_data.get("token_type", "bearer"),
+                "expires_in": expires_in,
+                "expires_at": expires_at,
+                "reddit_username": token_data.get("reddit_username", "Unknown"),
+                "reddit_user_id": token_data.get("reddit_user_id"),
+                "scopes": token_data.get("scope", "").split() if token_data.get("scope") else ["submit", "edit", "read"],
+                "created_at": current_time,
+                "updated_at": current_time,
+                "is_active": True,
+                "last_used": current_time
             }
             
-            # Upsert credentials
-            await self.database.reddit_credentials.replace_one(
+            # Upsert token document (one per user)
+            await self.database.reddit_tokens.update_one(
                 {"user_id": user_id},
-                cred_doc,
+                {"$set": token_doc},
                 upsert=True
             )
             
-            # Update user's connected platforms
+            # Update user's platform connections
             await self.database.users.update_one(
                 {"_id": ObjectId(user_id)},
-                {"$addToSet": {"platforms_connected": "reddit"}}
+                {
+                    "$addToSet": {"platforms_connected": "reddit"},
+                    "$set": {"last_reddit_connection": current_time}
+                }
             )
+            
+            logger.info(f"Reddit tokens stored permanently for user {user_id} as {token_data.get('reddit_username')}")
             
             return {
                 "success": True,
-                "message": "Reddit credentials stored successfully"
+                "message": "Reddit tokens stored successfully",
+                "expires_at": expires_at.isoformat(),
+                "reddit_username": token_data.get("reddit_username"),
+                "stored_at": current_time.isoformat()
             }
             
         except Exception as e:
-            logger.error(f"Store Reddit credentials failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to store Reddit credentials"
-            }
-    
-    async def log_reddit_activity(self, user_id: str, activity_type: str, activity_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Log Reddit activity (posts, comments, etc.)
-        
-        Args:
-            user_id: User ID
-            activity_type: Type of activity (post, comment, upvote)
-            activity_data: Activity details
+            logger.error(f"Store Reddit tokens failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_reddit_tokens(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get Reddit tokens for specific user with auto-refresh logic"""
+        try:
+            token_doc = await self.database.reddit_tokens.find_one({
+                "user_id": user_id,
+                "is_active": True
+            })
             
-        Returns:
-            Logging result
-        """
+            if not token_doc:
+                return None
+            
+            current_time = datetime.utcnow()
+            
+            # Check if token is expired
+            if token_doc["expires_at"] <= current_time:
+                logger.warning(f"Reddit token expired for user {user_id}")
+                
+                if token_doc.get("refresh_token"):
+                    return {
+                        "need_refresh": True,
+                        "refresh_token": token_doc["refresh_token"],
+                        "reddit_username": token_doc["reddit_username"],
+                        "expired_at": token_doc["expires_at"].isoformat()
+                    }
+                else:
+                    # Mark as inactive and require reconnection
+                    await self.database.reddit_tokens.update_one(
+                        {"user_id": user_id},
+                        {"$set": {"is_active": False, "expired_at": current_time}}
+                    )
+                    return None
+            
+            # Update last accessed time
+            await self.database.reddit_tokens.update_one(
+                {"user_id": user_id},
+                {"$set": {"last_used": current_time}}
+            )
+            
+            return {
+                "access_token": token_doc["access_token"],
+                "refresh_token": token_doc.get("refresh_token"),
+                "token_type": token_doc.get("token_type", "bearer"),
+                "expires_at": token_doc["expires_at"],
+                "reddit_username": token_doc["reddit_username"],
+                "reddit_user_id": token_doc.get("reddit_user_id"),
+                "scopes": token_doc.get("scopes", []),
+                "is_valid": True,
+                "last_used": token_doc.get("last_used", token_doc["created_at"]).isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Get Reddit tokens failed: {e}")
+            return None
+
+    async def check_reddit_connection(self, user_id: str) -> Dict[str, Any]:
+        """Check Reddit connection status for specific user"""
+        try:
+            tokens = await self.get_reddit_tokens(user_id)
+            
+            if not tokens:
+                return {
+                    "connected": False, 
+                    "message": "No Reddit connection found"
+                }
+            
+            if tokens.get("need_refresh"):
+                return {
+                    "connected": True,
+                    "needs_refresh": True,
+                    "reddit_username": tokens["reddit_username"],
+                    "message": "Token needs refresh"
+                }
+            
+            return {
+                "connected": True,
+                "reddit_username": tokens["reddit_username"],
+                "expires_at": tokens["expires_at"],
+                "scopes": tokens.get("scopes", []),
+                "last_used": tokens.get("last_used"),
+                "message": "Reddit connection active"
+            }
+            
+        except Exception as e:
+            logger.error(f"Check Reddit connection failed: {e}")
+            return {"connected": False, "error": str(e)}
+
+    async def revoke_reddit_connection(self, user_id: str) -> Dict[str, Any]:
+        """Revoke Reddit connection for specific user"""
+        try:
+            # Mark tokens as inactive
+            result = await self.database.reddit_tokens.update_one(
+                {"user_id": user_id},
+                {
+                    "$set": {
+                        "is_active": False,
+                        "revoked_at": datetime.utcnow()
+                    }
+                }
+            )
+            
+            # Remove from user's connected platforms
+            await self.database.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$pull": {"platforms_connected": "reddit"}}
+            )
+            
+            if result.modified_count > 0:
+                logger.info(f"Reddit connection revoked for user {user_id}")
+                return {"success": True, "message": "Reddit connection revoked"}
+            else:
+                return {"success": False, "message": "No active Reddit connection found"}
+            
+        except Exception as e:
+            logger.error(f"Revoke Reddit connection failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    # User-Specific Automation Settings
+    async def store_automation_config(self, user_id: str, config_type: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Store automation configuration for specific user"""
+        try:
+            config_doc = {
+                "user_id": user_id,
+                "config_type": config_type,  # 'auto_posting' or 'auto_replies'
+                "config_data": config_data,
+                "enabled": config_data.get("enabled", True),
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+            
+            # Upsert config (one per user per type)
+            await self.database.automation_configs.update_one(
+                {"user_id": user_id, "config_type": config_type},
+                {"$set": config_doc},
+                upsert=True
+            )
+            
+            logger.info(f"Automation config stored for user {user_id}: {config_type}")
+            
+            return {"success": True, "message": "Automation config saved"}
+            
+        except Exception as e:
+            logger.error(f"Store automation config failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_automation_config(self, user_id: str, config_type: str) -> Optional[Dict[str, Any]]:
+        """Get automation configuration for specific user"""
+        try:
+            config = await self.database.automation_configs.find_one({
+                "user_id": user_id,
+                "config_type": config_type,
+                "enabled": True
+            })
+            
+            return config["config_data"] if config else None
+            
+        except Exception as e:
+            logger.error(f"Get automation config failed: {e}")
+            return None
+
+    async def get_all_active_automations(self, config_type: str) -> List[Dict[str, Any]]:
+        """Get all active automation configs for scheduling across all users"""
+        try:
+            configs = await self.database.automation_configs.find({
+                "config_type": config_type,
+                "enabled": True
+            }).to_list(None)
+            
+            return configs
+            
+        except Exception as e:
+            logger.error(f"Get active automations failed: {e}")
+            return []
+
+    # User-Specific Activity Logging
+    async def log_reddit_activity(self, user_id: str, activity_type: str, activity_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Log Reddit activity for specific user"""
         try:
             activity_doc = {
-                "user_id": user_id,
+                "user_id": user_id,  # Track per user
                 "platform": "reddit",
-                "activity_type": activity_type,
-                "timestamp": datetime.now(),
+                "activity_type": activity_type,  # 'post', 'comment', 'reply'
+                "timestamp": datetime.utcnow(),
                 "data": activity_data,
                 "success": activity_data.get("success", True),
                 "subreddit": activity_data.get("subreddit"),
                 "post_id": activity_data.get("post_id"),
+                "post_url": activity_data.get("post_url"),
+                "title": activity_data.get("title", ""),
                 "score": activity_data.get("score", 0),
-                "engagement": activity_data.get("num_comments", 0)
+                "engagement": activity_data.get("num_comments", 0),
+                "automated": activity_data.get("automated", False)
             }
             
             await self.database.reddit_activity.insert_one(activity_doc)
@@ -250,49 +601,165 @@ class DatabaseManager:
                     {"$inc": {"total_posts": 1}}
                 )
             
-            return {
-                "success": True,
-                "message": "Reddit activity logged successfully"
-            }
+            return {"success": True, "message": "Activity logged successfully"}
             
         except Exception as e:
             logger.error(f"Log Reddit activity failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to log Reddit activity"
-            }
-    
-    async def get_user_dashboard(self, user_id: str) -> Dict[str, Any]:
-        """
-        Get dashboard data for user
-        
-        Args:
-            user_id: User ID
-            
-        Returns:
-            Dashboard data
-        """
+            return {"success": False, "error": str(e)}
+
+    async def get_user_activity(self, user_id: str, days: int = 7) -> Dict[str, Any]:
+        """Get user's Reddit activity for specified days"""
         try:
-            # Get user info
-            user = await self.get_user(user_id)
+            start_date = datetime.utcnow() - timedelta(days=days)
+            
+            # Get activities for this user only
+            activities = await self.database.reddit_activity.find({
+                "user_id": user_id,
+                "timestamp": {"$gte": start_date}
+            }).sort("timestamp", -1).to_list(None)
+            
+            # Separate by type
+            posts = [a for a in activities if a["activity_type"] == "post"]
+            replies = [a for a in activities if a["activity_type"] == "reply"]
+            
+            # Calculate stats
+            total_karma = sum(a.get("score", 0) for a in activities)
+            successful_posts = len([p for p in posts if p.get("success")])
+            
+            return {
+                "posts": posts,
+                "replies": replies,
+                "total_posts": len(posts),
+                "total_replies": len(replies),
+                "successful_posts": successful_posts,
+                "total_karma": total_karma,
+                "period_days": days,
+                "start_date": start_date.isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Get user activity failed: {e}")
+            return {"error": str(e)}
+
+    async def get_user_analytics(self, user_id: str, period: str = "week") -> Dict[str, Any]:
+        """Get analytics data for specific user"""
+        try:
+            # Calculate date range
+            if period == "week":
+                start_date = datetime.utcnow() - timedelta(days=7)
+            elif period == "month":
+                start_date = datetime.utcnow() - timedelta(days=30)
+            elif period == "year":
+                start_date = datetime.utcnow() - timedelta(days=365)
+            else:
+                start_date = datetime.utcnow() - timedelta(days=7)
+            
+            # Aggregate user activity
+            pipeline = [
+                {
+                    "$match": {
+                        "user_id": user_id,
+                        "timestamp": {"$gte": start_date}
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$activity_type",
+                        "count": {"$sum": 1},
+                        "total_score": {"$sum": "$score"},
+                        "successful": {
+                            "$sum": {"$cond": [{"$eq": ["$success", True]}, 1, 0]}
+                        }
+                    }
+                }
+            ]
+            
+            results = await self.database.reddit_activity.aggregate(pipeline).to_list(None)
+            
+            # Process results
+            analytics = {
+                "posts_count": 0,
+                "replies_count": 0,
+                "total_karma": 0,
+                "successful_posts": 0,
+                "success_rate": 0,
+                "period": period
+            }
+            
+            for result in results:
+                if result["_id"] == "post":
+                    analytics["posts_count"] = result["count"]
+                    analytics["successful_posts"] = result["successful"]
+                    analytics["total_karma"] += result["total_score"]
+                elif result["_id"] == "reply":
+                    analytics["replies_count"] = result["count"]
+                    analytics["total_karma"] += result["total_score"]
+            
+            # Calculate success rate
+            if analytics["posts_count"] > 0:
+                analytics["success_rate"] = round(
+                    (analytics["successful_posts"] / analytics["posts_count"]) * 100, 2
+                )
+            
+            # Get top subreddits for this user
+            top_subreddits = await self.database.reddit_activity.aggregate([
+                {
+                    "$match": {
+                        "user_id": user_id,
+                        "timestamp": {"$gte": start_date},
+                        "subreddit": {"$exists": True, "$ne": ""}
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$subreddit",
+                        "count": {"$sum": 1},
+                        "total_score": {"$sum": "$score"}
+                    }
+                },
+                {"$sort": {"count": -1}},
+                {"$limit": 5}
+            ]).to_list(None)
+            
+            analytics["top_subreddits"] = [
+                {
+                    "subreddit": item["_id"],
+                    "posts": item["count"],
+                    "total_karma": item["total_score"]
+                }
+                for item in top_subreddits
+            ]
+            
+            return analytics
+            
+        except Exception as e:
+            logger.error(f"Get user analytics failed: {e}")
+            return {"error": str(e)}
+
+    async def get_user_dashboard(self, user_id: str) -> Dict[str, Any]:
+        """Get comprehensive dashboard data for specific user"""
+        try:
+            user = await self.get_user_by_id(user_id)
             if not user:
                 return {"error": "User not found"}
             
-            # Get today's activity
-            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            # Get Reddit connection status
+            reddit_status = await self.check_reddit_connection(user_id)
             
-            # Reddit activity today
-            reddit_posts_today = await self.database.reddit_activity.count_documents({
+            # Get today's activity for this user only
+            today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            tomorrow = today + timedelta(days=1)
+            
+            posts_today = await self.database.reddit_activity.count_documents({
                 "user_id": user_id,
                 "activity_type": "post",
-                "timestamp": {"$gte": today},
+                "timestamp": {"$gte": today, "$lt": tomorrow},
                 "success": True
             })
             
-            # Total engagement this week
-            week_ago = datetime.now() - timedelta(days=7)
-            total_engagement = await self.database.reddit_activity.aggregate([
+            # Get weekly engagement for this user
+            week_ago = datetime.utcnow() - timedelta(days=7)
+            engagement_result = await self.database.reddit_activity.aggregate([
                 {
                     "$match": {
                         "user_id": user_id,
@@ -308,190 +775,287 @@ class DatabaseManager:
                 }
             ]).to_list(1)
             
-            engagement = total_engagement[0] if total_engagement else {"total_score": 0, "total_engagement": 0}
+            engagement = engagement_result[0] if engagement_result else {"total_score": 0, "total_engagement": 0}
             
-            # Earnings calculation (placeholder)
-            total_earnings = user.get("total_earnings", 0)
+            # Get automation status
+            auto_posting_enabled = bool(await self.get_automation_config(user_id, "auto_posting"))
+            auto_replies_enabled = bool(await self.get_automation_config(user_id, "auto_replies"))
             
-            dashboard_data = {
-                "posts_today": reddit_posts_today,
+            return {
+                "posts_today": posts_today,
                 "total_engagement": engagement["total_engagement"],
-                "qa_earnings": total_earnings,
+                "total_karma": engagement["total_score"],
+                "qa_earnings": user.get("total_earnings", 0),
                 "active_platforms": len(user.get("platforms_connected", [])),
-                "posts_change": 2,  # Placeholder
-                "engagement_change": 15,  # Placeholder
-                "earnings_change": 50,  # Placeholder
-                "platforms_change": 0
+                "reddit_connected": reddit_status["connected"],
+                "reddit_username": reddit_status.get("reddit_username", ""),
+                "user_name": user.get("name", ""),
+                "user_email": user.get("email", ""),
+                "automation_enabled": auto_posting_enabled or auto_replies_enabled,
+                "auto_posting_enabled": auto_posting_enabled,
+                "auto_replies_enabled": auto_replies_enabled,
+                "member_since": user.get("created_at", datetime.utcnow()).isoformat(),
+                "subscription_tier": user.get("subscription_tier", "free")
             }
-            
-            return dashboard_data
             
         except Exception as e:
             logger.error(f"Get dashboard data failed: {e}")
             return {"error": str(e)}
-    
-    async def log_ai_usage(self, user_id: str, platform: str, content_length: int) -> Dict[str, Any]:
-        """
-        Log AI content generation usage
-        
-        Args:
-            user_id: User ID
-            platform: Platform used
-            content_length: Length of generated content
-            
-        Returns:
-            Logging result
-        """
+
+    async def update_user_profile(self, user_id: str, profile_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update user profile information"""
         try:
-            usage_doc = {
-                "user_id": user_id,
-                "platform": platform,
-                "content_length": content_length,
-                "timestamp": datetime.now(),
-                "tokens_used": content_length // 4,  # Rough estimate
-                "cost": content_length * 0.0001  # Placeholder cost calculation
-            }
+            # Allowed fields to update
+            allowed_fields = ["name", "profile.bio", "profile.website", "profile.location", "preferences"]
             
-            await self.database.ai_content_generation.insert_one(usage_doc)
+            update_doc = {}
             
-            return {
-                "success": True,
-                "message": "AI usage logged successfully"
-            }
+            if "name" in profile_data and len(profile_data["name"].strip()) >= 2:
+                update_doc["name"] = profile_data["name"].strip()
             
-        except Exception as e:
-            logger.error(f"Log AI usage failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to log AI usage"
-            }
-    
-    async def create_scheduled_content(self, user_id: str, schedule_data: Dict[str, Any]) -> str:
-        """
-        Create scheduled content entry
-        
-        Args:
-            user_id: User ID
-            schedule_data: Scheduling information
+            if "bio" in profile_data:
+                update_doc["profile.bio"] = profile_data["bio"][:500]  # Limit bio length
             
-        Returns:
-            Schedule ID
-        """
-        try:
-            schedule_doc = {
-                "user_id": user_id,
-                "platforms": schedule_data["platforms"],
-                "content": schedule_data["content"],
-                "scheduled_time": datetime.fromisoformat(schedule_data["scheduled_time"]),
-                "created_at": datetime.now(),
-                "status": "pending",
-                "results": {}
-            }
+            if "website" in profile_data:
+                update_doc["profile.website"] = profile_data["website"][:200]
             
-            result = await self.database.scheduled_posts.insert_one(schedule_doc)
-            return str(result.inserted_id)
+            if "location" in profile_data:
+                update_doc["profile.location"] = profile_data["location"][:100]
             
-        except Exception as e:
-            logger.error(f"Create scheduled content failed: {e}")
-            raise
-    
-    async def get_platform_performance(self, user_id: str, platform: str, days: int) -> Dict[str, Any]:
-        """
-        Get platform performance metrics
-        
-        Args:
-            user_id: User ID
-            platform: Platform name
-            days: Number of days to analyze
+            if "preferences" in profile_data and isinstance(profile_data["preferences"], dict):
+                for key, value in profile_data["preferences"].items():
+                    if key in ["auto_posting", "auto_replies", "notification_email"]:
+                        update_doc[f"preferences.{key}"] = bool(value)
+                    elif key == "timezone":
+                        update_doc[f"preferences.{key}"] = str(value)[:50]
             
-        Returns:
-            Performance data
-        """
-        try:
-            start_date = datetime.now() - timedelta(days=days)
+            if not update_doc:
+                return {"success": False, "message": "No valid fields to update"}
             
-            collection_name = f"{platform}_activity"
-            if collection_name not in self.collections.values():
-                return {"error": f"Platform {platform} not supported"}
+            update_doc["updated_at"] = datetime.utcnow()
             
-            # Get activity stats
-            pipeline = [
-                {
-                    "$match": {
-                        "user_id": user_id,
-                        "timestamp": {"$gte": start_date}
-                    }
-                },
-                {
-                    "$group": {
-                        "_id": None,
-                        "posts_count": {"$sum": 1},
-                        "total_engagement": {"$sum": "$engagement"},
-                        "avg_score": {"$avg": "$score"},
-                        "success_count": {
-                            "$sum": {"$cond": [{"$eq": ["$success", True]}, 1, 0]}
-                        }
-                    }
-                }
-            ]
+            result = await self.database.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": update_doc}
+            )
             
-            stats = await self.database[collection_name].aggregate(pipeline).to_list(1)
-            
-            if stats:
-                result = stats[0]
-                result["success_rate"] = (result["success_count"] / result["posts_count"] * 100) if result["posts_count"] > 0 else 0
-                del result["_id"]
-                del result["success_count"]
+            if result.modified_count > 0:
+                logger.info(f"Profile updated for user {user_id}")
+                return {"success": True, "message": "Profile updated successfully"}
             else:
-                result = {
-                    "posts_count": 0,
-                    "total_engagement": 0,
-                    "avg_score": 0,
-                    "success_rate": 0
-                }
-            
-            return result
+                return {"success": False, "message": "No changes made"}
             
         except Exception as e:
-            logger.error(f"Get platform performance failed: {e}")
-            return {"error": str(e)}
-    
+            logger.error(f"Update user profile failed: {e}")
+            return {"success": False, "error": str(e)}
+
     async def health_check(self) -> Dict[str, Any]:
-        """
-        Check database connection health
-        
-        Returns:
-            Health status
-        """
+        """Check database health and connection status"""
         try:
             if not self.connected:
-                return {
-                    "success": False,
-                    "status": "disconnected",
-                    "message": "Database not connected"
-                }
+                return {"healthy": False, "error": "Not connected to database"}
             
             # Test database operation
             await self.client.admin.command('ping')
             
-            # Check collections
-            collections = await self.database.list_collection_names()
+            # Get collection stats
+            users_count = await self.database.users.count_documents({"is_active": True})
+            reddit_tokens_count = await self.database.reddit_tokens.count_documents({"is_active": True})
+            active_automations = await self.database.automation_configs.count_documents({"enabled": True})
             
             return {
-                "success": True,
-                "status": "healthy",
-                "connected": self.connected,
-                "database": "socialMedia",
-                "collections_count": len(collections),
-                "message": "Database health check passed"
+                "healthy": True,
+                "connected": True,
+                "database_name": "socialMedia",
+                "collections": {
+                    "users": users_count,
+                    "reddit_tokens": reddit_tokens_count,
+                    "active_automations": active_automations
+                },
+                "multi_user_features": {
+                    "authentication": True,
+                    "per_user_reddit_tokens": True,
+                    "per_user_automation": True,
+                    "activity_tracking": True,
+                    "analytics": True
+                },
+                "timestamp": datetime.utcnow().isoformat()
             }
             
         except Exception as e:
             logger.error(f"Database health check failed: {e}")
-            return {
-                "success": False,
-                "status": "unhealthy",
-                "error": str(e),
-                "message": "Database health check failed"
+            return {"healthy": False, "error": str(e)}
+
+    # AI Usage Tracking
+    async def log_ai_usage(self, user_id: str, ai_service: str, usage_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Log AI usage for billing and analytics"""
+        try:
+            usage_doc = {
+                "user_id": user_id,
+                "ai_service": ai_service,  # 'mistral', 'groq', etc.
+                "timestamp": datetime.utcnow(),
+                "usage_type": usage_data.get("usage_type", "content_generation"),
+                "tokens_used": usage_data.get("tokens_used", 0),
+                "cost": usage_data.get("cost", 0.0),
+                "success": usage_data.get("success", True),
+                "domain": usage_data.get("domain"),
+                "content_length": usage_data.get("content_length", 0)
             }
+            
+            await self.database.ai_usage.insert_one(usage_doc)
+            
+            return {"success": True, "message": "AI usage logged"}
+            
+        except Exception as e:
+            logger.error(f"Log AI usage failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    # Platform Analytics
+    async def get_platform_analytics(self) -> Dict[str, Any]:
+        """Get overall platform analytics (admin use)"""
+        try:
+            # Total users
+            total_users = await self.database.users.count_documents({"is_active": True})
+            
+            # Users with Reddit connected
+            reddit_connected = await self.database.reddit_tokens.count_documents({"is_active": True})
+            
+            # Active automations
+            active_automations = await self.database.automation_configs.count_documents({"enabled": True})
+            
+            # Recent activity (last 7 days)
+            week_ago = datetime.utcnow() - timedelta(days=7)
+            recent_activity = await self.database.reddit_activity.count_documents({
+                "timestamp": {"$gte": week_ago}
+            })
+            
+            # Top performing users (by posts)
+            top_users = await self.database.reddit_activity.aggregate([
+                {
+                    "$match": {
+                        "activity_type": "post",
+                        "success": True,
+                        "timestamp": {"$gte": week_ago}
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$user_id",
+                        "posts_count": {"$sum": 1},
+                        "total_karma": {"$sum": "$score"}
+                    }
+                },
+                {"$sort": {"posts_count": -1}},
+                {"$limit": 10}
+            ]).to_list(None)
+            
+            return {
+                "platform_stats": {
+                    "total_users": total_users,
+                    "reddit_connected_users": reddit_connected,
+                    "connection_rate": round((reddit_connected / total_users * 100), 2) if total_users > 0 else 0,
+                    "active_automations": active_automations,
+                    "recent_activity_count": recent_activity
+                },
+                "top_users": top_users,
+                "generated_at": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Get platform analytics failed: {e}")
+            return {"error": str(e)}
+
+    # Utility Methods
+    async def cleanup_expired_tokens(self) -> Dict[str, Any]:
+        """Clean up expired Reddit tokens (maintenance task)"""
+        try:
+            current_time = datetime.utcnow()
+            
+            # Mark expired tokens as inactive
+            result = await self.database.reddit_tokens.update_many(
+                {
+                    "expires_at": {"$lte": current_time},
+                    "is_active": True
+                },
+                {
+                    "$set": {
+                        "is_active": False,
+                        "expired_at": current_time
+                    }
+                }
+            )
+            
+            logger.info(f"Cleaned up {result.modified_count} expired Reddit tokens")
+            
+            return {
+                "success": True,
+                "expired_tokens_cleaned": result.modified_count,
+                "cleanup_time": current_time.isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Token cleanup failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_user_stats(self, user_id: str) -> Dict[str, Any]:
+        """Get comprehensive user statistics"""
+        try:
+            # Basic user info
+            user = await self.get_user_by_id(user_id)
+            if not user:
+                return {"error": "User not found"}
+            
+            # Reddit connection info
+            reddit_status = await self.check_reddit_connection(user_id)
+            
+            # Activity stats
+            total_posts = await self.database.reddit_activity.count_documents({
+                "user_id": user_id,
+                "activity_type": "post"
+            })
+            
+            successful_posts = await self.database.reddit_activity.count_documents({
+                "user_id": user_id,
+                "activity_type": "post",
+                "success": True
+            })
+            
+            # Karma calculation
+            karma_result = await self.database.reddit_activity.aggregate([
+                {"$match": {"user_id": user_id}},
+                {"$group": {"_id": None, "total_karma": {"$sum": "$score"}}}
+            ]).to_list(1)
+            
+            total_karma = karma_result[0]["total_karma"] if karma_result else 0
+            
+            # Automation status
+            auto_configs = await self.database.automation_configs.find({
+                "user_id": user_id,
+                "enabled": True
+            }).to_list(None)
+            
+            return {
+                "user_info": {
+                    "id": user_id,
+                    "name": user["name"],
+                    "email": user["email"],
+                    "member_since": user["created_at"].isoformat(),
+                    "subscription_tier": user.get("subscription_tier", "free")
+                },
+                "reddit_connection": reddit_status,
+                "activity_stats": {
+                    "total_posts": total_posts,
+                    "successful_posts": successful_posts,
+                    "success_rate": round((successful_posts / total_posts * 100), 2) if total_posts > 0 else 0,
+                    "total_karma": total_karma
+                },
+                "automation": {
+                    "active_configs": len(auto_configs),
+                    "config_types": [config["config_type"] for config in auto_configs]
+                },
+                "generated_at": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Get user stats failed: {e}")
+            return {"error": str(e)}

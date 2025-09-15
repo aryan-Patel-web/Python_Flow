@@ -32,7 +32,7 @@ const initializeApp = () => {
       </StrictMode>
     );
     
-    console.log('🚀 Social Media Platform initialized successfully');
+    console.log('🚀 Multi-User Reddit Automation Platform initialized successfully');
     
   } catch (error) {
     console.error('Failed to initialize app:', error);
@@ -62,13 +62,13 @@ const initializeApp = () => {
           ">
             <h1 style="margin-bottom: 20px;">Application Error</h1>
             <p style="margin-bottom: 20px;">
-              Sorry, there was an error loading the application.
+              Sorry, there was an error loading the Reddit Automation Platform.
             </p>
             <p style="font-size: 14px; opacity: 0.8; margin-bottom: 20px;">
               ${error.message}
             </p>
             <button 
-              onclick="window.location.reload()" 
+              onclick="window.location.reload()"
               style="
                 background: white;
                 color: #333;
@@ -81,6 +81,9 @@ const initializeApp = () => {
             >
               Reload Page
             </button>
+            <div style="margin-top: 20px; font-size: 12px; opacity: 0.7;">
+              If the problem persists, please contact support.
+            </div>
           </div>
         </div>
       `;
