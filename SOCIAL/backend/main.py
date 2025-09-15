@@ -702,11 +702,9 @@ async def reddit_oauth_authorize(session_id: str = Query(None)):
 
 
 
-
-
 @app.get("/api/oauth/reddit/callback")
 async def reddit_oauth_callback(code: str, state: str):
-    """Handle Reddit OAuth callback - Fixed for Actual_Pain3385"""
+    """Handle Reddit OAuth callback - FIXED for real Reddit API"""
     try:
         logger.info(f"OAuth callback received: code={code[:10]}..., state={state}")
         
@@ -715,7 +713,7 @@ async def reddit_oauth_callback(code: str, state: str):
         if not session_id:
             logger.error(f"Invalid OAuth state: {state}")
             return RedirectResponse(
-                url="http://localhost:5173/reddit-auto?error=invalid_oauth_state",
+                url="https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=invalid_oauth_state",
                 status_code=302
             )
         
@@ -723,50 +721,110 @@ async def reddit_oauth_callback(code: str, state: str):
         if not user_id:
             logger.error(f"Invalid session: {session_id}")
             return RedirectResponse(
-                url="http://localhost:5173/reddit-auto?error=invalid_session", 
+                url="https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=invalid_session", 
                 status_code=302
             )
         
         logger.info(f"Processing OAuth for user_id: {user_id}, session: {session_id}")
         
-        # Exchange code for token
-        if hasattr(reddit_oauth_connector, 'exchange_code_for_token') and not isinstance(reddit_oauth_connector, MockRedditConnector):
-            logger.info("Using REAL Reddit OAuth connector")
-            token_result = await reddit_oauth_connector.exchange_code_for_token(code)
+        # MANUAL TOKEN EXCHANGE using environment variables directly
+        reddit_client_id = os.getenv("REDDIT_CLIENT_ID")
+        reddit_client_secret = os.getenv("REDDIT_CLIENT_SECRET")
+        reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI")
+        
+        if not reddit_client_id or not reddit_client_secret:
+            logger.error("Reddit credentials missing from environment")
+            return RedirectResponse(
+                url="https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=missing_credentials",
+                status_code=302
+            )
+        
+        # Manual token exchange using requests
+        import requests
+        import base64
+        
+        # Prepare token exchange request
+        auth_string = f"{reddit_client_id}:{reddit_client_secret}"
+        auth_bytes = auth_string.encode('ascii')
+        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+        
+        headers = {
+            'Authorization': f'Basic {auth_b64}',
+            'User-Agent': 'RedditAutomationPlatform/1.0 by Actual_Pain3385'
+        }
+        
+        data = {
+            'grant_type': 'authorization_code',
+            'code': code,
+            'redirect_uri': reddit_redirect_uri
+        }
+        
+        logger.info("Exchanging code for access token...")
+        
+        # Make token request to Reddit
+        response = requests.post(
+            'https://www.reddit.com/api/v1/access_token',
+            headers=headers,
+            data=data
+        )
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            access_token = token_data.get('access_token')
             
-            if token_result.get("success"):
-                username = token_result["user_info"]["username"]
-                logger.info(f"REAL Reddit OAuth successful for user: {username}")
-                
-                # Store tokens with proper user_id
-                user_reddit_tokens[user_id] = {
-                    "access_token": token_result["access_token"],
-                    "refresh_token": token_result.get("refresh_token", ""),
-                    "expires_in": token_result["expires_in"],
-                    "reddit_username": username,
-                    "connected_at": datetime.now().isoformat(),
-                    "user_info": token_result["user_info"]
+            if access_token:
+                # Get user info
+                user_headers = {
+                    'Authorization': f'Bearer {access_token}',
+                    'User-Agent': 'RedditAutomationPlatform/1.0 by Actual_Pain3385'
                 }
                 
-                # Clean up OAuth state
-                oauth_states.pop(state, None)
-                
-                logger.info(f"Reddit OAuth successful for user: {username} (user_id: {user_id})")
-                
-                return RedirectResponse(
-                    url=f"http://localhost:5173/reddit-auto?reddit_connected=true&username={username}&session_id={session_id}&real_connection=true",
-                    status_code=302
+                user_response = requests.get(
+                    'https://oauth.reddit.com/api/v1/me',
+                    headers=user_headers
                 )
+                
+                if user_response.status_code == 200:
+                    user_info = user_response.json()
+                    username = user_info.get('name', 'Unknown')
+                    
+                    logger.info(f"REAL Reddit OAuth successful for user: {username}")
+                    
+                    # Store tokens with proper user_id
+                    user_reddit_tokens[user_id] = {
+                        "access_token": access_token,
+                        "refresh_token": token_data.get("refresh_token", ""),
+                        "expires_in": token_data.get("expires_in", 3600),
+                        "reddit_username": username,
+                        "connected_at": datetime.now().isoformat(),
+                        "user_info": user_info
+                    }
+                    
+                    # Clean up OAuth state
+                    oauth_states.pop(state, None)
+                    
+                    logger.info(f"Reddit OAuth successful for user: {username} (user_id: {user_id})")
+                    
+                    return RedirectResponse(
+                        url=f"https://frontend-agentic-bnc2.onrender.com/reddit-auto?reddit_connected=true&username={username}&session_id={session_id}&real_connection=true",
+                        status_code=302
+                    )
+                else:
+                    logger.error(f"Failed to get user info: {user_response.status_code}")
+                    return RedirectResponse(
+                        url="https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=user_info_failed",
+                        status_code=302
+                    )
             else:
-                logger.error(f"Token exchange failed: {token_result.get('error')}")
+                logger.error("No access token in response")
                 return RedirectResponse(
-                    url=f"http://localhost:5173/reddit-auto?error=token_exchange_failed&message={token_result.get('error')}",
+                    url="https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=no_access_token",
                     status_code=302
                 )
         else:
-            logger.warning("Using MockRedditConnector or real connector failed")
+            logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
             return RedirectResponse(
-                url="http://localhost:5173/reddit-auto?error=reddit_not_configured&message=Configure REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET",
+                url=f"https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=token_exchange_failed&status={response.status_code}",
                 status_code=302
             )
         
@@ -774,14 +832,16 @@ async def reddit_oauth_callback(code: str, state: str):
         logger.error(f"Reddit OAuth callback failed: {e}")
         logger.error(traceback.format_exc())
         return RedirectResponse(
-            url=f"http://localhost:5173/reddit-auto?error=oauth_failed&message={str(e)}", 
+            url=f"https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=oauth_failed&message={str(e)}", 
             status_code=302
         )
+                 
+                 
+                 
 
 
-                 
-                 
-                 
+
+
 
 
 
