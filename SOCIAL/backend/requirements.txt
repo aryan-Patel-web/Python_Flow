@@ -37,3 +37,7 @@ python-dateutil==2.8.2
 
 # Development & Debugging (Optional)
 rich==13.7.0
+
+
+pydantic-core==2.10.1 --only-binary :all:
+
