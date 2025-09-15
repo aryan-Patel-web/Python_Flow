@@ -24,6 +24,7 @@ import traceback
 import uuid
 import os
 
+
 # CRITICAL: Load environment variables FIRST
 from dotenv import load_dotenv
 load_dotenv()  # This must be called before importing other modules
@@ -490,13 +491,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173", 
-        "https://frontend-agentic-bnc2.onrender.com"  # Add your frontend URL
-    ],
+    allow_origins=["*"],  # Allow all origins for now
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -701,10 +698,9 @@ async def reddit_oauth_authorize(session_id: str = Query(None)):
 
 
 
-
 @app.get("/api/oauth/reddit/callback")
 async def reddit_oauth_callback(code: str, state: str):
-    """Handle Reddit OAuth callback - FIXED for real Reddit API"""
+    """Handle Reddit OAuth callback - FIXED REDIRECTS"""
     try:
         logger.info(f"OAuth callback received: code={code[:10]}..., state={state}")
         
@@ -805,6 +801,7 @@ async def reddit_oauth_callback(code: str, state: str):
                     
                     logger.info(f"Reddit OAuth successful for user: {username} (user_id: {user_id})")
                     
+                    # FIXED: Redirect to /reddit-auto page
                     return RedirectResponse(
                         url=f"https://frontend-agentic-bnc2.onrender.com/reddit-auto?reddit_connected=true&username={username}&session_id={session_id}&real_connection=true",
                         status_code=302
@@ -834,8 +831,7 @@ async def reddit_oauth_callback(code: str, state: str):
         return RedirectResponse(
             url=f"https://frontend-agentic-bnc2.onrender.com/reddit-auto?error=oauth_failed&message={str(e)}", 
             status_code=302
-        )
-                 
+        )      
                  
                  
 
