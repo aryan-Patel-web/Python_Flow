@@ -645,10 +645,16 @@ async def get_session_info(session_id: str = Header(None, alias="x-session-id"))
         logger.error(f"Get session info failed: {e}")
         return {"success": False, "error": str(e)}
 
+
+
+
+
+
+
 # Reddit OAuth endpoints
 @app.get("/api/oauth/reddit/authorize")
 async def reddit_oauth_authorize(session_id: str = Query(None)):
-    """Start Reddit OAuth flow"""
+    """Start Reddit OAuth flow - FIXED VERSION"""
     try:
         # Create session if not provided
         if not session_id:
@@ -661,30 +667,37 @@ async def reddit_oauth_authorize(session_id: str = Query(None)):
         
         logger.info(f"Starting OAuth for session {session_id} with state {state}")
         
-        if hasattr(reddit_oauth_connector, 'generate_oauth_url') and not isinstance(reddit_oauth_connector, MockRedditConnector):
-            oauth_result = reddit_oauth_connector.generate_oauth_url(state)
-            if oauth_result.get("success"):
-                logger.info("Real Reddit OAuth URL generated")
-                return {
-                    "success": True,
-                    "redirect_url": oauth_result["authorization_url"],
-                    "state": state,
-                    "session_id": session_id
-                }
+        # Check if we have real Reddit credentials
+        reddit_client_id = os.getenv("REDDIT_CLIENT_ID")
+        reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI") or "https://agentic-u5lx.onrender.com/api/oauth/reddit/callback"
         
-        # Fallback for mock
-        oauth_states[state] = session_id
-        logger.warning("Using mock Reddit OAuth URL")
+        if not reddit_client_id or reddit_client_id == "mock":
+            logger.error("REDDIT_CLIENT_ID not found or is 'mock'")
+            return {
+                "success": False,
+                "error": "Reddit credentials not configured",
+                "message": "Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in environment variables"
+            }
+        
+        # Generate REAL Reddit OAuth URL using environment variables
+        real_oauth_url = f"https://www.reddit.com/api/v1/authorize?client_id={reddit_client_id}&response_type=code&state={state}&redirect_uri={reddit_redirect_uri}&duration=permanent&scope=submit,edit,read"
+        
+        logger.info(f"Generated REAL OAuth URL with client_id: {reddit_client_id[:8]}...")
+        
         return {
             "success": True,
-            "redirect_url": f"https://www.reddit.com/api/v1/authorize?client_id=mock&response_type=code&state={state}&redirect_uri=http://localhost:8000/api/oauth/reddit/callback&duration=permanent&scope=submit,edit,read",
+            "redirect_url": real_oauth_url,
             "state": state,
             "session_id": session_id,
-            "message": "Mock OAuth URL - Configure real Reddit API credentials"
+            "real_oauth": True
         }
+        
     except Exception as e:
         logger.error(f"Reddit OAuth authorize failed: {e}")
         return {"success": False, "error": str(e)}
+
+
+
 
 
 
