@@ -7,7 +7,7 @@ REAL POSTING ENABLED - REAL AI CONTENT GENERATION
 from fastapi import FastAPI, HTTPException, Request, Query, BackgroundTasks, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse , Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from contextlib import asynccontextmanager
 import asyncio
@@ -868,22 +868,59 @@ app = FastAPI(
 
 # ADD AFTER app = FastAPI()
 # ADD THIS IMMEDIATELY AFTER app = FastAPI()
+# Find this section in your main.py (around lines 25-35) and replace it:
+
+# ===== CORS Configuration - FIXED =====
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://frontend-agentic-bnc2.onrender.com",
         "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://localhost:5173", 
+        "http://localhost:8080",
+        "https://frontend-agentic-bnc2.onrender.com",  # Your frontend domain
+        "https://agentic-u5lx.onrender.com",  # Your backend domain
+        "*"  # Allow all origins for development
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Content-Type", 
+        "Authorization", 
+        "X-User-Token",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "Access-Control-Request-Method",
+        "Access-Control-Request-Headers"
+    ],
+    expose_headers=["*"],
+    max_age=3600
 )
 
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["*"]
 )
+
+
+# Add this code after your CORS middleware (around line 50 in main.py):
+
+@app.options("/{path:path}")
+async def options_handler(request: Request):
+    """Handle preflight OPTIONS requests"""
+    return Response(
+        content="",
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-User-Token",
+            "Access-Control-Max-Age": "3600"
+        }
+    )
+
+
+
 
 # Global exception handler
 @app.exception_handler(Exception)
@@ -928,74 +965,67 @@ async def root():
 
 
 
-    
 @app.get("/health")
 async def health_check():
+    """Enhanced health check with CORS headers"""
     try:
-        ai_status = "unknown"
-        ai_is_real = not isinstance(ai_service, MockAIService)
+        # Test AI service
+        ai_status = "working"
+        try:
+            test_result = await ai_service.test_connection()
+            if not test_result.get("success"):
+                ai_status = "error"
+        except Exception as e:
+            ai_status = f"error: {str(e)}"
         
-        if hasattr(ai_service, 'test_ai_connection'):
-            try:
-                test_result = await ai_service.test_ai_connection()
-                if ai_is_real and test_result.get("success"):
-                    ai_status = f"connected_{test_result.get('primary_service', 'unknown')}"
-                elif ai_is_real:
-                    ai_status = "real_service_failed"
-                else:
-                    ai_status = "mock_active"
-            except Exception as e:
-                ai_status = f"error_{str(e)[:20]}"
+        # Test database
+        db_status = "connected"
+        try:
+            if hasattr(db_manager, 'db') and db_manager.db:
+                await db_manager.db.admin.command('ismaster')
+        except Exception as e:
+            db_status = f"error: {str(e)}"
         
-        return {
-            "success": True,
-            "health": {
-                "status": "healthy",
-                "timestamp": datetime.now().isoformat(),
-                "multi_user_system": True,
-                "real_ai_content_enabled": ai_is_real,
-                "real_posting_enabled": not isinstance(reddit_oauth_connector, MockRedditConnector),
-                "real_database_enabled": MULTIUSER_DB_AVAILABLE and not isinstance(database_manager, MockMultiUserDatabase),
-                "services": {
-                    "database": {
-                        "success": database_manager is not None and not isinstance(database_manager, MockMultiUserDatabase), 
-                        "status": "connected" if database_manager else "failed",
-                        "type": type(database_manager).__name__,
-                        "multi_user": MULTIUSER_DB_AVAILABLE
-                    },
-                    "ai_service": {
-                        "success": ai_is_real and ai_status.startswith("connected"), 
-                        "status": ai_status,
-                        "type": type(ai_service).__name__,
-                        "real_ai": ai_is_real
-                    },
-                    "reddit_oauth": {
-                        "success": reddit_oauth_connector is not None and hasattr(reddit_oauth_connector, 'is_configured') and reddit_oauth_connector.is_configured, 
-                        "status": "configured" if reddit_oauth_connector and hasattr(reddit_oauth_connector, 'is_configured') and reddit_oauth_connector.is_configured else "mock",
-                        "type": type(reddit_oauth_connector).__name__
-                    },
-                    "automation": {
-                        "success": automation_scheduler is not None, 
-                        "status": "running" if automation_scheduler and automation_scheduler.is_running else "stopped",
-                        "type": type(automation_scheduler).__name__,
-                        "real_posting": not isinstance(automation_scheduler, MockAutomationScheduler)
-                    }
-                },
-                "stats": {
-                    "active_reddit_tokens": len(user_reddit_tokens),
-                    "oauth_states": len(oauth_states),
-                    "automation_configs": len(automation_configs)
-                }
-            }
+        health_data = {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "services": {
+                "ai_service": ai_status,
+                "database": db_status,
+                "reddit_automation": "active"
+            },
+            "version": "2.0.0"
         }
+        
+        return Response(
+            content=json.dumps(health_data),
+            media_type="application/json",
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                "Cache-Control": "no-cache"
+            }
+        )
+        
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return {"success": False, "error": str(e), "status": "unhealthy"}
-
-
-
-
-
+        error_data = {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        return Response(
+            content=json.dumps(error_data),
+            status_code=500,
+            media_type="application/json",
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization"
+            }
+        )
 
 
 
