@@ -627,6 +627,9 @@ class MockAutomationScheduler:
 
 
 
+
+
+
 # Application lifespan management with multi-user support
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -719,7 +722,7 @@ async def lifespan(app: FastAPI):
         print(f"Reddit Client ID found: {bool(reddit_client_id)}")
         print(f"Reddit Client Secret found: {bool(reddit_client_secret)}")
         
-        if RedditOAuthConnector and reddit_client_id and reddit_client_secret:
+        if reddit_client_id and reddit_client_secret:
             config = {
                 'REDDIT_CLIENT_ID': reddit_client_id,
                 'REDDIT_CLIENT_SECRET': reddit_client_secret,
@@ -728,7 +731,7 @@ async def lifespan(app: FastAPI):
                 'TOKEN_ENCRYPTION_KEY': os.getenv('TOKEN_ENCRYPTION_KEY', 'default_key_change_in_production')
             }
             
-            # Create a simple Reddit OAuth connector since the import is failing
+            # Create a simple Reddit OAuth connector
             class SimpleRedditOAuth:
                 def __init__(self, config):
                     self.config = config
@@ -780,7 +783,7 @@ async def lifespan(app: FastAPI):
             logger.info("Simple Reddit OAuth connector initialized successfully")
             print("Reddit OAuth: Simple Implementation Configured")
         else:
-            raise ImportError("Reddit credentials missing or RedditOAuthConnector not available")
+            raise ImportError("Reddit credentials missing")
     except Exception as e:
         logger.warning(f"Reddit OAuth initialization failed: {e}")
         reddit_oauth_connector = MockRedditConnector()
@@ -847,8 +850,6 @@ async def lifespan(app: FastAPI):
             await database_manager.disconnect()
         except Exception as e:
             logger.warning(f"Database disconnect failed: {e}")
-
-
 
 
 
