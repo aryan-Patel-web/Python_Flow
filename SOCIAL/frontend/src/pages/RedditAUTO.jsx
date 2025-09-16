@@ -143,10 +143,25 @@ const RedditAutomation = () => {
 
 
 // Initialize app state - Clear any cached mock data
+// Initialize app state - Clear any cached mock data
 useEffect(() => {
   const initApp = async () => {
+    // FIXED: Prevent infinite loop - only run for valid users
+    if (!user?.email || user.email.includes('mock')) {
+      return;
+    }
+
+    // FIXED: Add initialization guard to prevent multiple runs
+    const initKey = `reddit_init_${user.email}`;
+    if (localStorage.getItem(initKey)) {
+      return;
+    }
+
     try {
       console.log('🚀 Initializing Reddit Auto component for real user:', user?.email);
+      
+      // Mark as initialized to prevent re-runs
+      localStorage.setItem(initKey, 'true');
       
       // Clear any mock data from localStorage
       const keys = Object.keys(localStorage);
@@ -176,50 +191,40 @@ useEffect(() => {
         return;
       }
 
-
-
-
-
-
-if (redditConnectedParam === 'true' && usernameParam) {
-  console.log('✅ Real Reddit OAuth success:', { username: usernameParam });
-  
-  setRedditUsername(usernameParam);
-  setRedditConnected(true);
-  
-  // Update user context with real data
-  updateUser({
-    reddit_connected: true,
-    reddit_username: usernameParam
-  });
-  
-  showNotification(`Reddit connected! Welcome u/${usernameParam}!`, 'success');
-  window.history.replaceState({}, '', window.location.pathname);
-  
-  // Don't return here - continue to verify connection
-  // return;  // REMOVE THIS LINE
-}
-
-      // Check existing Reddit connection (real data only)
-      try {
-        const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
-        const result = await response.json();
+      if (redditConnectedParam === 'true' && usernameParam) {
+        console.log('✅ Real Reddit OAuth success:', { username: usernameParam });
         
-        if (result.success && result.connected && result.reddit_username) {
-          setRedditConnected(true);
-          setRedditUsername(result.reddit_username);
-          updateUser({
-            reddit_connected: true,
-            reddit_username: result.reddit_username
-          });
-          console.log('✅ Existing Reddit connection verified:', result.reddit_username);
-        } else {
-          console.log('No existing Reddit connection found');
-          setRedditConnected(false);
-          setRedditUsername('');
+        setRedditUsername(usernameParam);
+        setRedditConnected(true);
+        
+        // Update user context with real data
+        updateUser({
+          reddit_connected: true,
+          reddit_username: usernameParam
+        });
+        
+        showNotification(`Reddit connected! Welcome u/${usernameParam}!`, 'success');
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+
+      // Check existing Reddit connection (real data only) - ONLY if not already connected
+      if (!redditConnected && !user?.reddit_connected) {
+        try {
+          const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
+          const result = await response.json();
+          
+          if (result.success && result.connected && result.reddit_username) {
+            setRedditConnected(true);
+            setRedditUsername(result.reddit_username);
+            updateUser({
+              reddit_connected: true,
+              reddit_username: result.reddit_username
+            });
+            console.log('✅ Existing Reddit connection verified:', result.reddit_username);
+          }
+        } catch (error) {
+          console.error('Failed to check Reddit connection:', error);
         }
-      } catch (error) {
-        console.error('Failed to check Reddit connection:', error);
       }
 
       // Load saved profile (clear if contains mock data)
@@ -257,10 +262,11 @@ if (redditConnectedParam === 'true' && usernameParam) {
     }
   };
 
-  if (user && user.email && !user.email.includes('mock')) {
+  // Only run once when user email changes
+  if (user?.email && !user.email.includes('mock')) {
     initApp();
   }
-}, [user, makeAuthenticatedRequest, updateUser, showNotification]);
+}, [user?.email]); // FIXED: Only depend on user email
 
 
 

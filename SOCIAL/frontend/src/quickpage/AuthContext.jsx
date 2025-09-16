@@ -28,7 +28,11 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        const savedToken = localStorage.getItem('auth_token');
+        // Check multiple possible token storage keys
+        const savedToken = localStorage.getItem('auth_token') || 
+                           localStorage.getItem('token') || 
+                           localStorage.getItem('authToken');
+        
         if (savedToken) {
           setToken(savedToken);
           
@@ -45,20 +49,32 @@ export const AuthProvider = ({ children }) => {
             if (data.success) {
               setUser(data.user);
               setIsAuthenticated(true);
+              console.log('✅ User authenticated:', data.user.email);
             } else {
-              // Invalid token, clear it
+              // Invalid token, clear all possible tokens
               localStorage.removeItem('auth_token');
+              localStorage.removeItem('token');
+              localStorage.removeItem('authToken');
               setToken(null);
+              console.log('❌ Invalid token, cleared from storage');
             }
           } else {
             // Token expired or invalid
             localStorage.removeItem('auth_token');
+            localStorage.removeItem('token');
+            localStorage.removeItem('authToken');
             setToken(null);
+            console.log('❌ Token expired, cleared from storage');
           }
+        } else {
+          console.log('ℹ️ No auth token found in storage');
         }
       } catch (error) {
         console.error('Auth initialization failed:', error);
+        // Clear all possible tokens on error
         localStorage.removeItem('auth_token');
+        localStorage.removeItem('token');
+        localStorage.removeItem('authToken');
         setToken(null);
       } finally {
         setLoading(false);
