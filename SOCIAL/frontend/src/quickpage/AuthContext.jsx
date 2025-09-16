@@ -157,24 +157,26 @@ export const AuthProvider = ({ children }) => {
     setUser(prev => ({ ...prev, ...userData }));
   };
 
-  // Helper function to make authenticated API requests
+  // FIXED: Helper function to make authenticated API requests
   const makeAuthenticatedRequest = async (endpoint, options = {}) => {
     if (!token) {
       throw new Error('No authentication token');
     }
 
-    const defaultOptions = {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        ...options.headers
-      }
+    // FIXED: Properly merge headers - this was the bug!
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})  // Merge any additional headers
     };
 
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    // FIXED: Properly merge options
+    const requestOptions = {
       ...options,
-      ...defaultOptions
-    });
+      headers  // Use the properly merged headers
+    };
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, requestOptions);
 
     if (response.status === 401) {
       // Token expired, logout user
