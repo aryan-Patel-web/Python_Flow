@@ -2343,7 +2343,7 @@ async def get_system_info():
     }
 
 # Application startup
-PORT = int(os.getenv("PORT", 8000))
+PORT = int(os.getenv("PORT", 10000))
 if __name__ == "__main__":
     print("Starting Multi-User Reddit Automation Platform...")
     uvicorn.run(
