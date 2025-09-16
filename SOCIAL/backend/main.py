@@ -622,6 +622,11 @@ class MockAutomationScheduler:
             "last_updated": datetime.now().isoformat()
         }
 
+
+
+
+
+
 # Application lifespan management with multi-user support
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -706,91 +711,80 @@ async def lifespan(app: FastAPI):
         ai_service = MockAIService()
         print("AI Service: MOCK MODE - Configure API keys")
     
-
-
-
-
-
     # Initialize Reddit OAuth Connector
-# Initialize Reddit OAuth Connector
-try:
-    reddit_client_id = os.getenv('REDDIT_CLIENT_ID')
-    reddit_client_secret = os.getenv('REDDIT_CLIENT_SECRET')
-    
-    print(f"Reddit Client ID found: {bool(reddit_client_id)}")
-    print(f"Reddit Client Secret found: {bool(reddit_client_secret)}")
-    
-    if RedditOAuthConnector and reddit_client_id and reddit_client_secret:
-        config = {
-            'REDDIT_CLIENT_ID': reddit_client_id,
-            'REDDIT_CLIENT_SECRET': reddit_client_secret,
-            'REDDIT_REDIRECT_URI': os.getenv('REDDIT_REDIRECT_URI', 'https://agentic-u5lx.onrender.com/api/oauth/reddit/callback'),
-            'REDDIT_USER_AGENT': os.getenv('REDDIT_USER_AGENT', 'IndianAutomationPlatform/1.0'),
-            'TOKEN_ENCRYPTION_KEY': os.getenv('TOKEN_ENCRYPTION_KEY', 'default_key_change_in_production')
-        }
+    try:
+        reddit_client_id = os.getenv('REDDIT_CLIENT_ID')
+        reddit_client_secret = os.getenv('REDDIT_CLIENT_SECRET')
         
-        # Create a simple Reddit OAuth connector since the import is failing
-        class SimpleRedditOAuth:
-            def __init__(self, config):
-                self.config = config
-                self.is_configured = True
+        print(f"Reddit Client ID found: {bool(reddit_client_id)}")
+        print(f"Reddit Client Secret found: {bool(reddit_client_secret)}")
+        
+        if RedditOAuthConnector and reddit_client_id and reddit_client_secret:
+            config = {
+                'REDDIT_CLIENT_ID': reddit_client_id,
+                'REDDIT_CLIENT_SECRET': reddit_client_secret,
+                'REDDIT_REDIRECT_URI': os.getenv('REDDIT_REDIRECT_URI', 'https://agentic-u5lx.onrender.com/api/oauth/reddit/callback'),
+                'REDDIT_USER_AGENT': os.getenv('REDDIT_USER_AGENT', 'IndianAutomationPlatform/1.0'),
+                'TOKEN_ENCRYPTION_KEY': os.getenv('TOKEN_ENCRYPTION_KEY', 'default_key_change_in_production')
+            }
             
-            async def post_content_with_token(self, **kwargs):
-                # Simple Reddit API posting implementation
-                access_token = kwargs.get('access_token')
-                headers = {
-                    'Authorization': f'Bearer {access_token}',
-                    'User-Agent': self.config['REDDIT_USER_AGENT']
-                }
+            # Create a simple Reddit OAuth connector since the import is failing
+            class SimpleRedditOAuth:
+                def __init__(self, config):
+                    self.config = config
+                    self.is_configured = True
                 
-                data = {
-                    'kind': 'self',
-                    'title': kwargs.get('title'),
-                    'text': kwargs.get('content'),
-                    'sr': kwargs.get('subreddit_name')
-                }
-                
-                try:
-                    import requests
-                    response = requests.post(
-                        'https://oauth.reddit.com/api/submit',
-                        headers=headers,
-                        data=data,
-                        timeout=30
-                    )
+                async def post_content_with_token(self, **kwargs):
+                    # Simple Reddit API posting implementation
+                    access_token = kwargs.get('access_token')
+                    headers = {
+                        'Authorization': f'Bearer {access_token}',
+                        'User-Agent': self.config['REDDIT_USER_AGENT']
+                    }
                     
-                    if response.status_code == 200:
-                        return {
-                            "success": True,
-                            "post_id": "reddit_post_id",
-                            "post_url": f"https://reddit.com/r/{kwargs.get('subreddit_name')}/comments/post_id"
-                        }
-                    else:
+                    data = {
+                        'kind': 'self',
+                        'title': kwargs.get('title'),
+                        'text': kwargs.get('content'),
+                        'sr': kwargs.get('subreddit_name')
+                    }
+                    
+                    try:
+                        import requests
+                        response = requests.post(
+                            'https://oauth.reddit.com/api/submit',
+                            headers=headers,
+                            data=data,
+                            timeout=30
+                        )
+                        
+                        if response.status_code == 200:
+                            return {
+                                "success": True,
+                                "post_id": "reddit_post_id",
+                                "post_url": f"https://reddit.com/r/{kwargs.get('subreddit_name')}/comments/post_id"
+                            }
+                        else:
+                            return {
+                                "success": False,
+                                "error": f"Reddit API error: {response.status_code}",
+                                "message": response.text[:200]
+                            }
+                    except Exception as e:
                         return {
                             "success": False,
-                            "error": f"Reddit API error: {response.status_code}",
-                            "message": response.text[:200]
+                            "error": f"Reddit posting failed: {str(e)}"
                         }
-                except Exception as e:
-                    return {
-                        "success": False,
-                        "error": f"Reddit posting failed: {str(e)}"
-                    }
-        
-        reddit_oauth_connector = SimpleRedditOAuth(config)
-        logger.info("Simple Reddit OAuth connector initialized successfully")
-        print("Reddit OAuth: Simple Implementation Configured")
-    else:
-        raise ImportError("Reddit credentials missing or RedditOAuthConnector not available")
-except Exception as e:
-    logger.warning(f"Reddit OAuth initialization failed: {e}")
-    reddit_oauth_connector = MockRedditConnector()
-    print("Reddit OAuth: Mock mode")
-
-
-
-
-
+            
+            reddit_oauth_connector = SimpleRedditOAuth(config)
+            logger.info("Simple Reddit OAuth connector initialized successfully")
+            print("Reddit OAuth: Simple Implementation Configured")
+        else:
+            raise ImportError("Reddit credentials missing or RedditOAuthConnector not available")
+    except Exception as e:
+        logger.warning(f"Reddit OAuth initialization failed: {e}")
+        reddit_oauth_connector = MockRedditConnector()
+        print("Reddit OAuth: Mock mode")
     
     # Initialize Multi-User Reddit Automation System  
     try:
@@ -853,6 +847,10 @@ except Exception as e:
             await database_manager.disconnect()
         except Exception as e:
             logger.warning(f"Database disconnect failed: {e}")
+
+
+
+
 
 # Create FastAPI app
 app = FastAPI(
