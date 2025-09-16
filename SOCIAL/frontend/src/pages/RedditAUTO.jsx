@@ -176,23 +176,29 @@ useEffect(() => {
         return;
       }
 
-      if (redditConnectedParam === 'true' && usernameParam) {
-        console.log('✅ Real Reddit OAuth success:', { username: usernameParam });
-        
-        setRedditUsername(usernameParam);
-        setRedditConnected(true);
-        
-        // Update user context with real data
-        updateUser({
-          reddit_connected: true,
-          reddit_username: usernameParam
-        });
-        
-        showNotification(`Reddit connected! Welcome u/${usernameParam}!`, 'success');
-        window.history.replaceState({}, '', window.location.pathname);
-        
-        return;
-      }
+
+
+
+
+
+if (redditConnectedParam === 'true' && usernameParam) {
+  console.log('✅ Real Reddit OAuth success:', { username: usernameParam });
+  
+  setRedditUsername(usernameParam);
+  setRedditConnected(true);
+  
+  // Update user context with real data
+  updateUser({
+    reddit_connected: true,
+    reddit_username: usernameParam
+  });
+  
+  showNotification(`Reddit connected! Welcome u/${usernameParam}!`, 'success');
+  window.history.replaceState({}, '', window.location.pathname);
+  
+  // Don't return here - continue to verify connection
+  // return;  // REMOVE THIS LINE
+}
 
       // Check existing Reddit connection (real data only)
       try {
