@@ -1,6 +1,8 @@
 """
-Enhanced AI Service - Improved Mistral/Groq Integration with Asyncio
-Handles concurrent requests, rate limits, and multiple model fallbacks
+Streamlined AI Service - Real Mistral/Groq Integration
+Compatible with main.py - Enhanced with asyncio and better error handling
+Uses direct HTTP API calls instead of mistralai library to avoid pyarrow dependency
+Generates unique, human-like content for Reddit automation
 """
 
 import asyncio
@@ -16,10 +18,10 @@ import time
 logger = logging.getLogger(__name__)
 
 class AIService:
-    """Enhanced AI Service with asyncio, rate limiting, and robust fallbacks"""
+    """Streamlined AI Service for Reddit content generation using HTTP APIs"""
     
     def __init__(self):
-        """Initialize with HTTP clients and request management"""
+        """Initialize with HTTP clients for APIs"""
         
         # Load API keys from environment
         self.mistral_key = os.getenv("MISTRAL_API_KEY", "").strip()
@@ -42,7 +44,7 @@ class AIService:
         
         self.groq_headers = {
             "Authorization": f"Bearer {self.groq_key}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/json", 
             "User-Agent": "Reddit-AI-Service/1.0"
         } if self.groq_key else {}
         
@@ -51,11 +53,11 @@ class AIService:
         self.groq_available = bool(self.groq_key and len(self.groq_key) > 20)
         
         # Rate limiting and request management
-        self.mistral_semaphore = asyncio.Semaphore(5)  # Max 5 concurrent Mistral requests
-        self.groq_semaphore = asyncio.Semaphore(3)     # Max 3 concurrent Groq requests
+        self.mistral_semaphore = asyncio.Semaphore(3)  # Max 3 concurrent Mistral requests
+        self.groq_semaphore = asyncio.Semaphore(2)     # Max 2 concurrent Groq requests
         self.mistral_last_request = 0
         self.groq_last_request = 0
-        self.min_request_interval = 2.0  # Minimum 2 seconds between requests
+        self.min_request_interval = 3.0  # Minimum 3 seconds between requests
         
         # Enhanced model configurations with multiple fallbacks
         self.mistral_models = [
@@ -66,23 +68,23 @@ class AIService:
         
         self.groq_models = [
             "llama-3.1-8b-instant",    # Primary - fast and reliable
-            "llama3-70b-8192",         # Fallback 1 - higher quality
+            "llama3-70b-8192",         # Fallback 1 - higher quality  
             "mixtral-8x7b-32768"       # Fallback 2 - good performance
         ]
         
         if self.mistral_available:
-            print("✅ Mistral AI HTTP client ready with asyncio")
-            logger.info("Mistral AI HTTP client initialized with rate limiting")
+            print("✅ Mistral AI HTTP client ready")
+            logger.info("Mistral AI HTTP client initialized")
         
         if self.groq_available:
-            print("✅ Groq AI HTTP client ready with asyncio")
-            logger.info("Groq AI HTTP client initialized with rate limiting")
+            print("✅ Groq AI HTTP client ready")
+            logger.info("Groq AI HTTP client initialized")
         
         if not (self.mistral_available or self.groq_available):
             print("❌ No AI services configured - check API keys")
             logger.warning("No AI services available")
         
-        # Content variety templates (keeping your existing ones)
+        # Content variety templates
         self.content_styles = {
             "question": ["Have you ever wondered...", "What's your experience with...", "How do you handle..."],
             "tip": ["Here's a practical tip:", "Something that helped me:", "A technique worth trying:"],
@@ -122,6 +124,7 @@ class AIService:
             time_since_last = current_time - self.mistral_last_request
             if time_since_last < self.min_request_interval:
                 wait_time = self.min_request_interval - time_since_last
+                logger.info(f"Rate limiting Mistral: waiting {wait_time:.1f}s")
                 await asyncio.sleep(wait_time)
             self.mistral_last_request = time.time()
         
@@ -129,6 +132,7 @@ class AIService:
             time_since_last = current_time - self.groq_last_request
             if time_since_last < self.min_request_interval:
                 wait_time = self.min_request_interval - time_since_last
+                logger.info(f"Rate limiting Groq: waiting {wait_time:.1f}s")
                 await asyncio.sleep(wait_time)
             self.groq_last_request = time.time()
     
@@ -141,7 +145,7 @@ class AIService:
             await self._wait_for_rate_limit("mistral")
             
             # Try multiple Mistral models
-            for model in self.mistral_models:
+            for model_idx, model in enumerate(self.mistral_models):
                 try:
                     payload = {
                         "model": model,
@@ -152,10 +156,13 @@ class AIService:
                         "stream": False
                     }
                     
+                    timeout_duration = 45.0 + (model_idx * 15.0)  # Increase timeout for fallback models
+                    
                     async with httpx.AsyncClient(
-                        timeout=httpx.Timeout(60.0, connect=10.0),
-                        limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
+                        timeout=httpx.Timeout(timeout_duration, connect=10.0),
+                        limits=httpx.Limits(max_connections=5, max_keepalive_connections=2)
                     ) as client:
+                        logger.info(f"Trying Mistral model: {model}")
                         response = await client.post(
                             self.mistral_url,
                             headers=self.mistral_headers,
@@ -165,26 +172,39 @@ class AIService:
                         if response.status_code == 200:
                             data = response.json()
                             content = data["choices"][0]["message"]["content"].strip()
-                            logger.info(f"Mistral API success with model: {model}")
+                            logger.info(f"✅ Mistral API success with model: {model}")
                             return content
                         
                         elif response.status_code == 429:
-                            logger.warning(f"Mistral rate limit hit with {model}, trying next model...")
-                            await asyncio.sleep(3.0)  # Wait before trying next model
-                            continue
+                            logger.warning(f"⚠️ Mistral rate limit hit with {model}")
+                            if model_idx < len(self.mistral_models) - 1:
+                                await asyncio.sleep(5.0)  # Wait before trying next model
+                                continue
+                            else:
+                                logger.error("All Mistral models hit rate limit")
+                                return None
                         
                         else:
-                            logger.error(f"Mistral API error with {model}: {response.status_code} - {response.text}")
-                            continue
+                            logger.error(f"❌ Mistral API error with {model}: {response.status_code}")
+                            if model_idx < len(self.mistral_models) - 1:
+                                continue
+                            else:
+                                return None
                             
                 except asyncio.TimeoutError:
-                    logger.error(f"Mistral API timeout with {model}")
-                    continue
+                    logger.error(f"⏰ Mistral API timeout with {model}")
+                    if model_idx < len(self.mistral_models) - 1:
+                        continue
+                    else:
+                        return None
                 except Exception as e:
-                    logger.error(f"Mistral API call failed with {model}: {e}")
-                    continue
+                    logger.error(f"💥 Mistral API call failed with {model}: {e}")
+                    if model_idx < len(self.mistral_models) - 1:
+                        continue
+                    else:
+                        return None
             
-            logger.error("All Mistral models failed")
+            logger.error("🚫 All Mistral models failed")
             return None
     
     async def _call_groq_api(self, messages: List[Dict], **kwargs) -> Optional[str]:
@@ -196,7 +216,7 @@ class AIService:
             await self._wait_for_rate_limit("groq")
             
             # Try multiple Groq models
-            for model in self.groq_models:
+            for model_idx, model in enumerate(self.groq_models):
                 try:
                     payload = {
                         "model": model,
@@ -207,10 +227,13 @@ class AIService:
                         "stream": False
                     }
                     
+                    timeout_duration = 45.0 + (model_idx * 15.0)  # Increase timeout for fallback models
+                    
                     async with httpx.AsyncClient(
-                        timeout=httpx.Timeout(60.0, connect=10.0),
-                        limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
+                        timeout=httpx.Timeout(timeout_duration, connect=10.0),
+                        limits=httpx.Limits(max_connections=5, max_keepalive_connections=2)
                     ) as client:
+                        logger.info(f"Trying Groq model: {model}")
                         response = await client.post(
                             self.groq_url,
                             headers=self.groq_headers,
@@ -220,68 +243,105 @@ class AIService:
                         if response.status_code == 200:
                             data = response.json()
                             content = data["choices"][0]["message"]["content"].strip()
-                            logger.info(f"Groq API success with model: {model}")
+                            logger.info(f"✅ Groq API success with model: {model}")
                             return content
                         
                         elif response.status_code == 429:
-                            logger.warning(f"Groq rate limit hit with {model}, trying next model...")
+                            logger.warning(f"⚠️ Groq rate limit hit with {model}")
                             # Extract wait time from error message if available
                             try:
                                 error_data = response.json()
-                                if "Please try again in" in error_data.get("error", {}).get("message", ""):
-                                    await asyncio.sleep(5.0)  # Wait longer for Groq
+                                error_msg = error_data.get("error", {}).get("message", "")
+                                if "Please try again in" in error_msg:
+                                    # Extract milliseconds and convert to seconds
+                                    import re
+                                    match = re.search(r'(\d+(?:\.\d+)?)ms', error_msg)
+                                    if match:
+                                        wait_ms = float(match.group(1))
+                                        wait_time = (wait_ms / 1000.0) + 2.0  # Add 2 seconds buffer
+                                        logger.info(f"Groq suggested wait: {wait_time:.1f}s")
+                                        await asyncio.sleep(min(wait_time, 10.0))  # Cap at 10 seconds
+                                    else:
+                                        await asyncio.sleep(8.0)
                                 else:
-                                    await asyncio.sleep(3.0)
+                                    await asyncio.sleep(6.0)
                             except:
-                                await asyncio.sleep(3.0)
-                            continue
+                                await asyncio.sleep(6.0)
+                            
+                            if model_idx < len(self.groq_models) - 1:
+                                continue
+                            else:
+                                logger.error("All Groq models hit rate limit")
+                                return None
                         
                         else:
-                            logger.error(f"Groq API error with {model}: {response.status_code} - {response.text}")
-                            continue
+                            logger.error(f"❌ Groq API error with {model}: {response.status_code}")
+                            if model_idx < len(self.groq_models) - 1:
+                                continue
+                            else:
+                                return None
                             
                 except asyncio.TimeoutError:
-                    logger.error(f"Groq API timeout with {model}")
-                    continue
+                    logger.error(f"⏰ Groq API timeout with {model}")
+                    if model_idx < len(self.groq_models) - 1:
+                        continue
+                    else:
+                        return None
                 except Exception as e:
-                    logger.error(f"Groq API call failed with {model}: {e}")
-                    continue
+                    logger.error(f"💥 Groq API call failed with {model}: {e}")
+                    if model_idx < len(self.groq_models) - 1:
+                        continue
+                    else:
+                        return None
             
-            logger.error("All Groq models failed")
+            logger.error("🚫 All Groq models failed")
             return None
     
     async def test_ai_connection(self) -> Dict[str, Any]:
-        """Test AI service connections with concurrent execution"""
+        """Test AI service connections - SEQUENTIAL to avoid rate limits"""
         try:
             services = {}
             primary = None
             
-            # Test both services concurrently
-            test_tasks = []
-            
+            # Test Mistral first (SEQUENTIAL, not concurrent)
             if self.mistral_available:
-                test_tasks.append(self._test_mistral())
+                try:
+                    messages = [{"role": "user", "content": "Hi"}]
+                    response = await self._call_mistral_api(messages, max_tokens=5)
+                    
+                    if response:
+                        services["mistral"] = "connected"
+                        primary = "mistral"
+                        logger.info("✅ Mistral HTTP test successful")
+                    else:
+                        services["mistral"] = "failed to get response"
+                except Exception as e:
+                    services["mistral"] = f"failed: {str(e)[:50]}"
+                    logger.error(f"❌ Mistral test failed: {e}")
+            else:
+                services["mistral"] = "not configured"
             
+            # Wait between tests to avoid rate limits
+            await asyncio.sleep(2.0)
+            
+            # Test Groq second (SEQUENTIAL)
             if self.groq_available:
-                test_tasks.append(self._test_groq())
-            
-            if not test_tasks:
-                return {
-                    "success": False,
-                    "primary_service": None,
-                    "services": {"error": "No API keys configured"},
-                    "message": "No AI services configured"
-                }
-            
-            # Run tests concurrently
-            results = await asyncio.gather(*test_tasks, return_exceptions=True)
-            
-            # Process results
-            for result in results:
-                if isinstance(result, dict):
-                    services.update(result)
-                    if not primary and any(status == "connected" for status in result.values()):
-                        primary = list(result.keys())[0] if result else None
+                try:
+                    messages = [{"role": "user", "content": "Hi"}]
+                    response = await self._call_groq_api(messages, max_tokens=5)
+                    
+                    if response:
+                        services["groq"] = "connected"
+                        if not primary:
+                            primary = "groq"
+                        logger.info("✅ Groq HTTP test successful")
+                    else:
+                        services["groq"] = "failed to get response"
+                except Exception as e:
+                    services["groq"] = f"failed: {str(e)[:50]}"
+                    logger.error(f"❌ Groq test failed: {e}")
+            else:
+                services["groq"] = "not configured"
             
             success = primary is not None
             
@@ -301,36 +361,6 @@ class AIService:
                 "services": {}
             }
     
-    async def _test_mistral(self) -> Dict[str, str]:
-        """Test Mistral service"""
-        try:
-            messages = [{"role": "user", "content": "Hi"}]
-            response = await self._call_mistral_api(messages, max_tokens=5)
-            
-            if response:
-                logger.info("Mistral HTTP test successful")
-                return {"mistral": "connected"}
-            else:
-                return {"mistral": "failed to get response"}
-        except Exception as e:
-            logger.error(f"Mistral test failed: {e}")
-            return {"mistral": f"failed: {str(e)[:50]}"}
-    
-    async def _test_groq(self) -> Dict[str, str]:
-        """Test Groq service"""
-        try:
-            messages = [{"role": "user", "content": "Hi"}]
-            response = await self._call_groq_api(messages, max_tokens=5)
-            
-            if response:
-                logger.info("Groq HTTP test successful")
-                return {"groq": "connected"}
-            else:
-                return {"groq": "failed to get response"}
-        except Exception as e:
-            logger.error(f"Groq test failed: {e}")
-            return {"groq": f"failed: {str(e)[:50]}"}
-    
     async def generate_reddit_domain_content(
         self,
         domain: str,
@@ -342,10 +372,10 @@ class AIService:
         test_mode: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
-        """Generate content with robust fallback and concurrent handling"""
+        """Generate unique, human-like Reddit content using HTTP APIs - SEQUENTIAL FALLBACK"""
         
         try:
-            logger.info(f"Generating content for {domain} domain with enhanced AI handling")
+            logger.info(f"🚀 Generating content for {domain} domain using AI HTTP APIs")
             
             # Create unique prompt
             prompt = self._create_human_like_prompt(
@@ -355,119 +385,76 @@ class AIService:
             
             messages = [{"role": "user", "content": prompt}]
             
-            # Try both services concurrently for faster response
-            tasks = []
-            
+            # Try Mistral first (primary) - SEQUENTIAL not concurrent
             if self.mistral_available:
-                tasks.append(self._generate_with_mistral(messages))
+                try:
+                    logger.info("🎯 Using Mistral AI HTTP API for content generation")
+                    
+                    content = await self._call_mistral_api(
+                        messages,
+                        max_tokens=600,
+                        temperature=0.9,
+                        top_p=0.95
+                    )
+                    
+                    if content:
+                        parsed = self._parse_content(content, domain, business_type)
+                        
+                        if parsed.get("title") and parsed.get("content"):
+                            parsed["ai_service"] = "mistral"
+                            parsed["success"] = True
+                            logger.info(f"✅ Mistral generated {len(parsed['content'])} chars")
+                            return parsed
+                    
+                except Exception as e:
+                    logger.error(f"❌ Mistral generation failed: {e}")
             
+            # Wait before trying Groq fallback
+            await asyncio.sleep(2.0)
+            
+            # Fallback to Groq - SEQUENTIAL
             if self.groq_available:
-                tasks.append(self._generate_with_groq(messages))
+                try:
+                    logger.info("🔄 Using Groq AI HTTP API for content generation (fallback)")
+                    
+                    content = await self._call_groq_api(
+                        messages,
+                        max_tokens=600,
+                        temperature=0.9,
+                        top_p=0.95
+                    )
+                    
+                    if content:
+                        parsed = self._parse_content(content, domain, business_type)
+                        
+                        if parsed.get("title") and parsed.get("content"):
+                            parsed["ai_service"] = "groq"
+                            parsed["success"] = True
+                            logger.info(f"✅ Groq generated {len(parsed['content'])} chars")
+                            return parsed
+                    
+                except Exception as e:
+                    logger.error(f"❌ Groq generation failed: {e}")
             
-            if not tasks:
-                logger.error("No AI services available")
-                return {
-                    "success": False,
-                    "error": "No AI services configured",
-                    "title": "AI Configuration Error",
-                    "content": "AI services not properly configured. Check API keys.",
-                    "ai_service": "none"
-                }
-            
-            # Wait for first successful response
-            try:
-                done, pending = await asyncio.wait(
-                    tasks, 
-                    return_when=asyncio.FIRST_COMPLETED, 
-                    timeout=90.0
-                )
-                
-                # Cancel pending tasks
-                for task in pending:
-                    task.cancel()
-                
-                # Get first successful result
-                for task in done:
-                    result = await task
-                    if result and result.get("success"):
-                        logger.info(f"Content generated successfully by {result.get('ai_service')}")
-                        return result
-                
-                # If no successful results, wait for remaining tasks
-                if pending:
-                    remaining_results = await asyncio.gather(*pending, return_exceptions=True)
-                    for result in remaining_results:
-                        if isinstance(result, dict) and result.get("success"):
-                            return result
-                
-            except asyncio.TimeoutError:
-                logger.error("All AI services timed out")
-            
-            # Fallback error response
-            logger.error("All AI services failed to generate content")
+            # No AI services available
+            logger.error("🚫 No AI services available for content generation")
             return {
                 "success": False,
-                "error": "All AI services failed",
-                "title": f"{business_type} - {domain.title()} Discussion",
-                "content": f"Let's discuss {domain} topics! What's your experience?",
-                "ai_service": "fallback"
+                "error": "No AI services configured",
+                "title": "AI Configuration Error",
+                "content": "AI services not properly configured. Check API keys.",
+                "ai_service": "none"
             }
             
         except Exception as e:
-            logger.error(f"Content generation failed: {e}")
+            logger.error(f"💥 Content generation failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
                 "title": "Generation Error",
-                "content": f"Content generation encountered an error. Please try again.",
+                "content": f"Content generation failed: {str(e)}",
                 "ai_service": "error"
             }
-    
-    async def _generate_with_mistral(self, messages: List[Dict]) -> Optional[Dict[str, Any]]:
-        """Generate content using Mistral with error handling"""
-        try:
-            content = await self._call_mistral_api(
-                messages,
-                max_tokens=600,
-                temperature=0.9,
-                top_p=0.95
-            )
-            
-            if content:
-                parsed = self._parse_content(content, "general", "service")
-                if parsed.get("title") and parsed.get("content"):
-                    parsed["ai_service"] = "mistral"
-                    parsed["success"] = True
-                    return parsed
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Mistral generation failed: {e}")
-            return None
-    
-    async def _generate_with_groq(self, messages: List[Dict]) -> Optional[Dict[str, Any]]:
-        """Generate content using Groq with error handling"""
-        try:
-            content = await self._call_groq_api(
-                messages,
-                max_tokens=600,
-                temperature=0.9,
-                top_p=0.95
-            )
-            
-            if content:
-                parsed = self._parse_content(content, "general", "service")
-                if parsed.get("title") and parsed.get("content"):
-                    parsed["ai_service"] = "groq"
-                    parsed["success"] = True
-                    return parsed
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Groq generation failed: {e}")
-            return None
     
     def _create_human_like_prompt(
         self, 
@@ -666,7 +653,7 @@ Current context: {datetime.now().strftime('%B %Y')}"""
         expertise_level: str = "intermediate",
         **kwargs
     ) -> Dict[str, Any]:
-        """Generate Q&A answers with concurrent handling"""
+        """Generate Q&A answers for auto-replies - SEQUENTIAL FALLBACK"""
         
         prompt = f"""Answer this {platform} question naturally and helpfully:
 
@@ -686,43 +673,45 @@ Write a helpful, human-like response that adds real value."""
         try:
             messages = [{"role": "user", "content": prompt}]
             
-            # Try both services concurrently
-            tasks = []
-            
+            # Try Mistral first - SEQUENTIAL
             if self.mistral_available:
-                tasks.append(self._answer_with_mistral(messages))
+                answer = await self._call_mistral_api(
+                    messages,
+                    max_tokens=400,
+                    temperature=0.8
+                )
+                
+                if answer:
+                    return {
+                        "success": True,
+                        "answer": answer,
+                        "ai_service": "mistral",
+                        "word_count": len(answer.split())
+                    }
             
+            # Wait before trying Groq
+            await asyncio.sleep(2.0)
+            
+            # Fallback to Groq - SEQUENTIAL
             if self.groq_available:
-                tasks.append(self._answer_with_groq(messages))
-            
-            if not tasks:
-                return {
-                    "success": False,
-                    "error": "No AI service available",
-                    "answer": "Unable to generate response - AI service not configured"
-                }
-            
-            # Wait for first successful response
-            done, pending = await asyncio.wait(
-                tasks, 
-                return_when=asyncio.FIRST_COMPLETED, 
-                timeout=60.0
-            )
-            
-            # Cancel pending tasks
-            for task in pending:
-                task.cancel()
-            
-            # Return first successful result
-            for task in done:
-                result = await task
-                if result and result.get("success"):
-                    return result
+                answer = await self._call_groq_api(
+                    messages,
+                    max_tokens=400,
+                    temperature=0.8
+                )
+                
+                if answer:
+                    return {
+                        "success": True,
+                        "answer": answer,
+                        "ai_service": "groq",
+                        "word_count": len(answer.split())
+                    }
             
             return {
                 "success": False,
-                "error": "All AI services failed",
-                "answer": "Error generating response"
+                "error": "No AI service available",
+                "answer": "Unable to generate response - AI service not configured"
             }
             
         except Exception as e:
@@ -732,47 +721,3 @@ Write a helpful, human-like response that adds real value."""
                 "error": str(e),
                 "answer": "Error generating response"
             }
-    
-    async def _answer_with_mistral(self, messages: List[Dict]) -> Optional[Dict[str, Any]]:
-        """Generate answer using Mistral"""
-        try:
-            answer = await self._call_mistral_api(
-                messages,
-                max_tokens=400,
-                temperature=0.8
-            )
-            
-            if answer:
-                return {
-                    "success": True,
-                    "answer": answer,
-                    "ai_service": "mistral",
-                    "word_count": len(answer.split())
-                }
-            return None
-            
-        except Exception as e:
-            logger.error(f"Mistral Q&A failed: {e}")
-            return None
-    
-    async def _answer_with_groq(self, messages: List[Dict]) -> Optional[Dict[str, Any]]:
-        """Generate answer using Groq"""
-        try:
-            answer = await self._call_groq_api(
-                messages,
-                max_tokens=400,
-                temperature=0.8
-            )
-            
-            if answer:
-                return {
-                    "success": True,
-                    "answer": answer,
-                    "ai_service": "groq",
-                    "word_count": len(answer.split())
-                }
-            return None
-            
-        except Exception as e:
-            logger.error(f"Groq Q&A failed: {e}")
-            return None
