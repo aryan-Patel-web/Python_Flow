@@ -610,6 +610,14 @@ class YouTubeAutomationScheduler:
 youtube_connector = None
 youtube_scheduler = None
 
+
+
+
+
+
+# Replace these imports at the top of your youtube.py file
+from YTdatabase import get_youtube_database, YouTubeDatabaseManager
+# Replace the initialize_youtube_service function at the bottom of youtube.py
 def initialize_youtube_service(database_manager, ai_service):
     """Initialize YouTube service with required dependencies"""
     global youtube_connector, youtube_scheduler
@@ -621,6 +629,10 @@ def initialize_youtube_service(database_manager, ai_service):
     if not all([client_id, client_secret, redirect_uri]):
         logger.error("Missing required Google OAuth credentials")
         return False
+    
+    # Use YouTube-specific database if no database_manager provided
+    if not database_manager:
+        database_manager = get_youtube_database()
     
     youtube_connector = YouTubeOAuthConnector(client_id, client_secret, redirect_uri)
     youtube_scheduler = YouTubeAutomationScheduler(youtube_connector, ai_service, database_manager)
