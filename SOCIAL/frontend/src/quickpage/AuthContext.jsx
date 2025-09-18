@@ -2,7 +2,11 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext();
 
-const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ? import.meta.env.VITE_API_URL : (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL) ? process.env.REACT_APP_API_URL : 'https://agentic-u5lx.onrender.com';
+const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) 
+    ? import.meta.env.VITE_API_URL 
+    : (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL) 
+    ? process.env.REACT_APP_API_URL 
+    : 'https://agentic-u5lx.onrender.com';
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -27,15 +31,18 @@ export const AuthProvider = ({ children }) => {
           setToken(savedToken);
           
           try {
-            // Note: Your backend doesn't have /api/auth/me endpoint, so we'll use cached user
-            const cachedUser = localStorage.getItem('cached_user');
+            // Get user from multiple possible storage keys
+            let cachedUser = localStorage.getItem('user') || localStorage.getItem('cached_user');
+            
             if (cachedUser) {
               try {
                 const userData = JSON.parse(cachedUser);
+                console.log('🔧 Restored user from localStorage:', userData);
                 setUser(userData);
                 setIsAuthenticated(true);
                 console.log('✅ User authenticated:', userData.email);
               } catch (parseError) {
+                console.error('Error parsing cached user:', parseError);
                 clearTokens();
               }
             } else {
@@ -55,7 +62,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     const clearTokens = () => {
-      ['auth_token', 'token', 'authToken', 'cached_user'].forEach(key => localStorage.removeItem(key));
+      ['auth_token', 'token', 'authToken', 'cached_user', 'user', 'reddit_username', 'reddit_session_id'].forEach(key => localStorage.removeItem(key));
       setToken(null);
       setUser(null);
       setIsAuthenticated(false);
@@ -101,11 +108,20 @@ export const AuthProvider = ({ children }) => {
         setUser(userData);
         setIsAuthenticated(true);
         
-        // Store user data (no token from your backend currently)
+        // Create a proper token
+        const userToken = `token_${userData.user_id}_${Date.now()}`;
+        setToken(userToken);
+        
+        // Store user data in BOTH locations for compatibility
+        localStorage.setItem('user', JSON.stringify(userData));
         localStorage.setItem('cached_user', JSON.stringify(userData));
-        localStorage.setItem('auth_token', 'authenticated'); // Placeholder token
+        localStorage.setItem('auth_token', userToken);
+        localStorage.setItem('token', userToken);
         
         console.log('✅ Login successful');
+        console.log('✅ User stored:', JSON.stringify(userData));
+        console.log('✅ Token stored:', userToken);
+        
         return { success: true, user: userData };
       } else {
         console.error('❌ Login failed:', data);
@@ -169,23 +185,8 @@ export const AuthProvider = ({ children }) => {
       }
       
       if (response.ok && data.success) {
-        // Your backend returns: { success: true, message: "User registered successfully", user_id: "..." }
-        const userData = {
-          user_id: data.user_id,
-          email: email,
-          name: name,
-          platforms_connected: []
-        };
-        
-        setUser(userData);
-        setIsAuthenticated(true);
-        
-        // Store user data
-        localStorage.setItem('cached_user', JSON.stringify(userData));
-        localStorage.setItem('auth_token', 'authenticated'); // Placeholder token
-        
         console.log('✅ Registration successful');
-        return { success: true, user: userData, message: data.message };
+        return { success: true, message: data.message };
       } else {
         console.error('❌ Registration failed:', data);
         return { success: false, error: data.error || data.message || 'Registration failed' };
@@ -215,29 +216,24 @@ export const AuthProvider = ({ children }) => {
     setToken(null);
     setUser(null);
     setIsAuthenticated(false);
-    ['auth_token', 'token', 'authToken', 'cached_user', 'reddit_username', 'reddit_session_id'].forEach(key => localStorage.removeItem(key));
+    ['auth_token', 'token', 'authToken', 'cached_user', 'user', 'reddit_username', 'reddit_session_id'].forEach(key => localStorage.removeItem(key));
     console.log('✅ User logged out');
   };
 
   const updateUser = (userData) => {
-    setUser(prev => ({ ...prev, ...userData }));
-    if (userData && typeof userData === 'object') {
-      localStorage.setItem('cached_user', JSON.stringify({ ...user, ...userData }));
-    }
+    const updatedUser = { ...user, ...userData };
+    setUser(updatedUser);
+    // Update both storage locations
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+    localStorage.setItem('cached_user', JSON.stringify(updatedUser));
   };
 
   const makeAuthenticatedRequest = async (endpoint, options = {}) => {
     const headers = { 
-      'Content-Type': 'application/json', 
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
       ...(options.headers || {}) 
     };
-    
-    // Add user_id to requests if available (since your backend expects user_id in request body)
-    if (user && user.user_id && options.method === 'POST') {
-      const body = options.body ? JSON.parse(options.body) : {};
-      body.user_id = user.user_id;
-      options.body = JSON.stringify(body);
-    }
     
     const requestOptions = { ...options, headers };
 
@@ -250,6 +246,17 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Debug function to check auth state
+  const debugAuth = () => {
+    console.log('🔧 Auth Debug State:');
+    console.log('- isAuthenticated:', isAuthenticated);
+    console.log('- user:', user);
+    console.log('- token:', token);
+    console.log('- localStorage user:', localStorage.getItem('user'));
+    console.log('- localStorage cached_user:', localStorage.getItem('cached_user'));
+    console.log('- localStorage token:', localStorage.getItem('token'));
+  };
+
   const value = { 
     isAuthenticated, 
     user, 
@@ -259,7 +266,8 @@ export const AuthProvider = ({ children }) => {
     register, 
     logout, 
     updateUser, 
-    makeAuthenticatedRequest 
+    makeAuthenticatedRequest,
+    debugAuth
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
