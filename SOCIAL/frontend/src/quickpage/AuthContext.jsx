@@ -2,13 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext();
 
-// Use import.meta.env for Vite, or window._env_ for other setups
-const API_BASE_URL =
-  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
-    ? import.meta.env.VITE_API_URL
-    : (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL)
-      ? process.env.REACT_APP_API_URL
-      : 'https://agentic-u5lx.onrender.com';
+const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ? import.meta.env.VITE_API_URL : (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL) ? process.env.REACT_APP_API_URL : 'https://agentic-u5lx.onrender.com';
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -24,137 +18,133 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(null);
 
-  // Initialize auth state from localStorage
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Check multiple possible token storage keys
-        const savedToken = localStorage.getItem('auth_token') || 
-                           localStorage.getItem('token') || 
-                           localStorage.getItem('authToken');
+        const savedToken = localStorage.getItem('auth_token') || localStorage.getItem('token') || localStorage.getItem('authToken');
         
         if (savedToken) {
           setToken(savedToken);
           
-          // Verify token with backend
-          const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
-            headers: {
-              'Authorization': `Bearer ${savedToken}`,
-              'Content-Type': 'application/json'
-            }
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success) {
-              setUser(data.user);
-              setIsAuthenticated(true);
-              console.log('✅ User authenticated:', data.user.email);
+          try {
+            const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+              headers: { 'Authorization': `Bearer ${savedToken}`, 'Content-Type': 'application/json' },
+              timeout: 10000
+            });
+            
+            if (response.ok) {
+              const data = await response.json();
+              if (data.success && data.user) {
+                setUser(data.user);
+                setIsAuthenticated(true);
+                console.log('User authenticated:', data.user.email);
+              } else {
+                clearTokens();
+              }
             } else {
-              // Invalid token, clear all possible tokens
-              localStorage.removeItem('auth_token');
-              localStorage.removeItem('token');
-              localStorage.removeItem('authToken');
-              setToken(null);
-              console.log('❌ Invalid token, cleared from storage');
+              clearTokens();
             }
-          } else {
-            // Token expired or invalid
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('token');
-            localStorage.removeItem('authToken');
-            setToken(null);
-            console.log('❌ Token expired, cleared from storage');
+          } catch (apiError) {
+            console.warn('Auth API check failed, using cached token:', apiError.message);
+            // In case of network error, allow cached token for offline functionality
+            const cachedUser = localStorage.getItem('cached_user');
+            if (cachedUser) {
+              try {
+                const userData = JSON.parse(cachedUser);
+                setUser(userData);
+                setIsAuthenticated(true);
+                console.log('Using cached user data');
+              } catch (parseError) {
+                clearTokens();
+              }
+            } else {
+              clearTokens();
+            }
           }
-        } else {
-          console.log('ℹ️ No auth token found in storage');
         }
       } catch (error) {
         console.error('Auth initialization failed:', error);
-        // Clear all possible tokens on error
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('token');
-        localStorage.removeItem('authToken');
-        setToken(null);
+        clearTokens();
       } finally {
         setLoading(false);
       }
+    };
+
+    const clearTokens = () => {
+      ['auth_token', 'token', 'authToken', 'cached_user'].forEach(key => localStorage.removeItem(key));
+      setToken(null);
+      setUser(null);
+      setIsAuthenticated(false);
     };
 
     initAuth();
   }, []);
 
   const login = async (email, password) => {
+    setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
 
       const data = await response.json();
       
-      if (data.success) {
+      if (data.success && data.token) {
         const authToken = data.token;
+        const userData = { id: data.user_id, email: data.email, name: data.name, reddit_connected: data.reddit_connected, reddit_username: data.reddit_username };
+        
         setToken(authToken);
-        setUser({
-          id: data.user_id,
-          email: data.email,
-          name: data.name,
-          reddit_connected: data.reddit_connected,
-          reddit_username: data.reddit_username
-        });
+        setUser(userData);
         setIsAuthenticated(true);
         
-        // Store token in localStorage
         localStorage.setItem('auth_token', authToken);
+        localStorage.setItem('cached_user', JSON.stringify(userData));
         
         return { success: true, user: data };
       } else {
-        return { success: false, error: data.message || data.error };
+        return { success: false, error: data.message || data.error || 'Login failed' };
       }
     } catch (error) {
       console.error('Login failed:', error);
       return { success: false, error: 'Login failed: ' + error.message };
+    } finally {
+      setLoading(false);
     }
   };
 
   const register = async (name, email, password) => {
+    setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, password })
       });
 
       const data = await response.json();
       
-      if (data.success) {
+      if (data.success && data.token) {
         const authToken = data.token;
+        const userData = { id: data.user_id, email: data.email, name: data.name, reddit_connected: false, reddit_username: null };
+        
         setToken(authToken);
-        setUser({
-          id: data.user_id,
-          email: data.email,
-          name: data.name,
-          reddit_connected: false,
-          reddit_username: null
-        });
+        setUser(userData);
         setIsAuthenticated(true);
         
-        // Store token in localStorage
         localStorage.setItem('auth_token', authToken);
+        localStorage.setItem('cached_user', JSON.stringify(userData));
         
         return { success: true, user: data };
       } else {
-        return { success: false, error: data.message || data.error };
+        return { success: false, error: data.message || data.error || 'Registration failed' };
       }
     } catch (error) {
       console.error('Registration failed:', error);
       return { success: false, error: 'Registration failed: ' + error.message };
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -162,62 +152,43 @@ export const AuthProvider = ({ children }) => {
     setToken(null);
     setUser(null);
     setIsAuthenticated(false);
-    localStorage.removeItem('auth_token');
-    
-    // Clear any Reddit-related data
-    localStorage.removeItem('reddit_username');
-    localStorage.removeItem('reddit_session_id');
+    ['auth_token', 'token', 'authToken', 'cached_user', 'reddit_username', 'reddit_session_id'].forEach(key => localStorage.removeItem(key));
   };
 
   const updateUser = (userData) => {
     setUser(prev => ({ ...prev, ...userData }));
+    if (userData && typeof userData === 'object') {
+      localStorage.setItem('cached_user', JSON.stringify({ ...user, ...userData }));
+    }
   };
 
-  // FIXED: Helper function to make authenticated API requests
   const makeAuthenticatedRequest = async (endpoint, options = {}) => {
     if (!token) {
       throw new Error('No authentication token');
     }
 
-    // FIXED: Properly merge headers - this was the bug!
-    const headers = {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {})  // Merge any additional headers
-    };
+    const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) };
+    const requestOptions = { ...options, headers };
 
-    // FIXED: Properly merge options
-    const requestOptions = {
-      ...options,
-      headers  // Use the properly merged headers
-    };
+    try {
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, requestOptions);
 
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, requestOptions);
+      if (response.status === 401) {
+        logout();
+        throw new Error('Authentication expired');
+      }
 
-    if (response.status === 401) {
-      // Token expired, logout user
-      logout();
-      throw new Error('Authentication expired');
+      return response;
+    } catch (error) {
+      if (error.message === 'Authentication expired') {
+        throw error;
+      }
+      console.error('API request failed:', error);
+      throw new Error('Network request failed: ' + error.message);
     }
-
-    return response;
   };
 
-  const value = {
-    isAuthenticated,
-    user,
-    token,
-    loading,
-    login,
-    register,
-    logout,
-    updateUser,
-    makeAuthenticatedRequest
-  };
+  const value = { isAuthenticated, user, token, loading, login, register, logout, updateUser, makeAuthenticatedRequest };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
