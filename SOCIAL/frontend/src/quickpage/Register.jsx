@@ -47,7 +47,7 @@ const Register = () => {
       
       if (result.success) {
         // Navigate to reddit-auto page after successful registration
-        navigate('/', { replace: true });
+        navigate('/youtube', { replace: true });
       } else {
         setError(result.error || 'Registration failed');
       }
