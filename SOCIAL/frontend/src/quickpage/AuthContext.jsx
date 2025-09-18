@@ -27,39 +27,23 @@ export const AuthProvider = ({ children }) => {
           setToken(savedToken);
           
           try {
-            const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
-              headers: { 'Authorization': `Bearer ${savedToken}`, 'Content-Type': 'application/json' },
-              timeout: 10000
-            });
-            
-            if (response.ok) {
-              const data = await response.json();
-              if (data.success && data.user) {
-                setUser(data.user);
-                setIsAuthenticated(true);
-                console.log('User authenticated:', data.user.email);
-              } else {
-                clearTokens();
-              }
-            } else {
-              clearTokens();
-            }
-          } catch (apiError) {
-            console.warn('Auth API check failed, using cached token:', apiError.message);
-            // In case of network error, allow cached token for offline functionality
+            // Note: Your backend doesn't have /api/auth/me endpoint, so we'll use cached user
             const cachedUser = localStorage.getItem('cached_user');
             if (cachedUser) {
               try {
                 const userData = JSON.parse(cachedUser);
                 setUser(userData);
                 setIsAuthenticated(true);
-                console.log('Using cached user data');
+                console.log('✅ User authenticated:', userData.email);
               } catch (parseError) {
                 clearTokens();
               }
             } else {
               clearTokens();
             }
+          } catch (apiError) {
+            console.warn('Auth check failed:', apiError.message);
+            clearTokens();
           }
         }
       } catch (error) {
@@ -83,31 +67,52 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     setLoading(true);
     try {
+      console.log('🔧 Login attempt:', { email, apiUrl: API_BASE_URL });
+      
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({ email, password })
       });
 
-      const data = await response.json();
+      console.log('🔧 Login response status:', response.status);
       
-      if (data.success && data.token) {
-        const authToken = data.token;
-        const userData = { id: data.user_id, email: data.email, name: data.name, reddit_connected: data.reddit_connected, reddit_username: data.reddit_username };
+      let data;
+      try {
+        data = await response.json();
+        console.log('🔧 Login response data:', data);
+      } catch (parseError) {
+        console.error('Failed to parse login response:', parseError);
+        throw new Error('Invalid response from server');
+      }
+      
+      if (response.ok && data.success) {
+        // Your backend returns: { success: true, message: "Login successful", user: { user_id, email, name, platforms_connected } }
+        const userData = {
+          user_id: data.user.user_id,
+          email: data.user.email,
+          name: data.user.name,
+          platforms_connected: data.user.platforms_connected || []
+        };
         
-        setToken(authToken);
         setUser(userData);
         setIsAuthenticated(true);
         
-        localStorage.setItem('auth_token', authToken);
+        // Store user data (no token from your backend currently)
         localStorage.setItem('cached_user', JSON.stringify(userData));
+        localStorage.setItem('auth_token', 'authenticated'); // Placeholder token
         
-        return { success: true, user: data };
+        console.log('✅ Login successful');
+        return { success: true, user: userData };
       } else {
-        return { success: false, error: data.message || data.error || 'Login failed' };
+        console.error('❌ Login failed:', data);
+        return { success: false, error: data.error || data.message || 'Login failed' };
       }
     } catch (error) {
-      console.error('Login failed:', error);
+      console.error('❌ Login error:', error);
       return { success: false, error: 'Login failed: ' + error.message };
     } finally {
       setLoading(false);
@@ -117,32 +122,90 @@ export const AuthProvider = ({ children }) => {
   const register = async (name, email, password) => {
     setLoading(true);
     try {
+      console.log('🔧 Registration attempt:', { email, name, apiUrl: API_BASE_URL });
+      
+      // Test backend connection first
+      try {
+        const healthResponse = await fetch(`${API_BASE_URL}/health`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        
+        if (!healthResponse.ok) {
+          throw new Error(`Backend health check failed: ${healthResponse.status}`);
+        }
+        
+        const healthData = await healthResponse.json();
+        console.log('🔧 Backend health:', healthData);
+      } catch (healthError) {
+        console.error('🔧 Backend connection failed:', healthError);
+        throw new Error('Cannot connect to server. Please check if the server is running.');
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ 
+          name: name, 
+          email: email, 
+          password: password 
+        })
       });
 
-      const data = await response.json();
+      console.log('🔧 Registration response status:', response.status);
       
-      if (data.success && data.token) {
-        const authToken = data.token;
-        const userData = { id: data.user_id, email: data.email, name: data.name, reddit_connected: false, reddit_username: null };
+      let data;
+      try {
+        data = await response.json();
+        console.log('🔧 Registration response data:', data);
+      } catch (parseError) {
+        console.error('Failed to parse registration response:', parseError);
+        const responseText = await response.text();
+        console.error('Raw response:', responseText);
+        throw new Error('Invalid response from server');
+      }
+      
+      if (response.ok && data.success) {
+        // Your backend returns: { success: true, message: "User registered successfully", user_id: "..." }
+        const userData = {
+          user_id: data.user_id,
+          email: email,
+          name: name,
+          platforms_connected: []
+        };
         
-        setToken(authToken);
         setUser(userData);
         setIsAuthenticated(true);
         
-        localStorage.setItem('auth_token', authToken);
+        // Store user data
         localStorage.setItem('cached_user', JSON.stringify(userData));
+        localStorage.setItem('auth_token', 'authenticated'); // Placeholder token
         
-        return { success: true, user: data };
+        console.log('✅ Registration successful');
+        return { success: true, user: userData, message: data.message };
       } else {
-        return { success: false, error: data.message || data.error || 'Registration failed' };
+        console.error('❌ Registration failed:', data);
+        return { success: false, error: data.error || data.message || 'Registration failed' };
       }
     } catch (error) {
-      console.error('Registration failed:', error);
-      return { success: false, error: 'Registration failed: ' + error.message };
+      console.error('❌ Registration error:', error);
+      
+      // Provide user-friendly error messages
+      let userMessage = 'Registration failed. ';
+      if (error.message.includes('Cannot connect to server')) {
+        userMessage += 'Cannot connect to server. Please try again later.';
+      } else if (error.message.includes('Database service not available')) {
+        userMessage += 'Database service is temporarily unavailable.';
+      } else if (error.message.includes('Email already registered')) {
+        userMessage += 'This email is already registered. Try logging in instead.';
+      } else {
+        userMessage += error.message || 'Please try again.';
+      }
+      
+      return { success: false, error: userMessage };
     } finally {
       setLoading(false);
     }
@@ -153,6 +216,7 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setIsAuthenticated(false);
     ['auth_token', 'token', 'authToken', 'cached_user', 'reddit_username', 'reddit_session_id'].forEach(key => localStorage.removeItem(key));
+    console.log('✅ User logged out');
   };
 
   const updateUser = (userData) => {
@@ -163,32 +227,40 @@ export const AuthProvider = ({ children }) => {
   };
 
   const makeAuthenticatedRequest = async (endpoint, options = {}) => {
-    if (!token) {
-      throw new Error('No authentication token');
+    const headers = { 
+      'Content-Type': 'application/json', 
+      ...(options.headers || {}) 
+    };
+    
+    // Add user_id to requests if available (since your backend expects user_id in request body)
+    if (user && user.user_id && options.method === 'POST') {
+      const body = options.body ? JSON.parse(options.body) : {};
+      body.user_id = user.user_id;
+      options.body = JSON.stringify(body);
     }
-
-    const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) };
+    
     const requestOptions = { ...options, headers };
 
     try {
       const response = await fetch(`${API_BASE_URL}${endpoint}`, requestOptions);
-
-      if (response.status === 401) {
-        logout();
-        throw new Error('Authentication expired');
-      }
-
       return response;
     } catch (error) {
-      if (error.message === 'Authentication expired') {
-        throw error;
-      }
       console.error('API request failed:', error);
       throw new Error('Network request failed: ' + error.message);
     }
   };
 
-  const value = { isAuthenticated, user, token, loading, login, register, logout, updateUser, makeAuthenticatedRequest };
+  const value = { 
+    isAuthenticated, 
+    user, 
+    token, 
+    loading, 
+    login, 
+    register, 
+    logout, 
+    updateUser, 
+    makeAuthenticatedRequest 
+  };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

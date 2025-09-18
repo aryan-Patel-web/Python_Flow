@@ -67,11 +67,11 @@ except ImportError as e:
     AI_SERVICE_AVAILABLE = False
 
 try:
-    from database2 import MultiPlatformDatabaseManager
+    from YTdatabase import get_youtube_database, YouTubeDatabaseManager
     DATABASE_AVAILABLE = True
-    logger.info("Multi-platform database loaded successfully")
+    logger.info("YouTube database loaded successfully")
 except ImportError as e:
-    logger.warning(f"Multi-platform database not available: {e}")
+    logger.warning(f"YouTube database not available: {e}")
     DATABASE_AVAILABLE = False
 
 # Global instances
@@ -192,16 +192,22 @@ app.add_middleware(
     allowed_hosts=["*"]
 )
 
+
+
+
+
 async def initialize_services():
     """Initialize all services"""
     global database_manager, ai_service
     
     try:
-        # Initialize database
-        if DATABASE_AVAILABLE:
-            database_manager = MultiPlatformDatabaseManager()
-            await database_manager.connect()
-            logger.info("Database manager initialized")
+        # Initialize YouTube database (primary database)
+        database_manager = get_youtube_database()
+        if await database_manager.connect():
+            logger.info("YouTube database manager initialized and connected")
+        else:
+            logger.error("Failed to connect to YouTube database")
+            return False
         
         # Initialize AI service
         if AI_SERVICE_AVAILABLE:
@@ -220,11 +226,17 @@ async def initialize_services():
         
         # Initialize WhatsApp service (add similar initialization)
         if WHATSAPP_AVAILABLE:
-            # Initialize WhatsApp service here
             logger.info("WhatsApp service ready for initialization")
             
+        return True
+        
     except Exception as e:
         logger.error(f"Service initialization failed: {e}")
+        return False
+
+
+
+
 
 async def cleanup_services():
     """Cleanup services on shutdown"""
@@ -234,6 +246,12 @@ async def cleanup_services():
         logger.info("Services cleaned up successfully")
     except Exception as e:
         logger.error(f"Service cleanup failed: {e}")
+
+
+
+
+
+
 
 # Health check endpoint
 @app.get("/")
@@ -252,6 +270,11 @@ async def root():
         "timestamp": datetime.now().isoformat()
     }
 
+
+
+
+
+
 @app.get("/health")
 async def health_check():
     """Detailed health check"""
@@ -259,8 +282,9 @@ async def health_check():
     
     if database_manager:
         try:
-            # Test database connection
-            services_status["database"] = "connected"
+            # Test database connection using YouTube database health check
+            health_result = await database_manager.health_check()
+            services_status["database"] = health_result.get("status", "unknown")
         except:
             services_status["database"] = "disconnected"
     else:
@@ -275,6 +299,10 @@ async def health_check():
         "services": services_status,
         "timestamp": datetime.now().isoformat()
     }
+
+
+
+
 
 # Authentication endpoints
 @app.post("/api/auth/register")

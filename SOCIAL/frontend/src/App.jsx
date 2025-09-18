@@ -99,7 +99,7 @@ const Navbar = () => {
     <nav style={{ background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(10px)', padding: '12px 0', borderBottom: '1px solid rgba(0, 0, 0, 0.1)', position: 'sticky', top: 0, zIndex: 1000 }}>
       <div style={{ maxWidth: '1400px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 20px' }}>
         <Link to="/" style={{ fontSize: '24px', fontWeight: '700', color: '#667eea', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span>🚀</span>Social Auto Platform
+          <span>🚀</span>VelocityPost
         </Link>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
