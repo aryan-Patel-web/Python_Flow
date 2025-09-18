@@ -15,7 +15,7 @@ const Login = () => {
   const location = useLocation();
 
   // Get the page user was trying to access before login
-  const from = location.state?.from?.pathname || '/reddit-auto';
+  const from = location.state?.from?.pathname || '/';
 
   const handleChange = (e) => {
     setFormData({
