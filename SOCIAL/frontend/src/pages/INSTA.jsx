@@ -54,7 +54,6 @@ const InstagramAutomation = () => {
   const [instagramUsername, setInstagramUsername] = useState('');
   const [accountType, setAccountType] = useState('personal');
   
-  // User Profile Configuration
   const [userProfile, setUserProfile] = useState({
     domain: 'tech',
     businessType: 'AI automation platform',
@@ -136,7 +135,6 @@ const InstagramAutomation = () => {
         console.error('Failed to check Instagram connection:', error);
       }
 
-      // Load user profile from localStorage with user-specific key
       try {
         const savedProfile = localStorage.getItem(`instagramUserProfile_${user.email}`);
         if (savedProfile) {
@@ -506,7 +504,26 @@ const InstagramAutomation = () => {
                 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <label style={{ fontSize: '16px', fontWeight: '700', color: '#374151' }}>Business Type</label>
+                    <label style={{ fontSize: '16px', fontWeight: '700', color: '#374151' }}>Business Domain</label>
+                    <select value={userProfile.domain} onChange={(e) => { const domain = e.target.value; const config = DOMAIN_CONFIGS[domain]; setUserProfile(prev => ({ ...prev, domain, businessType: config?.sampleBusiness || prev.businessType })); }} style={{ padding: '16px 20px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '12px', fontSize: '16px', background: 'white', fontWeight: '500' }}>
+                      {Object.entries(DOMAIN_CONFIGS).map(([key, config]) => (
+                        <option key={key} value={key}>{config.icon} {config.description}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <label style={{ fontSize: '16px', fontWeight: '700', color: '#374151' }}>Content Style</label>
+                    <select value={userProfile.contentStyle} onChange={(e) => setUserProfile(prev => ({ ...prev, contentStyle: e.target.value }))} style={{ padding: '16px 20px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '12px', fontSize: '16px', background: 'white', fontWeight: '500' }}>
+                      {Object.entries(CONTENT_STYLES).map(([key, style]) => (
+                        <option key={key} value={key}>{style}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
+                  <label style={{ fontSize: '16px', fontWeight: '700', color: '#374151' }}>Business Type</label>
                   <input type="text" value={userProfile.businessType} onChange={(e) => setUserProfile(prev => ({ ...prev, businessType: e.target.value }))} placeholder={DOMAIN_CONFIGS[userProfile.domain]?.sampleBusiness} style={{ padding: '16px 20px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '12px', fontSize: '16px', background: 'white', fontWeight: '500' }} />
                 </div>
 
@@ -797,4 +814,4 @@ const InstagramAutomation = () => {
   );
 };
 
-export defastagramAutomation;
+export default InstagramAutomation;
