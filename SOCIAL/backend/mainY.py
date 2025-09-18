@@ -25,6 +25,10 @@ import uuid
 import os
 import requests
 import base64
+# Add these imports at the top of main2.py (if not already there)
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
+
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -193,6 +197,41 @@ app.add_middleware(
 )
 
 
+# Add this exception handler RIGHT AFTER your middleware setup
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Custom handler for 422 validation errors with detailed logging"""
+    
+    # Log the detailed error for debugging
+    logger.error(f"=== 422 VALIDATION ERROR ===")
+    logger.error(f"Request URL: {request.url}")
+    logger.error(f"Request method: {request.method}")
+    logger.error(f"Request headers: {dict(request.headers)}")
+    logger.error(f"Validation errors: {exc.errors()}")
+    logger.error(f"Request body received: {exc.body}")
+    logger.error(f"================================")
+    
+    # Return detailed error response for debugging
+    return JSONResponse(
+        status_code=422,
+        content={
+            "success": False,
+            "error": "Validation failed - check request format",
+            "details": exc.errors(),
+            "request_body_received": exc.body,
+            "expected_format": "Check API documentation",
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
+
+
+
+
+
+
+
+
 
 
 
@@ -300,7 +339,16 @@ async def health_check():
         "timestamp": datetime.now().isoformat()
     }
 
-
+@app.get("/debug/env")
+async def debug_env():
+    """Debug endpoint to check environment variables (remove in production)"""
+    return {
+        "GOOGLE_CLIENT_ID": "✓" if os.getenv("GOOGLE_CLIENT_ID") else "✗",
+        "GOOGLE_CLIENT_SECRET": "✓" if os.getenv("GOOGLE_CLIENT_SECRET") else "✗", 
+        "GOOGLE_OAUTH_REDIRECT_URI": os.getenv("GOOGLE_OAUTH_REDIRECT_URI"),
+        "FRONTEND_URL": os.getenv("FRONTEND_URL"),
+        "youtube_connector_initialized": youtube_connector is not None
+    }
 
 
 
@@ -377,10 +425,23 @@ async def login(request: LoginRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # YouTube API Routes
+
+
+
+# Also update your YouTube OAuth URL endpoint to add more logging
 @app.post("/api/youtube/oauth-url")
 async def youtube_oauth_url(request: YouTubeOAuthRequest):
     """Generate YouTube OAuth URL"""
     try:
+        # Log incoming request details
+        logger.info(f"=== YOUTUBE OAUTH URL REQUEST ===")
+        logger.info(f"Received request: {request}")
+        logger.info(f"User ID: {request.user_id}")
+        logger.info(f"State: {request.state}")
+        logger.info(f"Redirect URI: {request.redirect_uri}")
+        logger.info(f"YouTube connector available: {youtube_connector is not None}")
+        logger.info(f"================================")
+        
         if not youtube_connector:
             raise HTTPException(status_code=503, detail="YouTube service not available")
         
@@ -389,11 +450,14 @@ async def youtube_oauth_url(request: YouTubeOAuthRequest):
         if not redirect_uri:
             frontend_url = os.getenv("FRONTEND_URL", "https://frontend-agentic.onrender.com")
             redirect_uri = f"{frontend_url}/youtube"
+            logger.info(f"Using default redirect URI: {redirect_uri}")
         
         result = youtube_connector.generate_oauth_url(
             state=request.state,
             redirect_uri=redirect_uri
         )
+        
+        logger.info(f"OAuth URL generation result: {result}")
         
         if result["success"]:
             return result
@@ -404,7 +468,16 @@ async def youtube_oauth_url(request: YouTubeOAuthRequest):
         raise
     except Exception as e:
         logger.error(f"YouTube OAuth URL generation failed: {e}")
+        logger.error(f"Exception type: {type(e)}")
+        logger.error(f"Exception details: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+
+
 
 @app.post("/api/youtube/oauth-callback")
 async def youtube_oauth_callback(request: YouTubeOAuthCallback):

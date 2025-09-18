@@ -56,117 +56,179 @@ const YouTubeAutomation = () => {
     }
   }, [user, token]);
 
-  const fetchAutomationStatus = async () => {
-    if (!token) return;
+
+
+
+
+
+
+const fetchAutomationStatus = async () => {
+  if (!token) return;
+  
+  try {
+    // Get user data from localStorage
+    const userData = localStorage.getItem('user');
+    const userObj = userData ? JSON.parse(userData) : null;
     
-    try {
-      const response = await fetch(`${API_BASE}/api/youtube/status`, {
-        method: 'GET',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          setStatus(data);
-          if (data.youtube_automation?.config) {
-            setConfig(prev => ({ ...prev, ...data.youtube_automation.config }));
-          }
-        }
-      } else if (response.status === 404) {
-        // YouTube service not set up yet
-        setStatus({ youtube_connected: false });
+    if (!userObj || !userObj.user_id) {
+      console.error('No user_id found');
+      return;
+    }
+    
+    const response = await fetch(`${API_BASE}/api/youtube/status/${userObj.user_id}`, {
+      method: 'GET',
+      headers: { 
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
       }
-    } catch (error) {
-      console.error('Status fetch failed:', error);
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success) {
+        setStatus(data);
+        if (data.youtube_automation?.config) {
+          setConfig(prev => ({ ...prev, ...data.youtube_automation.config }));
+        }
+      }
+    } else if (response.status === 404) {
       setStatus({ youtube_connected: false });
     }
-  };
+  } catch (error) {
+    console.error('Status fetch failed:', error);
+    setStatus({ youtube_connected: false });
+  }
+};
 
-  const generateOAuthUrl = async () => {
-    if (!token) {
-      setError('Please login first');
+
+
+
+
+
+// Replace your generateOAuthUrl function in YouTube component with this:
+const generateOAuthUrl = async () => {
+  if (!token) {
+    setError('Please login first');
+    return;
+  }
+
+  setLoading(true);
+  setError('');
+  
+  try {
+    // Get user data from localStorage (this matches your AuthContext)
+    const userData = localStorage.getItem('user');
+    const userObj = userData ? JSON.parse(userData) : null;
+    
+    if (!userObj || !userObj.user_id) {
+      setError('User ID not found. Please log in again.');
+      console.error('User object:', userObj);
       return;
     }
 
-    setLoading(true);
-    setError('');
+    console.log('Generating OAuth URL for user_id:', userObj.user_id);
     
-    try {
-      const response = await fetch(`${API_BASE}/api/youtube/oauth-url`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          user_id: user?.id,
-          state: 'youtube_oauth',
-          redirect_uri: window.location.origin + '/youtube' // Current page as redirect
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (result.success && result.authorization_url) {
-        // Redirect to OAuth URL instead of opening new window
-        window.location.href = result.authorization_url;
-      } else {
-        setError(result.error || result.message || 'Failed to generate OAuth URL');
-      }
-    } catch (error) {
-      setError('Network error: ' + error.message);
-      console.error('OAuth URL generation failed:', error);
-    } finally {
-      setLoading(false);
+    const requestPayload = {
+      user_id: userObj.user_id, // ✅ Use user_id, not id
+      state: 'youtube_oauth'
+      // Let backend use default redirect_uri
+    };
+    
+    console.log('Request payload:', requestPayload);
+    
+    const response = await fetch(`${API_BASE}/api/youtube/oauth-url`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(requestPayload)
+    });
+    
+    console.log('Response status:', response.status);
+    console.log('Response ok:', response.ok);
+    
+    const result = await response.json();
+    console.log('Response data:', result);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${JSON.stringify(result)}`);
     }
-  };
+    
+    if (result.success && result.authorization_url) {
+      // Redirect to OAuth URL
+      window.location.href = result.authorization_url;
+    } else {
+      setError(result.error || result.message || 'Failed to generate OAuth URL');
+    }
+  } catch (error) {
+    console.error('OAuth URL generation failed:', error);
+    setError('Network error: ' + error.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
-  const handleOAuthCallback = async (code) => {
-    if (!token) {
-      setError('Authentication required');
+// Also update your handleOAuthCallback function:
+const handleOAuthCallback = async (code) => {
+  if (!token) {
+    setError('Authentication required');
+    return;
+  }
+
+  setLoading(true);
+  setError('');
+  
+  try {
+    // Get user data from localStorage
+    const userData = localStorage.getItem('user');
+    const userObj = userData ? JSON.parse(userData) : null;
+    
+    if (!userObj || !userObj.user_id) {
+      setError('User ID not found. Please log in again.');
       return;
     }
-
-    setLoading(true);
-    setError('');
     
-    try {
-      const response = await fetch(`${API_BASE}/api/youtube/oauth-callback`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          user_id: user?.id,
-          code: code,
-          redirect_uri: window.location.origin + '/youtube'
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        setError('');
-        alert('YouTube connected successfully!');
-        await fetchAutomationStatus(); // Refresh status
-        setActiveTab('setup');
-        // Clear URL parameters
-        window.history.replaceState({}, document.title, window.location.pathname);
-      } else {
-        setError(result.error || result.message || 'YouTube connection failed');
-      }
-    } catch (error) {
-      setError('Connection failed: ' + error.message);
-      console.error('OAuth callback failed:', error);
-    } finally {
-      setLoading(false);
+    const response = await fetch(`${API_BASE}/api/youtube/oauth-callback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        user_id: userObj.user_id, // ✅ Use user_id, not id
+        code: code,
+        redirect_uri: window.location.origin + '/youtube'
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      setError('');
+      alert('YouTube connected successfully!');
+      await fetchAutomationStatus();
+      setActiveTab('setup');
+      // Clear URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else {
+      setError(result.error || result.message || 'YouTube connection failed');
     }
-  };
+  } catch (error) {
+    setError('Connection failed: ' + error.message);
+    console.error('OAuth callback failed:', error);
+  } finally {
+    setLoading(false);
+  }
+};
+
+
+
+
+
+
+
+
 
   const setupYouTubeAutomation = async () => {
     if (!token) {
