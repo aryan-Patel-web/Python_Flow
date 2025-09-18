@@ -1,63 +1,132 @@
+// React and hooks imports
 import React, { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '../quickpage/AuthContext';
-import InstagramComponent from './INSTA';
 
+// Custom hooks
+import { useAuth } from '../quickpage/AuthContext';
+
+// Constants
 const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 'https://agentic-u5lx.onrender.com';
 
+// Configuration objects
+const domainConfigs = {
+  education: { icon: '🎓', description: 'Educational services', sampleBusiness: 'JEE coaching institute' },
+  restaurant: { icon: '🍽️', description: 'Food & restaurants', sampleBusiness: 'Traditional Indian restaurant' },
+  tech: { icon: '💻', description: 'Technology & programming', sampleBusiness: 'AI automation platform' },
+  health: { icon: '💚', description: 'Health & wellness', sampleBusiness: 'Fitness coaching center' },
+  business: { icon: '💼', description: 'Business & entrepreneurship', sampleBusiness: 'Business consulting firm' }
+};
+
+const targetAudienceOptions = {
+  'indian_students': { label: 'Indian Students', icon: '🎓' },
+  'food_lovers': { label: 'Food Lovers', icon: '🍕' },
+  'tech_professionals': { label: 'Tech Professionals', icon: '💻' },
+  'health_conscious': { label: 'Health Conscious', icon: '💚' },
+  'entrepreneurs': { label: 'Entrepreneurs', icon: '💼' },
+  'general_users': { label: 'General Users', icon: '👥' }
+};
+
+const contentStyleOptions = {
+  'engaging': 'Engaging & Interactive',
+  'informative': 'Informative & Educational',
+  'promotional': 'Promotional & Marketing',
+  'helpful': 'Helpful & Supportive',
+  'casual': 'Casual & Friendly',
+  'professional': 'Professional & Formal'
+};
+
+// Connection Card Component
+const ConnectionCard = ({ platform, connected, username, onConnect, onTest, loading }) => (
+  <div style={{ padding: '16px', background: 'rgba(255,255,255,0.1)', borderRadius: '12px', marginBottom: '12px' }}>
+    {connected ? (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(34, 197, 94, 0.15)', color: '#047857', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+          <div style={{ width: '8px', height: '8px', background: '#22c55e', borderRadius: '50%' }}></div>
+          ✅ {platform} Connected
+        </div>
+        {username && <div style={{ fontSize: '12px', color: '#059669', margin: '0 0 12px 20px', background: 'rgba(34, 197, 94, 0.08)', padding: '4px 8px', borderRadius: '12px', display: 'inline-block' }}>{platform === 'Facebook' ? username : `@${username}`}</div>}
+        <button onClick={onTest} disabled={loading} style={{ width: '100%', padding: '8px 12px', fontSize: '12px', fontWeight: '600', background: loading ? '#d1d5db' : 'linear-gradient(135deg, #22c55e, #16a34a)', color: 'white', border: 'none', borderRadius: '8px', cursor: loading ? 'not-allowed' : 'pointer' }}>
+          {loading ? 'Testing...' : 'Test Connection'}
+        </button>
+      </div>
+    ) : (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', color: '#dc2626', marginBottom: '8px', fontSize: '14px', fontWeight: '600' }}>
+          <div style={{ width: '8px', height: '8px', background: '#ef4444', borderRadius: '50%' }}></div>
+          ❌ {platform} Not Connected
+        </div>
+        <button onClick={onConnect} disabled={loading} style={{ width: '100%', padding: '8px 12px', fontSize: '12px', fontWeight: '600', background: loading ? '#d1d5db' : 'linear-gradient(135deg, #ef4444, #dc2626)', color: 'white', border: 'none', borderRadius: '8px', cursor: loading ? 'not-allowed' : 'pointer' }}>
+          {loading ? 'Connecting...' : `Connect ${platform}`}
+        </button>
+      </div>
+    )}
+  </div>
+);
+
+// Main Component
 const SocialMediaAutomation = () => {
   const { user, makeAuthenticatedRequest, updateUser } = useAuth();
-  const [activeTab, setActiveTab] = useState('facebook');
-  const [activePlatform, setActivePlatform] = useState('facebook');
+  
+  // State management
+  const [activeTab, setActiveTab] = useState('setup');
   const [loading, setLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
   
-  // Facebook state
+  // Connection states
   const [facebookConnected, setFacebookConnected] = useState(false);
   const [facebookUsername, setFacebookUsername] = useState('');
   const [facebookPages, setFacebookPages] = useState([]);
-  
-  // Instagram state
   const [instagramConnected, setInstagramConnected] = useState(false);
   const [instagramUsername, setInstagramUsername] = useState('');
   
-  // Common states
+  // Profile state
   const [userProfile, setUserProfile] = useState({
-    domain: 'tech', businessType: 'AI automation platform', businessDescription: 'We help businesses automate their social media presence',
-    targetAudience: 'tech_professionals', contentStyle: 'engaging', isConfigured: false
+    domain: 'tech',
+    businessType: 'AI automation platform',
+    businessDescription: 'We help businesses automate their social media presence',
+    targetAudience: 'tech_professionals',
+    contentStyle: 'engaging',
+    isConfigured: false
   });
   
-  const [manualPost, setManualPost] = useState({ platform: 'facebook', title: '', content: '', pageId: '', imageUrl: '', isGenerating: false });
-  const [autoPostConfig, setAutoPostConfig] = useState({ enabled: false, postsPerDay: 3, postingTimes: [], pages: [], hashtags: [] });
-  const [performanceData, setPerformanceData] = useState({ postsToday: 0, totalEngagement: 0, successRate: 95 });
+  // Manual post state
+  const [manualPost, setManualPost] = useState({
+    platform: 'facebook',
+    title: '',
+    content: '',
+    pageId: '',
+    imageUrl: '',
+    isGenerating: false
+  });
+  
+  // Auto-post configuration
+  const [autoPostConfig, setAutoPostConfig] = useState({
+    facebook: { enabled: false, postsPerDay: 3, postingTimes: [] },
+    instagram: { enabled: false, postsPerDay: 2, postingTimes: [] }
+  });
+  
+  // Performance data
+  const [performanceData, setPerformanceData] = useState({
+    postsToday: 0,
+    totalEngagement: 0,
+    successRate: 95
+  });
 
-  const domainConfigs = {
-    education: { icon: '🎓', description: 'Educational services', sampleBusiness: 'JEE coaching institute' },
-    restaurant: { icon: '🍽️', description: 'Food & restaurants', sampleBusiness: 'Traditional Indian restaurant' },
-    tech: { icon: '💻', description: 'Technology & programming', sampleBusiness: 'AI automation platform' },
-    health: { icon: '💚', description: 'Health & wellness', sampleBusiness: 'Fitness coaching center' },
-    business: { icon: '💼', description: 'Business & entrepreneurship', sampleBusiness: 'Business consulting firm' }
-  };
-
-  const targetAudienceOptions = {
-    'indian_students': { label: 'Indian Students', icon: '🎓' }, 'food_lovers': { label: 'Food Lovers', icon: '🍕' },
-    'tech_professionals': { label: 'Tech Professionals', icon: '💻' }, 'health_conscious': { label: 'Health Conscious', icon: '💚' },
-    'entrepreneurs': { label: 'Entrepreneurs', icon: '💼' }, 'general_users': { label: 'General Users', icon: '👥' }
-  };
-
-  const contentStyleOptions = {
-    'engaging': 'Engaging & Interactive', 'informative': 'Informative & Educational', 'promotional': 'Promotional & Marketing',
-    'helpful': 'Helpful & Supportive', 'casual': 'Casual & Friendly', 'professional': 'Professional & Formal'
-  };
-
+  // Notification system
   const showNotification = useCallback((message, type = 'success') => {
-    const notification = { id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, message, type };
+    const notification = {
+      id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      message,
+      type
+    };
     setNotifications(prev => [...prev, notification]);
-    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== notification.id)), 5000);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== notification.id));
+    }, 5000);
   }, []);
 
   // Initialize app
   useEffect(() => {
-    if (!user?.email || user.email.includes('mock')) return;
+    if (!user?.email) return;
     
     const initKey = `social_init_${user.email}`;
     if (localStorage.getItem(initKey)) return;
@@ -124,9 +193,7 @@ const SocialMediaAutomation = () => {
         const savedProfile = localStorage.getItem('socialUserProfile');
         if (savedProfile) {
           const profile = JSON.parse(savedProfile);
-          if (!JSON.stringify(profile).toLowerCase().includes('mock')) {
-            setUserProfile(profile);
-          }
+          setUserProfile(profile);
         }
       } catch (error) {
         console.error('Error loading profile:', error);
@@ -134,8 +201,9 @@ const SocialMediaAutomation = () => {
     };
 
     initApp();
-  }, []);
+  }, [user, makeAuthenticatedRequest, updateUser, showNotification]);
 
+  // Connection handlers
   const handleConnect = useCallback(async (platform) => {
     try {
       setLoading(true);
@@ -156,6 +224,25 @@ const SocialMediaAutomation = () => {
     }
   }, [makeAuthenticatedRequest, showNotification]);
 
+  const testConnection = useCallback(async (platform) => {
+    try {
+      setLoading(true);
+      const response = await makeAuthenticatedRequest(`/api/${platform}/connection-status`);
+      const result = await response.json();
+      
+      if (result.success && result.connected) {
+        showNotification(`${platform} connection verified for ${result.username}!`, 'success');
+      } else {
+        showNotification(`${platform} not connected`, 'error');
+      }
+    } catch (error) {
+      showNotification('Test failed: ' + error.message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [makeAuthenticatedRequest, showNotification]);
+
+  // Content generation
   const generateContent = useCallback(async () => {
     if (!userProfile.businessType) {
       showNotification('Please configure your profile first', 'error');
@@ -164,11 +251,12 @@ const SocialMediaAutomation = () => {
 
     try {
       setManualPost(prev => ({ ...prev, isGenerating: true }));
-      showNotification('Generating content with REAL AI...', 'info');
+      showNotification('Generating content with AI...', 'info');
       
-      const response = await makeAuthenticatedRequest('/api/content/generate', {
+      const response = await makeAuthenticatedRequest('/api/automation/test-auto-post', {
         method: 'POST',
         body: JSON.stringify({
+          platform: manualPost.platform,
           domain: userProfile.domain,
           business_type: userProfile.businessType,
           business_description: userProfile.businessDescription,
@@ -180,7 +268,11 @@ const SocialMediaAutomation = () => {
       const result = await response.json();
 
       if (result.success) {
-        setManualPost(prev => ({ ...prev, title: result.title, content: result.content }));
+        setManualPost(prev => ({
+          ...prev,
+          title: result.post_details?.title || 'Generated Title',
+          content: result.content_preview
+        }));
         showNotification(`Content generated using ${result.ai_service}!`, 'success');
       } else {
         showNotification(result.error || 'AI content generation failed', 'error');
@@ -190,8 +282,9 @@ const SocialMediaAutomation = () => {
     } finally {
       setManualPost(prev => ({ ...prev, isGenerating: false }));
     }
-  }, [userProfile, makeAuthenticatedRequest, showNotification]);
+  }, [userProfile, manualPost.platform, makeAuthenticatedRequest, showNotification]);
 
+  // Manual posting
   const handleManualPost = useCallback(async (e) => {
     e.preventDefault();
     
@@ -203,11 +296,6 @@ const SocialMediaAutomation = () => {
     const platformConnected = manualPost.platform === 'facebook' ? facebookConnected : instagramConnected;
     if (!platformConnected) {
       showNotification(`Please connect your ${manualPost.platform} account first`, 'error');
-      return;
-    }
-
-    if (manualPost.platform === 'instagram' && !manualPost.imageUrl) {
-      showNotification('Instagram requires an image URL', 'error');
       return;
     }
 
@@ -233,10 +321,19 @@ const SocialMediaAutomation = () => {
       if (result.success) {
         const username = manualPost.platform === 'facebook' ? facebookUsername : instagramUsername;
         showNotification(`Post created successfully as ${username}!`, 'success');
-        if (result.post_url) showNotification(`View post: ${result.post_url}`, 'info');
+        if (result.post_url) {
+          showNotification(`View post: ${result.post_url}`, 'info');
+        }
         
         setPerformanceData(prev => ({ ...prev, postsToday: prev.postsToday + 1 }));
-        setManualPost({ platform: manualPost.platform, title: '', content: '', pageId: '', imageUrl: '', isGenerating: false });
+        setManualPost({
+          platform: manualPost.platform,
+          title: '',
+          content: '',
+          pageId: '',
+          imageUrl: '',
+          isGenerating: false
+        });
       } else {
         showNotification(result.error || 'Posting failed', 'error');
       }
@@ -247,6 +344,7 @@ const SocialMediaAutomation = () => {
     }
   }, [manualPost, makeAuthenticatedRequest, facebookConnected, instagramConnected, facebookUsername, instagramUsername, showNotification]);
 
+  // Profile management
   const saveUserProfile = useCallback(() => {
     try {
       const profileToSave = { ...userProfile, isConfigured: true };
@@ -258,6 +356,7 @@ const SocialMediaAutomation = () => {
     }
   }, [userProfile, showNotification]);
 
+  // Automation setup
   const startAutomation = useCallback(async (platform) => {
     if (!userProfile.isConfigured) {
       showNotification('Please configure your profile first', 'error');
@@ -276,18 +375,18 @@ const SocialMediaAutomation = () => {
       showNotification(`Setting up ${platform} automation...`, 'info');
       
       const config = {
+        platform,
         domain: userProfile.domain,
         business_type: userProfile.businessType,
         business_description: userProfile.businessDescription,
         target_audience: userProfile.targetAudience,
         language: userProfile.language,
         content_style: userProfile.contentStyle,
-        posts_per_day: autoPostConfig.postsPerDay,
-        posting_times: autoPostConfig.postingTimes,
-        ...(platform === 'facebook' ? { pages: autoPostConfig.pages } : { hashtags: autoPostConfig.hashtags })
+        posts_per_day: autoPostConfig[platform].postsPerDay,
+        posting_times: autoPostConfig[platform].postingTimes
       };
 
-      const response = await makeAuthenticatedRequest(`/api/automation/${platform}/setup`, {
+      const response = await makeAuthenticatedRequest('/api/automation/setup-auto-posting', {
         method: 'POST',
         body: JSON.stringify(config)
       });
@@ -295,7 +394,10 @@ const SocialMediaAutomation = () => {
       const result = await response.json();
       
       if (result.success) {
-        setAutoPostConfig(prev => ({ ...prev, enabled: true }));
+        setAutoPostConfig(prev => ({
+          ...prev,
+          [platform]: { ...prev[platform], enabled: true }
+        }));
         const username = platform === 'facebook' ? facebookUsername : instagramUsername;
         showNotification(`${platform} auto-posting started for ${username}!`, 'success');
       } else {
@@ -308,38 +410,41 @@ const SocialMediaAutomation = () => {
     }
   }, [userProfile, facebookConnected, instagramConnected, autoPostConfig, makeAuthenticatedRequest, facebookUsername, instagramUsername, showNotification]);
 
-  const ConnectionCard = ({ platform, connected, username, onConnect }) => (
-    <div style={{ padding: '20px', background: 'rgba(255,255,255,0.1)', borderRadius: '12px', marginBottom: '16px' }}>
-      {connected ? (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', borderRadius: '10px', background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(16, 185, 129, 0.1))', color: '#047857', marginBottom: '12px' }}>
-            <div style={{ width: '12px', height: '12px', background: '#22c55e', borderRadius: '50%', animation: 'pulse 2s infinite' }}></div>
-            <span style={{ fontSize: '16px', fontWeight: '600' }}>✅ {platform} Connected</span>
-          </div>
-          {username && <div style={{ fontSize: '13px', color: '#059669', fontWeight: '500', margin: '0 0 16px 32px', background: 'rgba(34, 197, 94, 0.08)', padding: '6px 12px', borderRadius: '20px', display: 'inline-block' }}>{platform === 'facebook' ? username : `@${username}`}</div>}
-        </div>
-      ) : (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', borderRadius: '10px', background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(220, 38, 38, 0.1))', color: '#dc2626', marginBottom: '12px' }}>
-            <div style={{ width: '12px', height: '12px', background: '#ef4444', borderRadius: '50%', animation: 'pulse 2s infinite' }}></div>
-            <span style={{ fontSize: '16px', fontWeight: '600' }}>❌ {platform} Not Connected</span>
-          </div>
-          <button onClick={onConnect} disabled={loading} style={{ width: '100%', padding: '12px 16px', fontSize: '14px', fontWeight: '600', background: loading ? '#d1d5db' : 'linear-gradient(135deg, #ef4444, #dc2626)', color: 'white', border: 'none', borderRadius: '10px', cursor: loading ? 'not-allowed' : 'pointer', boxShadow: '0 4px 15px rgba(239, 68, 68, 0.3)' }}>
-            {loading ? 'Connecting...' : `Connect ${platform}`}
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  // Utility functions
+  const addTime = (platform) => {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 5);
+    const testTime = now.toTimeString().slice(0, 5);
+    if (!autoPostConfig[platform].postingTimes.includes(testTime)) {
+      setAutoPostConfig(prev => ({
+        ...prev,
+        [platform]: {
+          ...prev[platform],
+          postingTimes: [...prev[platform].postingTimes, testTime].sort()
+        }
+      }));
+      showNotification(`Test time added for ${platform} (+5 minutes)`, 'info');
+    }
+  };
+
+  const removeTime = (platform, time) => {
+    setAutoPostConfig(prev => ({
+      ...prev,
+      [platform]: {
+        ...prev[platform],
+        postingTimes: prev[platform].postingTimes.filter(t => t !== time)
+      }
+    }));
+  };
 
   return (
     <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', display: 'flex' }}>
       {/* Notifications */}
-      <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 10000, display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '400px' }}>
+      <div style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 10000, display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '350px' }}>
         {notifications.map(notification => (
-          <div key={notification.id} style={{ padding: '16px 20px', borderRadius: '12px', backdropFilter: 'blur(10px)', color: 'white', fontWeight: '500', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)', background: notification.type === 'success' ? 'rgba(34, 197, 94, 0.9)' : notification.type === 'error' ? 'rgba(239, 68, 68, 0.9)' : 'rgba(59, 130, 246, 0.9)', borderLeft: `4px solid ${notification.type === 'success' ? '#22c55e' : notification.type === 'error' ? '#ef4444' : '#3b82f6'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+          <div key={notification.id} style={{ padding: '12px 16px', borderRadius: '8px', backdropFilter: 'blur(10px)', color: 'white', fontWeight: '500', boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)', background: notification.type === 'success' ? 'rgba(34, 197, 94, 0.9)' : notification.type === 'error' ? 'rgba(239, 68, 68, 0.9)' : 'rgba(59, 130, 246, 0.9)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
             <span>{notification.message}</span>
-            <button onClick={() => setNotifications(prev => prev.filter(n => n.id !== notification.id))} style={{ background: 'none', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer', padding: '4px' }}>×</button>
+            <button onClick={() => setNotifications(prev => prev.filter(n => n.id !== notification.id))} style={{ background: 'none', border: 'none', color: 'white', fontSize: '16px', cursor: 'pointer', padding: '2px' }}>×</button>
           </div>
         ))}
       </div>
@@ -347,7 +452,7 @@ const SocialMediaAutomation = () => {
       {/* Loading Overlay */}
       {loading && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0, 0, 0, 0.7)', backdropFilter: 'blur(5px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-          <div style={{ background: 'white', padding: '40px', borderRadius: '16px', textAlign: 'center', boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)' }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '12px', textAlign: 'center', boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)' }}>
             <div style={{ border: '4px solid #f3f3f3', borderTop: '4px solid #667eea', borderRadius: '50%', width: '40px', height: '40px', animation: 'spin 1s linear infinite', margin: '0 auto' }}></div>
             <p style={{ marginTop: '16px', color: '#666' }}>Processing...</p>
           </div>
@@ -364,8 +469,6 @@ const SocialMediaAutomation = () => {
         <nav style={{ flex: 1, padding: '24px 16px' }}>
           {[
             { id: 'setup', icon: '⚙️', label: 'Setup' },
-            { id: 'facebook', icon: '📘', label: 'Facebook' },
-            { id: 'instagram', icon: '📸', label: 'Instagram' },
             { id: 'manual', icon: '✍️', label: 'Manual Post' },
             { id: 'schedule', icon: '📅', label: 'Schedule' },
             { id: 'status', icon: '📈', label: 'Status' }
@@ -379,8 +482,22 @@ const SocialMediaAutomation = () => {
 
         {/* Connection Status */}
         <div style={{ padding: '20px 24px', borderTop: '1px solid rgba(0, 0, 0, 0.05)' }}>
-          <ConnectionCard platform="Facebook" connected={facebookConnected} username={facebookUsername} onConnect={() => handleConnect('facebook')} />
-          <ConnectionCard platform="Instagram" connected={instagramConnected} username={instagramUsername} onConnect={() => handleConnect('instagram')} />
+          <ConnectionCard
+            platform="Facebook"
+            connected={facebookConnected}
+            username={facebookUsername}
+            onConnect={() => handleConnect('facebook')}
+            onTest={() => testConnection('facebook')}
+            loading={loading}
+          />
+          <ConnectionCard
+            platform="Instagram"
+            connected={instagramConnected}
+            username={instagramUsername}
+            onConnect={() => handleConnect('instagram')}
+            onTest={() => testConnection('instagram')}
+            loading={loading}
+          />
         </div>
       </div>
 
@@ -388,7 +505,7 @@ const SocialMediaAutomation = () => {
       <div style={{ flex: 1, marginLeft: '280px', background: 'rgba(255, 255, 255, 0.1)', backdropFilter: 'blur(10px)' }}>
         <header style={{ padding: '32px 40px', background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(0, 0, 0, 0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '32px', fontWeight: '700', color: '#333', marginBottom: '8px' }}>Social Media Automation Dashboard</h1>
+            <h1 style={{ fontSize: '32px', fontWeight: '700', color: '#333', marginBottom: '8px' }}>Social Media Automation</h1>
             <p style={{ fontSize: '16px', color: '#666' }}>AI-powered Facebook & Instagram automation</p>
           </div>
           
@@ -410,6 +527,7 @@ const SocialMediaAutomation = () => {
         <div style={{ padding: '32px 40px' }}>
           <div style={{ background: 'rgba(255, 255, 255, 0.95)', backdropFilter: 'blur(10px)', borderRadius: '20px', padding: '32px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)', border: '1px solid rgba(255, 255, 255, 0.2)', maxWidth: '1000px', margin: '0 auto' }}>
             
+            {/* Setup Tab */}
             {activeTab === 'setup' && (
               <div>
                 <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>Profile Configuration</h2>
@@ -433,19 +551,19 @@ const SocialMediaAutomation = () => {
                   <textarea value={userProfile.businessDescription} onChange={(e) => setUserProfile(prev => ({ ...prev, businessDescription: e.target.value }))} placeholder="Describe your business or service..." rows="3" style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px', background: 'white', resize: 'vertical' }} />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
-                    <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>Target Audience</label>
-                    <select value={userProfile.targetAudience} onChange={(e) => setUserProfile(prev => ({ ...prev, targetAudience: e.target.value }))} style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px', background: 'white' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+                  <div>
+                    <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '8px' }}>Target Audience</label>
+                    <select value={userProfile.targetAudience} onChange={(e) => setUserProfile(prev => ({ ...prev, targetAudience: e.target.value }))} style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px', background: 'white', width: '100%' }}>
                       {Object.entries(targetAudienceOptions).map(([key, option]) => (
                         <option key={key} value={key}>{option.icon} {option.label}</option>
                       ))}
                     </select>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
-                    <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>Content Style</label>
-                    <select value={userProfile.contentStyle} onChange={(e) => setUserProfile(prev => ({ ...prev, contentStyle: e.target.value }))} style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px', background: 'white' }}>
+                  <div>
+                    <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '8px' }}>Content Style</label>
+                    <select value={userProfile.contentStyle} onChange={(e) => setUserProfile(prev => ({ ...prev, contentStyle: e.target.value }))} style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px', background: 'white', width: '100%' }}>
                       {Object.entries(contentStyleOptions).map(([key, style]) => (
                         <option key={key} value={key}>{style}</option>
                       ))}
@@ -468,65 +586,12 @@ const SocialMediaAutomation = () => {
               </div>
             )}
 
-            {(activeTab === 'facebook' || activeTab === 'instagram') && (
-              <div>
-                <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>{activeTab === 'facebook' ? 'Facebook' : 'Instagram'} Management</h2>
-                
-                {activeTab === 'facebook' ? (
-                  facebookConnected ? (
-                    <div>
-                      <div style={{ marginBottom: '24px', padding: '20px', background: '#f8f9fa', borderRadius: '12px' }}>
-                        <h3 style={{ marginTop: 0 }}>Connected as: {facebookUsername}</h3>
-                        {facebookPages.length > 0 && (
-                          <div>
-                            <h4>Your Pages:</h4>
-                            {facebookPages.map(page => (
-                              <div key={page.id} style={{ padding: '8px 12px', margin: '4px 0', background: 'white', borderRadius: '8px', border: '1px solid #ddd' }}>
-                                📄 {page.name}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <InstagramComponent platform="facebook" userProfile={userProfile} />
-                    </div>
-                  ) : (
-                    <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-                      <div style={{ fontSize: '64px', marginBottom: '20px' }}>📘</div>
-                      <h3>Connect Your Facebook Account</h3>
-                      <p style={{ marginBottom: '30px', color: '#666' }}>Connect your Facebook account to start automated posting</p>
-                      <button onClick={() => handleConnect('facebook')} style={{ padding: '16px 32px', fontSize: '16px', background: 'linear-gradient(135deg, #4267B2, #365899)', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer' }}>
-                        Connect Facebook
-                      </button>
-                    </div>
-                  )
-                ) : (
-                  instagramConnected ? (
-                    <div>
-                      <div style={{ marginBottom: '24px', padding: '20px', background: '#f8f9fa', borderRadius: '12px' }}>
-                        <h3 style={{ marginTop: 0 }}>Connected as: @{instagramUsername}</h3>
-                      </div>
-                      <InstagramComponent platform="instagram" userProfile={userProfile} />
-                    </div>
-                  ) : (
-                    <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-                      <div style={{ fontSize: '64px', marginBottom: '20px' }}>📸</div>
-                      <h3>Connect Your Instagram Account</h3>
-                      <p style={{ marginBottom: '30px', color: '#666' }}>Connect your Instagram account to start automated posting</p>
-                      <button onClick={() => handleConnect('instagram')} style={{ padding: '16px 32px', fontSize: '16px', background: 'linear-gradient(135deg, #E4405F, #C13584)', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer' }}>
-                        Connect Instagram
-                      </button>
-                    </div>
-                  )
-                )}
-              </div>
-            )}
-
+            {/* Manual Post Tab */}
             {activeTab === 'manual' && (
               <div>
-                <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>Manual Posting</h2>
+                <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>Manual Posting with AI</h2>
                 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '20px', marginBottom: '20px', alignItems: 'end' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '20px', marginBottom: '20px', alignItems: 'end' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>Platform</label>
                     <select value={manualPost.platform} onChange={(e) => setManualPost(prev => ({ ...prev, platform: e.target.value }))} style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px', background: 'white' }}>
@@ -551,13 +616,6 @@ const SocialMediaAutomation = () => {
                     <textarea value={manualPost.content} onChange={(e) => setManualPost(prev => ({ ...prev, content: e.target.value }))} placeholder="Enter your post content..." rows="8" style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px', background: 'white', resize: 'vertical' }} required />
                   </div>
 
-                  {manualPost.platform === 'instagram' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
-                      <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>Image URL (Required for Instagram)</label>
-                      <input type="url" value={manualPost.imageUrl} onChange={(e) => setManualPost(prev => ({ ...prev, imageUrl: e.target.value }))} placeholder="https://example.com/image.jpg" style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px', background: 'white' }} required />
-                    </div>
-                  )}
-
                   {manualPost.platform === 'facebook' && facebookPages.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
                       <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>Facebook Page</label>
@@ -571,7 +629,7 @@ const SocialMediaAutomation = () => {
                   )}
 
                   <div style={{ textAlign: 'center' }}>
-                    <button type="submit" disabled={loading || (manualPost.platform === 'facebook' ? !facebookConnected : !instagramConnected) || !manualPost.title || !manualPost.content || (manualPost.platform === 'instagram' && !manualPost.imageUrl)} style={{ padding: '16px 32px', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '600', cursor: 'pointer', background: 'linear-gradient(135deg, #34d399, #10b981)', color: 'white', boxShadow: '0 4px 15px rgba(52, 211, 153, 0.3)' }}>
+                    <button type="submit" disabled={loading || (manualPost.platform === 'facebook' ? !facebookConnected : !instagramConnected) || !manualPost.title || !manualPost.content} style={{ padding: '16px 32px', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '600', cursor: 'pointer', background: 'linear-gradient(135deg, #34d399, #10b981)', color: 'white', boxShadow: '0 4px 15px rgba(52, 211, 153, 0.3)' }}>
                       {loading ? 'Posting...' : `Post to ${manualPost.platform}`}
                     </button>
                   </div>
@@ -579,38 +637,47 @@ const SocialMediaAutomation = () => {
               </div>
             )}
 
+            {/* Schedule Tab */}
             {activeTab === 'schedule' && (
               <div>
-                <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>Automation Schedule</h2>
+                <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>Auto-Post Schedule</h2>
                 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
-                  <label style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>Posts Per Day</label>
-                  <input type="number" min="1" max="10" value={autoPostConfig.postsPerDay} onChange={(e) => setAutoPostConfig(prev => ({ ...prev, postsPerDay: parseInt(e.target.value) || 1 }))} style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px', background: 'white', width: '200px' }} />
-                </div>
+                <div style={{ display: 'flex', gap: '20px', marginBottom: '30px' }}>
+                  {['facebook', 'instagram'].map(platform => (
+                    <div key={platform} style={{ flex: 1, padding: '20px', background: 'rgba(255,255,255,0.5)', borderRadius: '12px', border: `2px solid ${platform === 'facebook' ? '#4267B2' : '#E4405F'}` }}>
+                      <h3 style={{ margin: '0 0 20px 0', color: platform === 'facebook' ? '#4267B2' : '#E4405F' }}>{platform === 'facebook' ? '📘 Facebook' : '📸 Instagram'} Schedule</h3>
+                      
+                      <div style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Posts Per Day</label>
+                        <input type="number" min="1" max="5" value={autoPostConfig[platform].postsPerDay} onChange={(e) => setAutoPostConfig(prev => ({ ...prev, [platform]: { ...prev[platform], postsPerDay: parseInt(e.target.value) || 1 } }))} style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: '6px', width: '80px' }} />
+                      </div>
 
-                <div style={{ marginBottom: '24px' }}>
-                  <h4 style={{ marginBottom: '16px' }}>Posting Times</h4>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input type="time" onChange={(e) => { if (e.target.value && !autoPostConfig.postingTimes.includes(e.target.value)) { setAutoPostConfig(prev => ({ ...prev, postingTimes: [...prev.postingTimes, e.target.value].sort() })); } }} style={{ padding: '8px 12px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '6px', fontSize: '14px' }} />
-                  </div>
+                      <div style={{ marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                          <label style={{ fontSize: '14px', fontWeight: '600' }}>Posting Times</label>
+                          <button type="button" onClick={() => addTime(platform)} style={{ padding: '4px 8px', fontSize: '12px', background: platform === 'facebook' ? '#4267B2' : '#E4405F', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Add +5min</button>
+                        </div>
+                        
+                        <input type="time" onChange={(e) => { if (e.target.value && !autoPostConfig[platform].postingTimes.includes(e.target.value)) { setAutoPostConfig(prev => ({ ...prev, [platform]: { ...prev[platform], postingTimes: [...prev[platform].postingTimes, e.target.value].sort() } })); e.target.value = ''; } }} style={{ padding: '6px 8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px', marginBottom: '8px', width: '100%' }} />
 
-                  {autoPostConfig.postingTimes.length > 0 && (
-                    <div>
-                      <h5 style={{ marginTop: '20px', marginBottom: '12px' }}>Scheduled Times ({autoPostConfig.postingTimes.length})</h5>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                        {autoPostConfig.postingTimes.map(time => (
-                          <div key={time} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'white', border: '1px solid rgba(34, 197, 94, 0.3)', borderRadius: '16px', color: '#16a34a', fontSize: '14px', fontWeight: '500' }}>
-                            <span>{time}</span>
-                            <button onClick={() => setAutoPostConfig(prev => ({ ...prev, postingTimes: prev.postingTimes.filter(t => t !== time) }))} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '16px', cursor: 'pointer' }}>×</button>
+                        {autoPostConfig[platform].postingTimes.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {autoPostConfig[platform].postingTimes.map(time => (
+                              <span key={time} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 6px', background: 'white', border: '1px solid #ddd', borderRadius: '8px', fontSize: '11px' }}>
+                                {time}
+                                <button onClick={() => removeTime(platform, time)} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '12px', cursor: 'pointer' }}>×</button>
+                              </span>
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
             )}
 
+            {/* Status Tab */}
             {activeTab === 'status' && (
               <div>
                 <h2 style={{ fontSize: '28px', fontWeight: '700', color: '#333', marginBottom: '32px' }}>System Status & Analytics</h2>
@@ -670,13 +737,10 @@ const SocialMediaAutomation = () => {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
       `}</style>
     </div>
   );
 };
 
 export default SocialMediaAutomation;
+
