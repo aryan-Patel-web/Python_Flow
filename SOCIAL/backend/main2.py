@@ -90,6 +90,58 @@ automation_configs = {}    # user_id -> {platform: configs}
 # Authentication setup
 security = HTTPBearer()
 
+
+
+
+
+# Add these imports to the top of your main2.py file
+from datetime import datetime, timedelta
+from youtube import initialize_youtube_service, youtube_connector, youtube_scheduler
+from pydantic import BaseModel
+from typing import Optional
+
+# Add these Pydantic models after your existing models in main2.py
+class YouTubeOAuthRequest(BaseModel):
+    user_id: str
+    state: str = "youtube_oauth"
+    redirect_uri: Optional[str] = None
+
+class YouTubeOAuthCallback(BaseModel):
+    user_id: str
+    code: str
+    state: Optional[str] = None
+    redirect_uri: Optional[str] = None
+
+class YouTubeSetupRequest(BaseModel):
+    user_id: str
+    config: dict
+
+class YouTubeUploadRequest(BaseModel):
+    user_id: str
+    title: str
+    description: str
+    video_url: str
+    content_type: str = "shorts"
+
+class YouTubeContentRequest(BaseModel):
+    content_type: str = "shorts"
+    topic: str = "general"
+    target_audience: str = "general"
+
+# Initialize YouTube service (add this after your database and ai_service initialization)
+# Place this after: database_manager = DatabaseManager() and ai_service = AIService2()
+try:
+    if not initialize_youtube_service(database_manager, ai_service):
+        logger.warning("YouTube service initialization failed - OAuth endpoints will not work")
+    else:
+        logger.info("YouTube service initialized successfully")
+except Exception as e:
+    logger.error(f"YouTube service initialization error: {e}")
+
+
+
+
+
 # Request Models
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -138,6 +190,26 @@ class BroadcastRequest(BaseModel):
     message: str
     media_url: str = None
     media_type: str = None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # Authentication dependency
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -441,6 +513,9 @@ async def root():
         },
         "timestamp": datetime.now().isoformat()
     }
+
+
+
 
 @app.get("/health")
 async def health_check():
@@ -1075,6 +1150,295 @@ async def get_system_info():
         },
         "timestamp": datetime.now().isoformat()
     }
+
+
+
+@app.post("/api/youtube/oauth-url")
+async def youtube_oauth_url(request: YouTubeOAuthRequest):
+    """Generate YouTube OAuth URL"""
+    try:
+        if not youtube_connector:
+            raise HTTPException(status_code=503, detail="YouTube service not available")
+        
+        # Use frontend domain as redirect URI if not provided
+        redirect_uri = request.redirect_uri
+        if not redirect_uri:
+            frontend_url = os.getenv("FRONTEND_URL", "https://frontend-agentic.onrender.com")
+            redirect_uri = f"{frontend_url}/youtube"
+        
+        result = youtube_connector.generate_oauth_url(
+            state=request.state,
+            redirect_uri=redirect_uri
+        )
+        
+        if result["success"]:
+            return result
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"YouTube OAuth URL generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/youtube/oauth-callback")
+async def youtube_oauth_callback(request: YouTubeOAuthCallback):
+    """Handle YouTube OAuth callback and store tokens"""
+    try:
+        if not youtube_connector:
+            raise HTTPException(status_code=503, detail="YouTube service not available")
+        
+        # Exchange code for tokens
+        redirect_uri = request.redirect_uri
+        if not redirect_uri:
+            frontend_url = os.getenv("FRONTEND_URL", "https://frontend-agentic.onrender.com")
+            redirect_uri = f"{frontend_url}/youtube"
+            
+        token_result = await youtube_connector.exchange_code_for_token(
+            code=request.code,
+            redirect_uri=redirect_uri
+        )
+        
+        if not token_result["success"]:
+            raise HTTPException(status_code=400, detail=token_result["error"])
+        
+        # Store YouTube tokens in database for user
+        user_id = request.user_id
+        
+        youtube_credentials = {
+            "access_token": token_result["access_token"],
+            "refresh_token": token_result["refresh_token"],
+            "token_uri": token_result["token_uri"],
+            "client_id": token_result["client_id"],
+            "client_secret": token_result["client_secret"],
+            "scopes": token_result["scopes"],
+            "expires_at": datetime.now() + timedelta(seconds=token_result.get("expires_in", 3600)),
+            "channel_info": token_result["channel_info"]
+        }
+        
+        # Store in database
+        try:
+            # Update user document with YouTube credentials
+            users_collection = database_manager.db["users"]
+            await users_collection.update_one(
+                {"_id": user_id},
+                {
+                    "$set": {
+                        "youtube_credentials": youtube_credentials,
+                        "youtube_connected": True,
+                        "youtube_connected_at": datetime.now()
+                    }
+                }
+            )
+        except Exception as db_error:
+            logger.error(f"Database error storing YouTube credentials: {db_error}")
+        
+        logger.info(f"YouTube OAuth successful for user {user_id}")
+        
+        return {
+            "success": True,
+            "message": "YouTube connected successfully",
+            "channel_info": token_result["channel_info"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"YouTube OAuth callback failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/youtube/status/{user_id}")
+async def youtube_status(user_id: str):
+    """Get YouTube connection and automation status"""
+    try:
+        # Check if user has YouTube credentials stored
+        youtube_connected = False
+        channel_info = None
+        youtube_credentials = None
+        
+        try:
+            users_collection = database_manager.db["users"]
+            user = await users_collection.find_one({"_id": user_id})
+            
+            if user and user.get("youtube_credentials"):
+                youtube_connected = True
+                youtube_credentials = user["youtube_credentials"]
+                channel_info = youtube_credentials.get("channel_info")
+        except Exception as db_error:
+            logger.error(f"Database error fetching YouTube status: {db_error}")
+        
+        # Get automation status if scheduler is available
+        automation_status = {}
+        if youtube_scheduler:
+            automation_status = await youtube_scheduler.get_automation_status(user_id)
+        
+        return {
+            "success": True,
+            "user_id": user_id,
+            "youtube_connected": youtube_connected,
+            "channel_info": channel_info,
+            "youtube_automation": automation_status.get("youtube_automation", {
+                "enabled": False,
+                "config": None,
+                "stats": {
+                    "total_uploads": 0,
+                    "successful_uploads": 0,
+                    "failed_uploads": 0
+                }
+            })
+        }
+        
+    except Exception as e:
+        logger.error(f"YouTube status check failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/youtube/setup-automation")
+async def youtube_setup_automation(request: YouTubeSetupRequest):
+    """Setup YouTube automation configuration"""
+    try:
+        if not youtube_scheduler:
+            raise HTTPException(status_code=503, detail="YouTube scheduler not available")
+        
+        user_id = request.user_id
+        
+        # Check if user has YouTube connected
+        try:
+            users_collection = database_manager.db["users"]
+            user = await users_collection.find_one({"_id": user_id})
+            
+            if not user or not user.get("youtube_credentials"):
+                raise HTTPException(status_code=400, detail="YouTube not connected")
+        except Exception as db_error:
+            logger.error(f"Database error checking YouTube connection: {db_error}")
+            raise HTTPException(status_code=500, detail="Database error")
+        
+        result = await youtube_scheduler.setup_youtube_automation(user_id, request.config)
+        
+        if result["success"]:
+            return result
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"YouTube automation setup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/youtube/upload")
+async def youtube_upload_video(request: YouTubeUploadRequest):
+    """Upload video to YouTube"""
+    try:
+        if not youtube_scheduler:
+            raise HTTPException(status_code=503, detail="YouTube service not available")
+        
+        user_id = request.user_id
+        
+        # Get user's YouTube credentials
+        try:
+            users_collection = database_manager.db["users"]
+            user = await users_collection.find_one({"_id": user_id})
+            
+            if not user or not user.get("youtube_credentials"):
+                raise HTTPException(status_code=400, detail="YouTube not connected")
+                
+            credentials = user["youtube_credentials"]
+        except Exception as db_error:
+            logger.error(f"Database error fetching YouTube credentials: {db_error}")
+            raise HTTPException(status_code=500, detail="Database error")
+        
+        # Upload video
+        result = await youtube_scheduler.generate_and_upload_content(
+            user_id=user_id,
+            credentials_data=credentials,
+            content_type=request.content_type,
+            title=request.title,
+            description=request.description,
+            video_url=request.video_url
+        )
+        
+        if result["success"]:
+            return result
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"YouTube upload failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/youtube/analytics/{user_id}")
+async def youtube_analytics(user_id: str, days: int = 30):
+    """Get YouTube channel analytics"""
+    try:
+        if not youtube_connector:
+            raise HTTPException(status_code=503, detail="YouTube service not available")
+        
+        # Get user's YouTube credentials
+        try:
+            users_collection = database_manager.db["users"]
+            user = await users_collection.find_one({"_id": user_id})
+            
+            if not user or not user.get("youtube_credentials"):
+                raise HTTPException(status_code=400, detail="YouTube not connected")
+                
+            credentials = user["youtube_credentials"]
+        except Exception as db_error:
+            logger.error(f"Database error fetching YouTube credentials: {db_error}")
+            raise HTTPException(status_code=500, detail="Database error")
+        
+        # Get analytics
+        result = await youtube_connector.get_channel_analytics(credentials, days)
+        
+        if result["success"]:
+            return result
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        logger.error(f"YouTube analytics failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ai/generate-youtube-content")
+async def generate_youtube_content(request: YouTubeContentRequest):
+    """Generate YouTube content using AI"""
+    try:
+        # Generate content based on request parameters
+        if hasattr(ai_service, 'generate_youtube_content'):
+            result = await ai_service.generate_youtube_content(
+                content_type=request.content_type,
+                topic=request.topic,
+                target_audience=request.target_audience,
+                duration_seconds=60 if request.content_type == "shorts" else 300,
+                style="engaging"
+            )
+        else:
+            # Fallback mock content generation
+            result = {
+                "success": True,
+                "title": f"AI Generated {request.content_type.title()} - {request.topic}",
+                "description": f"This is an AI-generated {request.content_type} about {request.topic} for {request.target_audience} audience. Perfect for engaging your YouTube audience!",
+                "tags": ["AI", "generated", request.content_type, request.topic, request.target_audience],
+                "thumbnail_suggestions": [
+                    "Bold text with bright colors",
+                    "Emotional expression face",
+                    "Question mark or arrow graphics"
+                ]
+            }
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"YouTube content generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add CORS middleware configuration for YouTube routes (if not already present)
+
+
+
+
 
 # Application startup
 if __name__ == "__main__":

@@ -53,9 +53,12 @@ class YouTubeOAuthConnector:
             'https://www.googleapis.com/auth/youtube.readonly'
         ]
         
-    def generate_oauth_url(self, state: str = None) -> Dict[str, str]:
+    def generate_oauth_url(self, state: str = None, redirect_uri: str = None) -> Dict[str, str]:
         """Generate OAuth URL for YouTube authorization"""
         try:
+            # Use provided redirect_uri or fall back to default
+            final_redirect_uri = redirect_uri or self.redirect_uri
+            
             flow = Flow.from_client_config(
                 {
                     "web": {
@@ -63,13 +66,13 @@ class YouTubeOAuthConnector:
                         "client_secret": self.client_secret,
                         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                         "token_uri": "https://oauth2.googleapis.com/token",
-                        "redirect_uris": [self.redirect_uri]
+                        "redirect_uris": [final_redirect_uri]
                     }
                 },
                 scopes=self.scopes,
                 state=state
             )
-            flow.redirect_uri = self.redirect_uri
+            flow.redirect_uri = final_redirect_uri
             
             authorization_url, state = flow.authorization_url(
                 access_type='offline',
@@ -87,9 +90,12 @@ class YouTubeOAuthConnector:
             logger.error(f"YouTube OAuth URL generation failed: {e}")
             return {"success": False, "error": str(e)}
     
-    async def exchange_code_for_token(self, code: str) -> Dict[str, Any]:
+    async def exchange_code_for_token(self, code: str, redirect_uri: str = None) -> Dict[str, Any]:
         """Exchange authorization code for access token"""
         try:
+            # Use provided redirect_uri or fall back to default
+            final_redirect_uri = redirect_uri or self.redirect_uri
+            
             flow = Flow.from_client_config(
                 {
                     "web": {
@@ -97,12 +103,12 @@ class YouTubeOAuthConnector:
                         "client_secret": self.client_secret,
                         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                         "token_uri": "https://oauth2.googleapis.com/token",
-                        "redirect_uris": [self.redirect_uri]
+                        "redirect_uris": [final_redirect_uri]
                     }
                 },
                 scopes=self.scopes
             )
-            flow.redirect_uri = self.redirect_uri
+            flow.redirect_uri = final_redirect_uri
             
             # Exchange code for token
             flow.fetch_token(code=code)
@@ -231,7 +237,6 @@ class YouTubeOAuthConnector:
             )
             
             response = None
-            error = None
             retry = 0
             
             while response is None:
@@ -373,29 +378,21 @@ class YouTubeOAuthConnector:
 class YouTubeAutomationScheduler:
     """YouTube content automation scheduler"""
     
-    def __init__(self, youtube_connector, ai_service, database_manager, user_tokens):
+    def __init__(self, youtube_connector, ai_service, database_manager):
         self.youtube_connector = youtube_connector
         self.ai_service = ai_service
         self.database = database_manager
-        self.user_tokens = user_tokens
         self.active_configs = {}
         self.is_running = False
         self.upload_queue = {}
         
         logger.info("YouTube Automation Scheduler initialized")
     
-    async def setup_youtube_automation(self, config: YouTubeConfig) -> Dict[str, Any]:
+    async def setup_youtube_automation(self, user_id: str, config_data: Dict) -> Dict[str, Any]:
         """Setup YouTube automation for user"""
         try:
-            user_id = config.user_id
-            
-            # Validate user has YouTube tokens
-            if user_id not in self.user_tokens:
-                return {
-                    "success": False,
-                    "error": "YouTube not connected",
-                    "message": "Please connect your YouTube account first"
-                }
+            # Create config object
+            config = YouTubeConfig(user_id=user_id, **config_data)
             
             # Store configuration
             self.active_configs[user_id] = {
@@ -435,6 +432,7 @@ class YouTubeAutomationScheduler:
     async def generate_and_upload_content(
         self,
         user_id: str,
+        credentials_data: Dict,
         content_type: str = "shorts",
         title: str = None,
         description: str = None,
@@ -442,14 +440,6 @@ class YouTubeAutomationScheduler:
     ) -> Dict[str, Any]:
         """Generate and upload YouTube content"""
         try:
-            if user_id not in self.user_tokens:
-                return {
-                    "success": False,
-                    "error": "YouTube not connected"
-                }
-            
-            credentials_data = self.user_tokens[user_id]
-            
             # Generate content using AI if not provided
             if not title or not description:
                 ai_content = await self._generate_video_content(user_id, content_type)
@@ -513,29 +503,22 @@ class YouTubeAutomationScheduler:
     async def _generate_video_content(self, user_id: str, content_type: str) -> Dict[str, Any]:
         """Generate video title, description, and tags using AI"""
         try:
-            if not hasattr(self.ai_service, 'generate_youtube_content'):
+            if hasattr(self.ai_service, 'generate_youtube_content'):
+                content_result = await self.ai_service.generate_youtube_content(
+                    content_type=content_type,
+                    topic="general",
+                    target_audience="general",
+                    duration_seconds=60 if content_type == "shorts" else 300,
+                    style="engaging"
+                )
+            else:
                 # Fallback content generation
-                if hasattr(self.ai_service, 'generate_reddit_domain_content'):
-                    content_result = await self.ai_service.generate_reddit_domain_content(
-                        domain="general",
-                        business_type="YouTube Content",
-                        target_audience="youtube_viewers",
-                        content_style="engaging"
-                    )
-                    
-                    if content_result.get("success"):
-                        return {
-                            "success": True,
-                            "title": content_result.get("title", "AI Generated Video"),
-                            "description": content_result.get("content", "AI generated description"),
-                            "tags": ["AI", "generated", "content", content_type]
-                        }
-            
-            # Use dedicated YouTube content generation if available
-            content_result = await self.ai_service.generate_youtube_content(
-                content_type=content_type,
-                user_preferences=self._get_user_preferences(user_id)
-            )
+                content_result = {
+                    "success": True,
+                    "title": f"AI Generated {content_type.title()} Video",
+                    "description": f"This is an AI-generated {content_type} video for your YouTube channel.",
+                    "tags": ["AI", "generated", "content", content_type]
+                }
             
             return content_result
             
@@ -568,16 +551,6 @@ class YouTubeAutomationScheduler:
             logger.error(f"Video download failed: {e}")
             
         return None
-    
-    def _get_user_preferences(self, user_id: str) -> Dict:
-        """Get user preferences for content generation"""
-        config = self.active_configs.get(user_id, {}).get("youtube_automation", {}).get("config")
-        if config:
-            return {
-                "content_categories": getattr(config, 'content_categories', []),
-                "content_type": getattr(config, 'content_type', 'shorts')
-            }
-        return {}
     
     def _get_next_upload_time(self, upload_schedule: List[str]) -> str:
         """Get next scheduled upload time"""
@@ -615,7 +588,6 @@ class YouTubeAutomationScheduler:
             return {
                 "success": True,
                 "user_id": user_id,
-                "youtube_connected": user_id in self.user_tokens,
                 "youtube_automation": {
                     "enabled": "youtube_automation" in user_config,
                     "config": config_data,
@@ -632,3 +604,26 @@ class YouTubeAutomationScheduler:
         except Exception as e:
             logger.error(f"YouTube status check failed: {e}")
             return {"success": False, "error": str(e)}
+
+
+# Global YouTube service instances (initialize these in your main app)
+youtube_connector = None
+youtube_scheduler = None
+
+def initialize_youtube_service(database_manager, ai_service):
+    """Initialize YouTube service with required dependencies"""
+    global youtube_connector, youtube_scheduler
+    
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET") 
+    redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
+    
+    if not all([client_id, client_secret, redirect_uri]):
+        logger.error("Missing required Google OAuth credentials")
+        return False
+    
+    youtube_connector = YouTubeOAuthConnector(client_id, client_secret, redirect_uri)
+    youtube_scheduler = YouTubeAutomationScheduler(youtube_connector, ai_service, database_manager)
+    
+    logger.info("YouTube service initialized successfully")
+    return True
