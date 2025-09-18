@@ -458,15 +458,40 @@ async def debug_env():
 
 
 
-
+@app.get("/debug/users")
+async def debug_users():
+    """Debug endpoint to list recent users"""
+    try:
+        if not database_manager:
+            return {"error": "Database not available"}
+        
+        # Get recent users (last 10)
+        users_cursor = database_manager.users_collection.find({}).sort("created_at", -1).limit(10)
+        users = []
+        
+        async for user in users_cursor:
+            users.append({
+                "user_id": user.get("_id"),
+                "email": user.get("email"),
+                "name": user.get("name"),
+                "created_at": str(user.get("created_at")),
+                "has_password": "password" in user
+            })
+        
+        return {"users": users, "count": len(users)}
+        
+    except Exception as e:
+        return {"error": str(e)}
 
 
 
 
 # Authentication endpoints
+
+
 @app.post("/api/auth/register")
 async def register(request: RegisterRequest):
-    """User registration using YouTube database"""
+    """User registration that returns user data for auto-login"""
     try:
         if not database_manager:
             raise HTTPException(status_code=503, detail="Database service not available")
@@ -482,7 +507,7 @@ async def register(request: RegisterRequest):
             "_id": user_id,
             "email": request.email,
             "name": request.name,
-            "password": request.password,  # In production, hash this!
+            "password": request.password,
             "created_at": datetime.now(),
             "platforms_connected": [],
             "automation_enabled": False
@@ -491,10 +516,16 @@ async def register(request: RegisterRequest):
         success = await database_manager.create_user(user_data)
         
         if success:
+            # Return user data like login does for auto-authentication
             return {
                 "success": True,
                 "message": "User registered successfully",
-                "user_id": user_id
+                "user": {
+                    "user_id": user_id,
+                    "email": request.email,
+                    "name": request.name,
+                    "platforms_connected": []
+                }
             }
         else:
             raise HTTPException(status_code=400, detail="Registration failed")
@@ -504,7 +535,6 @@ async def register(request: RegisterRequest):
     except Exception as e:
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 

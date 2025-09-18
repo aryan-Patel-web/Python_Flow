@@ -135,82 +135,77 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const register = async (name, email, password) => {
-    setLoading(true);
-    try {
-      console.log('🔧 Registration attempt:', { email, name, apiUrl: API_BASE_URL });
-      
-      // Test backend connection first
-      try {
-        const healthResponse = await fetch(`${API_BASE_URL}/health`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        
-        if (!healthResponse.ok) {
-          throw new Error(`Backend health check failed: ${healthResponse.status}`);
-        }
-        
-        const healthData = await healthResponse.json();
-        console.log('🔧 Backend health:', healthData);
-      } catch (healthError) {
-        console.error('🔧 Backend connection failed:', healthError);
-        throw new Error('Cannot connect to server. Please check if the server is running.');
-      }
 
-      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({ 
-          name: name, 
-          email: email, 
-          password: password 
-        })
-      });
 
-      console.log('🔧 Registration response status:', response.status);
-      
-      let data;
-      try {
-        data = await response.json();
-        console.log('🔧 Registration response data:', data);
-      } catch (parseError) {
-        console.error('Failed to parse registration response:', parseError);
-        const responseText = await response.text();
-        console.error('Raw response:', responseText);
-        throw new Error('Invalid response from server');
+
+const register = async (name, email, password) => {
+  setLoading(true);
+  try {
+    console.log('🔧 Registration attempt:', { email, name, apiUrl: API_BASE_URL });
+    
+    // Test backend connection first
+    const healthResponse = await fetch(`${API_BASE_URL}/health`);
+    const healthData = await healthResponse.json();
+    console.log('🔧 Backend health:', healthData);
+
+    const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ 
+        name: name, 
+        email: email, 
+        password: password 
+      })
+    });
+
+    console.log('🔧 Registration response status:', response.status);
+    
+    const data = await response.json();
+    console.log('🔧 Registration response data:', data);
+    
+    if (response.ok && data.success) {
+      // Auto-login after successful registration
+      if (data.user) {
+        const userData = {
+          user_id: data.user.user_id,
+          email: data.user.email,
+          name: data.user.name,
+          platforms_connected: data.user.platforms_connected || []
+        };
+        
+        setUser(userData);
+        setIsAuthenticated(true);
+        
+        // Create a proper token
+        const userToken = `token_${userData.user_id}_${Date.now()}`;
+        setToken(userToken);
+        
+        // Store in localStorage
+        localStorage.setItem('user', JSON.stringify(userData));
+        localStorage.setItem('cached_user', JSON.stringify(userData));
+        localStorage.setItem('auth_token', userToken);
+        localStorage.setItem('token', userToken);
+        
+        console.log('✅ Registration and auto-login successful');
+        return { success: true, user: userData, message: data.message };
       }
       
-      if (response.ok && data.success) {
-        console.log('✅ Registration successful');
-        return { success: true, message: data.message };
-      } else {
-        console.error('❌ Registration failed:', data);
-        return { success: false, error: data.error || data.message || 'Registration failed' };
-      }
-    } catch (error) {
-      console.error('❌ Registration error:', error);
-      
-      // Provide user-friendly error messages
-      let userMessage = 'Registration failed. ';
-      if (error.message.includes('Cannot connect to server')) {
-        userMessage += 'Cannot connect to server. Please try again later.';
-      } else if (error.message.includes('Database service not available')) {
-        userMessage += 'Database service is temporarily unavailable.';
-      } else if (error.message.includes('Email already registered')) {
-        userMessage += 'This email is already registered. Try logging in instead.';
-      } else {
-        userMessage += error.message || 'Please try again.';
-      }
-      
-      return { success: false, error: userMessage };
-    } finally {
-      setLoading(false);
+      console.log('✅ Registration successful');
+      return { success: true, message: data.message };
+    } else {
+      console.error('❌ Registration failed:', data);
+      return { success: false, error: data.error || data.message || 'Registration failed' };
     }
-  };
+  } catch (error) {
+    console.error('❌ Registration error:', error);
+    return { success: false, error: 'Registration failed: ' + error.message };
+  } finally {
+    setLoading(false);
+  }
+};
 
   const logout = () => {
     setToken(null);
