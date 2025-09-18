@@ -9,7 +9,13 @@ export default defineConfig({
   },
   preview: {
     host: '0.0.0.0',
-    port: process.env.PORT || 4173
+    port: process.env.PORT || 4173,
+    allowedHosts: [
+      'frontend-agentic.onrender.com',
+      '.onrender.com',
+      'localhost',
+      '127.0.0.1'
+    ]
   },
   build: {
     outDir: 'dist',
