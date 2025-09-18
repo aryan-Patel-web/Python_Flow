@@ -416,6 +416,34 @@ async def debug_services():
 
 
 
+
+@app.get("/debug/user/{email}")
+async def debug_user(email: str):
+    """Debug endpoint to check user data (REMOVE IN PRODUCTION)"""
+    try:
+        if not database_manager:
+            return {"error": "Database not available"}
+        
+        user = await database_manager.get_user_by_email(email)
+        if user:
+            # Return user data without password for security
+            return {
+                "found": True,
+                "user_id": user.get("_id"),
+                "email": user.get("email"),
+                "name": user.get("name"),
+                "has_password": "password" in user,
+                "password_length": len(user.get("password", "")) if user.get("password") else 0,
+                "created_at": user.get("created_at"),
+                "platforms_connected": user.get("platforms_connected", [])
+            }
+        else:
+            return {"found": False}
+            
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
+
+
 @app.get("/debug/env")
 async def debug_env():
     """Debug endpoint to check environment variables (remove in production)"""
@@ -477,21 +505,48 @@ async def register(request: RegisterRequest):
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+
+
+
 @app.post("/api/auth/login")
 async def login(request: LoginRequest):
-    """User login using YouTube database"""
+    """User login with detailed debugging"""
     try:
+        logger.info(f"Login attempt for email: {request.email}")
+        
         if not database_manager:
             raise HTTPException(status_code=503, detail="Database service not available")
         
-        # Find user
+        # Find user with detailed logging
         user = await database_manager.get_user_by_email(request.email)
+        logger.info(f"User lookup result: {'Found' if user else 'Not found'}")
+        
         if not user:
+            logger.warning(f"No user found with email: {request.email}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
-        # Check password (in production, use proper hashing)
-        if user.get("password") != request.password:
+        # Log user data structure (without password)
+        user_info = {k: v for k, v in user.items() if k != 'password'}
+        logger.info(f"User data: {user_info}")
+        
+        # Check if password field exists
+        stored_password = user.get("password")
+        if not stored_password:
+            logger.error(f"No password stored for user: {request.email}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        # Compare passwords (add detailed logging)
+        logger.info(f"Password comparison - Provided length: {len(request.password)}, Stored length: {len(stored_password)}")
+        
+        if stored_password != request.password:
+            logger.warning(f"Password mismatch for user: {request.email}")
+            logger.info(f"Provided password: '{request.password}'")
+            logger.info(f"Stored password: '{stored_password}'")
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        logger.info(f"Login successful for user: {request.email}")
         
         return {
             "success": True,
@@ -507,8 +562,12 @@ async def login(request: LoginRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Login failed: {e}")
+        logger.error(f"Login failed with exception: {e}")
+        logger.error(f"Exception type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # YouTube API Routes
 
