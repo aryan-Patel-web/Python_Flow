@@ -22,6 +22,8 @@ from googleapiclient.http import MediaFileUpload
 import io
 import tempfile
 import aiofiles
+# Add this import to the top of youtube.py
+from YTdatabase import get_youtube_database, YouTubeDatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -615,27 +617,36 @@ youtube_scheduler = None
 
 
 
-# Replace these imports at the top of your youtube.py file
-# from YTdatabase import get_youtube_database, YouTubeDatabaseManager
-# # Replace the initialize_youtube_service function at the bottom of youtube.py
-# def initialize_youtube_service(database_manager, ai_service):
-#     """Initialize YouTube service with required dependencies"""
-#     global youtube_connector, youtube_scheduler
+# Add this to the bottom of your youtube.py file (replace the commented section)
+
+def initialize_youtube_service(database_manager, ai_service):
+    """Initialize YouTube service with required dependencies"""
+    global youtube_connector, youtube_scheduler
     
-#     client_id = os.getenv("GOOGLE_CLIENT_ID")
-#     client_secret = os.getenv("GOOGLE_CLIENT_SECRET") 
-#     redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET") 
+    redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
     
-#     if not all([client_id, client_secret, redirect_uri]):
-#         logger.error("Missing required Google OAuth credentials")
-#         return False
+    if not all([client_id, client_secret, redirect_uri]):
+        logger.error("Missing required Google OAuth credentials")
+        logger.error(f"client_id: {'✓' if client_id else '✗'}")
+        logger.error(f"client_secret: {'✓' if client_secret else '✗'}")
+        logger.error(f"redirect_uri: {'✓' if redirect_uri else '✗'}")
+        return False
     
-#     # Use YouTube-specific database if no database_manager provided
-#     if not database_manager:
-#         database_manager = get_youtube_database()
+    # Use YouTube-specific database if no database_manager provided
+    if not database_manager:
+        logger.info("No database manager provided, creating YouTube-specific database")
+        database_manager = get_youtube_database()
     
-#     youtube_connector = YouTubeOAuthConnector(client_id, client_secret, redirect_uri)
-#     youtube_scheduler = YouTubeAutomationScheduler(youtube_connector, ai_service, database_manager)
-    
-#     logger.info("YouTube service initialized successfully")
-#     return True
+    try:
+        youtube_connector = YouTubeOAuthConnector(client_id, client_secret, redirect_uri)
+        youtube_scheduler = YouTubeAutomationScheduler(youtube_connector, ai_service, database_manager)
+        
+        logger.info("YouTube service initialized successfully")
+        logger.info(f"OAuth redirect URI: {redirect_uri}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"YouTube service initialization failed: {e}")
+        return False
