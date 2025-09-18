@@ -1,6 +1,7 @@
 """
 YouTube Automation Module - Complete YouTube Shorts & Video Automation
 Multi-user support with OAuth, content generation, and scheduling
+Robust MongoDB Atlas integration for token storage
 """
 
 import os
@@ -19,13 +20,267 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
-import io
 import tempfile
-import aiofiles
-# Add this import to the top of youtube.py
-from YTdatabase import get_youtube_database, YouTubeDatabaseManager
+import motor.motor_asyncio
+from pymongo.errors import DuplicateKeyError, ConnectionFailure
 
 logger = logging.getLogger(__name__)
+
+class YouTubeDatabase:
+    """MongoDB Atlas database manager for YouTube authentication"""
+    
+    def __init__(self):
+        self.client = None
+        self.database = None
+        self.users_collection = None
+        self.credentials_collection = None
+        self.configs_collection = None
+        self.connected = False
+        
+        # MongoDB connection string
+        self.mongodb_uri = os.getenv("MONGODB_URI")
+        self.database_name = os.getenv("MONGODB_DATABASE", "youtube_automation")
+        
+        if not self.mongodb_uri:
+            raise ValueError("MONGODB_URI environment variable is required")
+        
+        logger.info(f"YouTube Database initialized for: {self.database_name}")
+    
+    async def connect(self) -> bool:
+        """Connect to MongoDB Atlas"""
+        try:
+            if self.connected:
+                return True
+                
+            logger.info("Connecting to MongoDB Atlas...")
+            
+            # Create MongoDB client
+            self.client = motor.motor_asyncio.AsyncIOMotorClient(
+                self.mongodb_uri,
+                serverSelectionTimeoutMS=10000,
+                connectTimeoutMS=10000,
+                maxPoolSize=10,
+                retryWrites=True
+            )
+            
+            # Test connection
+            await self.client.admin.command('ping')
+            
+            # Set up database and collections
+            self.database = self.client[self.database_name]
+            self.users_collection = self.database.users
+            self.credentials_collection = self.database.youtube_credentials
+            self.configs_collection = self.database.automation_configs
+            
+            # Create indexes for better performance
+            await self.users_collection.create_index("email", unique=True)
+            await self.credentials_collection.create_index("user_id", unique=True)
+            await self.configs_collection.create_index("user_id")
+            
+            self.connected = True
+            logger.info("Successfully connected to MongoDB Atlas")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to connect to MongoDB: {e}")
+            self.connected = False
+            return False
+    
+    async def create_user(self, user_data: Dict) -> bool:
+        """Create a new user"""
+        try:
+            user_data['created_at'] = datetime.now()
+            user_data['platforms_connected'] = []
+            user_data['automation_enabled'] = False
+            
+            await self.users_collection.insert_one(user_data)
+            logger.info(f"User created successfully: {user_data['email']}")
+            return True
+            
+        except DuplicateKeyError:
+            logger.warning(f"User already exists: {user_data['email']}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to create user: {e}")
+            return False
+    
+    async def get_user_by_email(self, email: str) -> Optional[Dict]:
+        """Get user by email"""
+        try:
+            user = await self.users_collection.find_one({"email": email})
+            return user
+        except Exception as e:
+            logger.error(f"Failed to get user: {e}")
+            return None
+    
+    async def store_youtube_credentials(self, user_id: str, credentials: Dict) -> bool:
+        """Store YouTube OAuth credentials for a user"""
+        try:
+            # Prepare credentials document
+            cred_doc = {
+                "user_id": user_id,
+                "platform": "youtube",
+                "access_token": credentials.get("access_token"),
+                "refresh_token": credentials.get("refresh_token"),
+                "token_uri": credentials.get("token_uri"),
+                "client_id": credentials.get("client_id"),
+                "client_secret": credentials.get("client_secret"),
+                "scopes": credentials.get("scopes"),
+                "expires_at": credentials.get("expires_at"),
+                "channel_info": credentials.get("channel_info"),
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            }
+            
+            # Upsert credentials (update if exists, insert if not)
+            await self.credentials_collection.replace_one(
+                {"user_id": user_id, "platform": "youtube"},
+                cred_doc,
+                upsert=True
+            )
+            
+            # Update user's connected platforms
+            await self.users_collection.update_one(
+                {"_id": user_id},
+                {
+                    "$addToSet": {"platforms_connected": "youtube"},
+                    "$set": {"updated_at": datetime.now()}
+                }
+            )
+            
+            logger.info(f"YouTube credentials stored for user: {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to store YouTube credentials: {e}")
+            return False
+    
+    async def get_youtube_credentials(self, user_id: str) -> Optional[Dict]:
+        """Get YouTube credentials for a user"""
+        try:
+            credentials = await self.credentials_collection.find_one({
+                "user_id": user_id,
+                "platform": "youtube"
+            })
+            
+            if credentials:
+                # Check if token is expired
+                expires_at = credentials.get("expires_at")
+                if expires_at and isinstance(expires_at, datetime):
+                    if datetime.now() >= expires_at:
+                        # Token is expired, try to refresh
+                        refreshed = await self._refresh_youtube_token(user_id, credentials)
+                        if refreshed:
+                            # Get updated credentials
+                            credentials = await self.credentials_collection.find_one({
+                                "user_id": user_id,
+                                "platform": "youtube"
+                            })
+                
+            return credentials
+            
+        except Exception as e:
+            logger.error(f"Failed to get YouTube credentials: {e}")
+            return None
+    
+    async def _refresh_youtube_token(self, user_id: str, credentials: Dict) -> bool:
+        """Refresh expired YouTube token"""
+        try:
+            logger.info(f"Refreshing YouTube token for user: {user_id}")
+            
+            refresh_token = credentials.get("refresh_token")
+            if not refresh_token:
+                logger.error("No refresh token available")
+                return False
+            
+            # Create credentials object
+            creds = Credentials(
+                token=credentials.get("access_token"),
+                refresh_token=refresh_token,
+                token_uri=credentials.get("token_uri"),
+                client_id=credentials.get("client_id"),
+                client_secret=credentials.get("client_secret")
+            )
+            
+            # Refresh the token
+            creds.refresh(Request())
+            
+            # Update database with new token
+            await self.credentials_collection.update_one(
+                {"user_id": user_id, "platform": "youtube"},
+                {
+                    "$set": {
+                        "access_token": creds.token,
+                        "expires_at": datetime.now() + timedelta(seconds=3600),
+                        "updated_at": datetime.now()
+                    }
+                }
+            )
+            
+            logger.info(f"YouTube token refreshed successfully for user: {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to refresh YouTube token: {e}")
+            return False
+    
+    async def store_automation_config(self, user_id: str, config_type: str, config_data: Dict) -> bool:
+        """Store automation configuration"""
+        try:
+            config_doc = {
+                "user_id": user_id,
+                "config_type": config_type,
+                "config_data": config_data,
+                "created_at": datetime.now(),
+                "updated_at": datetime.now(),
+                "enabled": True
+            }
+            
+            await self.configs_collection.replace_one(
+                {"user_id": user_id, "config_type": config_type},
+                config_doc,
+                upsert=True
+            )
+            
+            logger.info(f"Automation config stored: {config_type} for user {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to store automation config: {e}")
+            return False
+    
+    async def get_automation_config(self, user_id: str, config_type: str) -> Optional[Dict]:
+        """Get automation configuration"""
+        try:
+            config = await self.configs_collection.find_one({
+                "user_id": user_id,
+                "config_type": config_type
+            })
+            return config
+        except Exception as e:
+            logger.error(f"Failed to get automation config: {e}")
+            return None
+    
+    async def health_check(self) -> Dict[str, str]:
+        """Check database health"""
+        try:
+            if not self.connected:
+                return {"status": "disconnected"}
+            
+            # Test with a simple ping
+            await self.client.admin.command('ping')
+            return {"status": "connected"}
+            
+        except Exception as e:
+            logger.error(f"Database health check failed: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def close(self):
+        """Close database connection"""
+        if self.client:
+            self.client.close()
+            self.connected = False
+            logger.info("Database connection closed")
 
 @dataclass
 class YouTubeConfig:
@@ -54,12 +309,14 @@ class YouTubeOAuthConnector:
             'https://www.googleapis.com/auth/youtube.force-ssl',
             'https://www.googleapis.com/auth/youtube.readonly'
         ]
+        logger.info("YouTube OAuth Connector initialized")
         
     def generate_oauth_url(self, state: str = None, redirect_uri: str = None) -> Dict[str, str]:
         """Generate OAuth URL for YouTube authorization"""
         try:
-            # Use provided redirect_uri or fall back to default
             final_redirect_uri = redirect_uri or self.redirect_uri
+            
+            logger.info(f"Generating OAuth URL with redirect: {final_redirect_uri}")
             
             flow = Flow.from_client_config(
                 {
@@ -82,6 +339,7 @@ class YouTubeOAuthConnector:
                 prompt='consent'
             )
             
+            logger.info("OAuth URL generated successfully")
             return {
                 "success": True,
                 "authorization_url": authorization_url,
@@ -95,8 +353,9 @@ class YouTubeOAuthConnector:
     async def exchange_code_for_token(self, code: str, redirect_uri: str = None) -> Dict[str, Any]:
         """Exchange authorization code for access token"""
         try:
-            # Use provided redirect_uri or fall back to default
             final_redirect_uri = redirect_uri or self.redirect_uri
+            
+            logger.info(f"Exchanging code for token with redirect: {final_redirect_uri}")
             
             flow = Flow.from_client_config(
                 {
@@ -115,7 +374,7 @@ class YouTubeOAuthConnector:
             # Exchange code for token
             flow.fetch_token(code=code)
             
-            # Get user info
+            # Get user info and channel information
             credentials = flow.credentials
             youtube = build('youtube', 'v3', credentials=credentials)
             
@@ -133,6 +392,7 @@ class YouTubeOAuthConnector:
             
             channel_info = channels_response['items'][0]
             
+            logger.info("Token exchange successful")
             return {
                 "success": True,
                 "access_token": credentials.token,
@@ -155,29 +415,6 @@ class YouTubeOAuthConnector:
             logger.error(f"YouTube token exchange failed: {e}")
             return {"success": False, "error": str(e)}
     
-    def refresh_access_token(self, refresh_token: str, token_uri: str, client_id: str, client_secret: str) -> Dict[str, Any]:
-        """Refresh YouTube access token"""
-        try:
-            credentials = Credentials(
-                token=None,
-                refresh_token=refresh_token,
-                token_uri=token_uri,
-                client_id=client_id,
-                client_secret=client_secret
-            )
-            
-            credentials.refresh(Request())
-            
-            return {
-                "success": True,
-                "access_token": credentials.token,
-                "expires_in": 3600
-            }
-            
-        except Exception as e:
-            logger.error(f"YouTube token refresh failed: {e}")
-            return {"success": False, "error": str(e)}
-    
     async def upload_video(
         self,
         credentials_data: Dict,
@@ -190,6 +427,8 @@ class YouTubeOAuthConnector:
     ) -> Dict[str, Any]:
         """Upload video to YouTube"""
         try:
+            logger.info(f"Starting video upload: {title}")
+            
             # Reconstruct credentials
             credentials = Credentials(
                 token=credentials_data.get('access_token'),
@@ -202,6 +441,7 @@ class YouTubeOAuthConnector:
             
             # Refresh if needed
             if credentials.expired:
+                logger.info("Refreshing expired credentials")
                 credentials.refresh(Request())
             
             youtube = build('youtube', 'v3', credentials=credentials)
@@ -285,24 +525,6 @@ class YouTubeOAuthConnector:
     
     def _is_youtube_short(self, video_file_path: str) -> bool:
         """Check if video is eligible for YouTube Shorts (< 60 seconds)"""
-        try:
-            # This is a placeholder - in production, use ffprobe or similar
-            # to get actual video duration
-            import subprocess
-            result = subprocess.run([
-                'ffprobe', '-v', 'quiet', '-print_format', 'json',
-                '-show_format', video_file_path
-            ], capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                duration = float(data['format']['duration'])
-                return duration <= 60
-                
-        except Exception:
-            pass
-        
-        # Fallback: assume it's a short if file size is small
         try:
             file_size = os.path.getsize(video_file_path)
             return file_size < 50 * 1024 * 1024  # Less than 50MB
@@ -396,7 +618,7 @@ class YouTubeAutomationScheduler:
             # Create config object
             config = YouTubeConfig(user_id=user_id, **config_data)
             
-            # Store configuration
+            # Store configuration in memory
             self.active_configs[user_id] = {
                 "youtube_automation": {
                     "config": config,
@@ -409,7 +631,7 @@ class YouTubeAutomationScheduler:
             }
             
             # Save to database
-            if hasattr(self.database, 'store_automation_config'):
+            if self.database:
                 await self.database.store_automation_config(
                     user_id=user_id,
                     config_type='youtube_automation',
@@ -454,7 +676,7 @@ class YouTubeAutomationScheduler:
             else:
                 tags = []
             
-            # For now, we'll handle video upload if video_url is provided
+            # Handle video upload if video_url is provided
             if video_url:
                 # Download video temporarily
                 temp_video_path = await self._download_video_temporarily(video_url)
@@ -505,7 +727,7 @@ class YouTubeAutomationScheduler:
     async def _generate_video_content(self, user_id: str, content_type: str) -> Dict[str, Any]:
         """Generate video title, description, and tags using AI"""
         try:
-            if hasattr(self.ai_service, 'generate_youtube_content'):
+            if self.ai_service and hasattr(self.ai_service, 'generate_youtube_content'):
                 content_result = await self.ai_service.generate_youtube_content(
                     content_type=content_type,
                     topic="general",
@@ -534,7 +756,7 @@ class YouTubeAutomationScheduler:
     async def _download_video_temporarily(self, video_url: str) -> Optional[str]:
         """Download video to temporary file for uploading"""
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(video_url)
                 
                 if response.status_code == 200:
@@ -547,6 +769,7 @@ class YouTubeAutomationScheduler:
                     temp_file.write(response.content)
                     temp_file.close()
                     
+                    logger.info(f"Video downloaded temporarily: {temp_file.name}")
                     return temp_file.name
                     
         except Exception as e:
@@ -607,41 +830,57 @@ class YouTubeAutomationScheduler:
             logger.error(f"YouTube status check failed: {e}")
             return {"success": False, "error": str(e)}
 
-
-# Global YouTube service instances (initialize these in your main app)
+# Global instances
+youtube_database = None
 youtube_connector = None
 youtube_scheduler = None
 
+def get_youtube_database() -> YouTubeDatabase:
+    """Get global YouTube database instance"""
+    global youtube_database
+    if not youtube_database:
+        youtube_database = YouTubeDatabase()
+    return youtube_database
 
-
-
-
-
-# Add this to the bottom of your youtube.py file (replace the commented section)
-
-def initialize_youtube_service(database_manager, ai_service):
+async def initialize_youtube_service(database_manager=None, ai_service=None) -> bool:
     """Initialize YouTube service with required dependencies"""
-    global youtube_connector, youtube_scheduler
-    
-    client_id = os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET") 
-    redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
-    
-    if not all([client_id, client_secret, redirect_uri]):
-        logger.error("Missing required Google OAuth credentials")
-        logger.error(f"client_id: {'✓' if client_id else '✗'}")
-        logger.error(f"client_secret: {'✓' if client_secret else '✗'}")
-        logger.error(f"redirect_uri: {'✓' if redirect_uri else '✗'}")
-        return False
-    
-    # Use YouTube-specific database if no database_manager provided
-    if not database_manager:
-        logger.info("No database manager provided, creating YouTube-specific database")
-        database_manager = get_youtube_database()
+    global youtube_connector, youtube_scheduler, youtube_database
     
     try:
+        logger.info("Initializing YouTube service...")
+        
+        # Check required environment variables
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET") 
+        redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
+        
+        if not all([client_id, client_secret, redirect_uri]):
+            missing = []
+            if not client_id: missing.append("GOOGLE_CLIENT_ID")
+            if not client_secret: missing.append("GOOGLE_CLIENT_SECRET")
+            if not redirect_uri: missing.append("GOOGLE_OAUTH_REDIRECT_URI")
+            
+            logger.error(f"Missing required environment variables: {missing}")
+            return False
+        
+        # Initialize database
+        if not database_manager:
+            youtube_database = get_youtube_database()
+            connected = await youtube_database.connect()
+            if not connected:
+                logger.error("Failed to connect to YouTube database")
+                return False
+            database_manager = youtube_database
+        
+        # Initialize YouTube connector
         youtube_connector = YouTubeOAuthConnector(client_id, client_secret, redirect_uri)
-        youtube_scheduler = YouTubeAutomationScheduler(youtube_connector, ai_service, database_manager)
+        
+        # Initialize YouTube scheduler
+        youtube_scheduler = YouTubeAutomationScheduler(
+            youtube_connector, 
+            ai_service, 
+            database_manager
+        )
         
         logger.info("YouTube service initialized successfully")
         logger.info(f"OAuth redirect URI: {redirect_uri}")
@@ -649,4 +888,15 @@ def initialize_youtube_service(database_manager, ai_service):
         
     except Exception as e:
         logger.error(f"YouTube service initialization failed: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return False
+
+# Export functions for main app
+def get_youtube_connector():
+    """Get YouTube connector instance"""
+    return youtube_connector
+
+def get_youtube_scheduler():
+    """Get YouTube scheduler instance"""
+    return youtube_scheduler

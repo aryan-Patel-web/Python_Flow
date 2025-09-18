@@ -47,7 +47,12 @@ logger = logging.getLogger(__name__)
 
 # Import custom modules
 try:
-    from youtube import YouTubeOAuthConnector, YouTubeAutomationScheduler, YouTubeConfig, initialize_youtube_service, youtube_connector, youtube_scheduler
+    from youtube import (
+        initialize_youtube_service, 
+        get_youtube_connector, 
+        get_youtube_scheduler,
+        get_youtube_database
+    )
     YOUTUBE_AVAILABLE = True
     logger.info("YouTube module loaded successfully")
 except ImportError as e:
@@ -243,42 +248,74 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 
+# Updated service initialization
 async def initialize_services():
-    """Initialize all services"""
+    """Initialize all services with robust error handling"""
     global database_manager, ai_service
     
     try:
-        # Initialize YouTube database (primary database)
-        database_manager = get_youtube_database()
-        if await database_manager.connect():
-            logger.info("YouTube database manager initialized and connected")
-        else:
-            logger.error("Failed to connect to YouTube database")
+        logger.info("Starting service initialization...")
+        
+        # Check required environment variables
+        required_env_vars = [
+            'GOOGLE_CLIENT_ID',
+            'GOOGLE_CLIENT_SECRET', 
+            'GOOGLE_OAUTH_REDIRECT_URI',
+            'MONGODB_URI'
+        ]
+        
+        missing_vars = []
+        for var in required_env_vars:
+            if not os.getenv(var):
+                missing_vars.append(var)
+        
+        if missing_vars:
+            logger.error(f"Missing required environment variables: {missing_vars}")
             return False
+            
+        logger.info("Environment variables check passed")
         
         # Initialize AI service
         if AI_SERVICE_AVAILABLE:
-            ai_service = AIService2()
-            logger.info("AI service initialized")
-        
-        # Initialize YouTube service
-        if YOUTUBE_AVAILABLE and database_manager and ai_service:
             try:
-                if initialize_youtube_service(database_manager, ai_service):
-                    logger.info("YouTube service initialized successfully")
-                else:
-                    logger.warning("YouTube service initialization failed")
+                ai_service = AIService2()
+                logger.info("AI service initialized")
             except Exception as e:
-                logger.error(f"YouTube service initialization error: {e}")
+                logger.error(f"AI service initialization error: {e}")
+                ai_service = None
+        else:
+            logger.warning("AI service not available")
+            ai_service = None
         
-        # Initialize WhatsApp service (add similar initialization)
-        if WHATSAPP_AVAILABLE:
-            logger.info("WhatsApp service ready for initialization")
+        # Initialize YouTube service with its own database
+        if YOUTUBE_AVAILABLE:
+            try:
+                logger.info("Initializing YouTube service...")
+                success = await initialize_youtube_service(ai_service=ai_service)
+                
+                if success:
+                    database_manager = get_youtube_database()
+                    logger.info("YouTube service initialization completed successfully")
+                else:
+                    logger.error("YouTube service initialization failed")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"YouTube service initialization failed: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                return False
+        else:
+            logger.error("YouTube module not available - check imports")
+            return False
             
+        logger.info("All services initialized successfully")
         return True
         
     except Exception as e:
-        logger.error(f"Service initialization failed: {e}")
+        logger.error(f"Critical service initialization failure: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return False
 
 
@@ -347,6 +384,38 @@ async def health_check():
         "timestamp": datetime.now().isoformat()
     }
 
+
+
+
+
+
+# Add debug endpoints
+@app.get("/debug/services")
+async def debug_services():
+    """Debug endpoint to check service status"""
+    youtube_connector = get_youtube_connector()
+    youtube_scheduler = get_youtube_scheduler()
+    
+    return {
+        "youtube_connector": youtube_connector is not None,
+        "youtube_scheduler": youtube_scheduler is not None,
+        "database_manager": database_manager is not None,
+        "ai_service": ai_service is not None,
+        "YOUTUBE_AVAILABLE": YOUTUBE_AVAILABLE,
+        "AI_SERVICE_AVAILABLE": AI_SERVICE_AVAILABLE,
+        "DATABASE_AVAILABLE": DATABASE_AVAILABLE,
+        "env_vars": {
+            "GOOGLE_CLIENT_ID": "✓" if os.getenv("GOOGLE_CLIENT_ID") else "✗",
+            "GOOGLE_CLIENT_SECRET": "✓" if os.getenv("GOOGLE_CLIENT_SECRET") else "✗",
+            "GOOGLE_OAUTH_REDIRECT_URI": os.getenv("GOOGLE_OAUTH_REDIRECT_URI"),
+            "MONGODB_URI": "✓" if os.getenv("MONGODB_URI") else "✗",
+            "FRONTEND_URL": os.getenv("FRONTEND_URL")
+        }
+    }
+
+
+
+
 @app.get("/debug/env")
 async def debug_env():
     """Debug endpoint to check environment variables (remove in production)"""
@@ -360,10 +429,16 @@ async def debug_env():
 
 
 
+
+
+
+
+
+
 # Authentication endpoints
 @app.post("/api/auth/register")
 async def register(request: RegisterRequest):
-    """User registration"""
+    """User registration using YouTube database"""
     try:
         if not database_manager:
             raise HTTPException(status_code=503, detail="Database service not available")
@@ -385,13 +460,16 @@ async def register(request: RegisterRequest):
             "automation_enabled": False
         }
         
-        await database_manager.create_user(user_data)
+        success = await database_manager.create_user(user_data)
         
-        return {
-            "success": True,
-            "message": "User registered successfully",
-            "user_id": user_id
-        }
+        if success:
+            return {
+                "success": True,
+                "message": "User registered successfully",
+                "user_id": user_id
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Registration failed")
         
     except HTTPException:
         raise
@@ -401,7 +479,7 @@ async def register(request: RegisterRequest):
 
 @app.post("/api/auth/login")
 async def login(request: LoginRequest):
-    """User login"""
+    """User login using YouTube database"""
     try:
         if not database_manager:
             raise HTTPException(status_code=503, detail="Database service not available")
@@ -436,27 +514,28 @@ async def login(request: LoginRequest):
 
 
 
-# Also update your YouTube OAuth URL endpoint to add more logging
+
+
+# Updated YouTube OAuth endpoints
 @app.post("/api/youtube/oauth-url")
 async def youtube_oauth_url(request: YouTubeOAuthRequest):
     """Generate YouTube OAuth URL"""
     try:
-        # Log incoming request details
-        logger.info(f"=== YOUTUBE OAUTH URL REQUEST ===")
-        logger.info(f"Received request: {request}")
-        logger.info(f"User ID: {request.user_id}")
-        logger.info(f"State: {request.state}")
-        logger.info(f"Redirect URI: {request.redirect_uri}")
-        logger.info(f"YouTube connector available: {youtube_connector is not None}")
-        logger.info(f"================================")
+        logger.info(f"YouTube OAuth request for user_id: {request.user_id}")
+        
+        youtube_connector = get_youtube_connector()
         
         if not youtube_connector:
-            raise HTTPException(status_code=503, detail="YouTube service not available")
+            logger.error("YouTube connector is not initialized")
+            raise HTTPException(
+                status_code=503, 
+                detail="YouTube service not properly initialized. Check server logs."
+            )
         
         # Use frontend domain as redirect URI if not provided
         redirect_uri = request.redirect_uri
         if not redirect_uri:
-            frontend_url = os.getenv("FRONTEND_URL", "https://frontend-agentic.onrender.com")
+            frontend_url = os.getenv("FRONTEND_URL", "https://frontend-agentic-bnc2.onrender.com")
             redirect_uri = f"{frontend_url}/youtube"
             logger.info(f"Using default redirect URI: {redirect_uri}")
         
@@ -465,7 +544,7 @@ async def youtube_oauth_url(request: YouTubeOAuthRequest):
             redirect_uri=redirect_uri
         )
         
-        logger.info(f"OAuth URL generation result: {result}")
+        logger.info(f"OAuth URL generation result: {result.get('success', False)}")
         
         if result["success"]:
             return result
@@ -476,28 +555,22 @@ async def youtube_oauth_url(request: YouTubeOAuthRequest):
         raise
     except Exception as e:
         logger.error(f"YouTube OAuth URL generation failed: {e}")
-        logger.error(f"Exception type: {type(e)}")
-        logger.error(f"Exception details: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-
-
-
-
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 @app.post("/api/youtube/oauth-callback")
 async def youtube_oauth_callback(request: YouTubeOAuthCallback):
     """Handle YouTube OAuth callback and store tokens"""
     try:
+        logger.info(f"YouTube OAuth callback for user_id: {request.user_id}")
+        
+        youtube_connector = get_youtube_connector()
         if not youtube_connector:
             raise HTTPException(status_code=503, detail="YouTube service not available")
         
         # Exchange code for tokens
         redirect_uri = request.redirect_uri
         if not redirect_uri:
-            frontend_url = os.getenv("FRONTEND_URL", "https://frontend-agentic.onrender.com")
+            frontend_url = os.getenv("FRONTEND_URL", "https://frontend-agentic-bnc2.onrender.com")
             redirect_uri = f"{frontend_url}/youtube"
             
         token_result = await youtube_connector.exchange_code_for_token(
@@ -508,7 +581,7 @@ async def youtube_oauth_callback(request: YouTubeOAuthCallback):
         if not token_result["success"]:
             raise HTTPException(status_code=400, detail=token_result["error"])
         
-        # Store YouTube tokens in database for user
+        # Store YouTube tokens in database
         user_id = request.user_id
         
         youtube_credentials = {
@@ -522,13 +595,16 @@ async def youtube_oauth_callback(request: YouTubeOAuthCallback):
             "channel_info": token_result["channel_info"]
         }
         
-        # Store in database
+        # Store in database using the YouTube database
         try:
-            await database_manager.store_user_credentials(
+            success = await database_manager.store_youtube_credentials(
                 user_id=user_id,
-                platform="youtube",
                 credentials=youtube_credentials
             )
+            
+            if not success:
+                logger.error(f"Failed to store YouTube credentials for user {user_id}")
+                
         except Exception as db_error:
             logger.error(f"Database error storing YouTube credentials: {db_error}")
         
@@ -550,20 +626,26 @@ async def youtube_oauth_callback(request: YouTubeOAuthCallback):
 async def youtube_status(user_id: str):
     """Get YouTube connection and automation status"""
     try:
+        logger.info(f"Checking YouTube status for user: {user_id}")
+        
         # Check if user has YouTube credentials stored
         youtube_connected = False
         channel_info = None
         
         try:
-            credentials = await database_manager.get_user_credentials(user_id, "youtube")
+            credentials = await database_manager.get_youtube_credentials(user_id)
             youtube_connected = credentials is not None
             if credentials:
                 channel_info = credentials.get("channel_info")
+                logger.info(f"YouTube credentials found for user {user_id}")
+            else:
+                logger.info(f"No YouTube credentials found for user {user_id}")
         except Exception as db_error:
             logger.error(f"Database error fetching YouTube status: {db_error}")
         
         # Get automation status if scheduler is available
         automation_status = {}
+        youtube_scheduler = get_youtube_scheduler()
         if youtube_scheduler:
             automation_status = await youtube_scheduler.get_automation_status(user_id)
         
@@ -586,6 +668,13 @@ async def youtube_status(user_id: str):
     except Exception as e:
         logger.error(f"YouTube status check failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
+
+
 
 @app.post("/api/youtube/setup-automation")
 async def youtube_setup_automation(request: YouTubeSetupRequest):
@@ -717,6 +806,30 @@ async def generate_youtube_content(request: YouTubeContentRequest):
     except Exception as e:
         logger.error(f"YouTube content generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/debug/mongodb")
+async def test_mongodb():
+    """Test MongoDB connection"""
+    try:
+        if database_manager:
+            health = await database_manager.health_check()
+            return {
+                "status": "success",
+                "database_health": health,
+                "mongodb_uri_set": "✓" if os.getenv("MONGODB_URI") else "✗"
+            }
+        else:
+            return {"status": "failed", "error": "Database manager not initialized"}
+        
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": str(e),
+            "type": type(e).__name__
+        }
+
+
 
 # Add WhatsApp routes here (similar structure)
 # Add Instagram routes here (similar structure)  
