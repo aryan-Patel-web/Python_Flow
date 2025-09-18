@@ -1593,3 +1593,349 @@ Deploy backend and frontend separately
 Test OAuth flows thoroughly
 
 This implementation supports your multi-user SaaS model where users connect their accounts, configure domain-specific automation, and your platform handles content generation and posting while maintaining security and compliance with Meta's policies.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Complete Facebook & Instagram API Setup Guide
+
+## Step 1: Create Meta Developer Account
+
+### 1.1 Register at Meta Developers
+**Website:** https://developers.facebook.com/
+
+1. **Go to:** https://developers.facebook.com/
+2. **Click:** "Get Started" button (top right)
+3. **Login:** Use your personal Facebook account
+4. **Verify:** Phone number (required)
+5. **Accept:** Developer Terms & Policies
+
+**Mock Example:**
+```
+Email: john.developer@gmail.com
+Phone: +91-9876543210
+Account Type: Individual Developer
+```
+
+---
+
+## Step 2: Create Your Facebook App
+
+### 2.1 Create New App
+1. **Click:** "Create App" button
+2. **Select:** "Consumer" app type
+3. **Fill Details:**
+   ```
+   App Name: Social Media Automation Platform
+   App Contact Email: john.developer@gmail.com
+   Purpose: Business automation and social media management
+   ```
+4. **Click:** "Create App"
+
+### 2.2 Get Your App Credentials
+After app creation, you'll see:
+
+**App Dashboard URL:** `https://developers.facebook.com/apps/1234567890123456/`
+
+**Navigate to:** Settings → Basic
+
+**Copy these values:**
+```
+App ID: 1234567890123456
+App Secret: abcd1234efgh5678ijkl9012mnop3456
+```
+
+**Mock Example:**
+```
+FB_APP_ID=1234567890123456
+FB_APP_SECRET=abcd1234efgh5678ijkl9012mnop3456
+META_APP_ID=1234567890123456
+META_APP_SECRET=abcd1234efgh5678ijkl9012mnop3456
+FACEBOOK_APP_ID=1234567890123456
+FACEBOOK_APP_SECRET=abcd1234efgh5678ijkl9012mnop3456
+```
+
+---
+
+## Step 3: Configure Facebook Login
+
+### 3.1 Add Facebook Login Product
+1. **Dashboard:** Your App → Add Product
+2. **Find:** "Facebook Login" 
+3. **Click:** "Set Up"
+
+### 3.2 Configure OAuth Settings
+**Navigate to:** Facebook Login → Settings
+
+**Add Redirect URIs:**
+```
+Valid OAuth Redirect URIs:
+https://agentic-u5lx.onrender.com/api/oauth/facebook/callback
+http://localhost:8000/api/oauth/facebook/callback (for testing)
+```
+
+**Enable:**
+- ✅ Client OAuth Login
+- ✅ Web OAuth Login
+- ✅ Use Strict Mode for Redirect URIs
+
+**Mock Configuration:**
+```
+FB_REDIRECT_URI=https://agentic-u5lx.onrender.com/api/oauth/facebook/callback
+```
+
+---
+
+## Step 4: Request Facebook Permissions
+
+### 4.1 Add Required Permissions
+**Navigate to:** App Review → Permissions and features
+
+**Standard Permissions (Auto-approved):**
+- `public_profile` - Basic profile info
+- `email` - User email address
+
+**Advanced Permissions (Requires Review):**
+- `pages_manage_posts` - Post to Facebook Pages
+- `pages_read_engagement` - Read page insights
+- `pages_show_list` - Access user's pages list
+
+### 4.2 Submit for App Review
+1. **Provide Use Case:** "Social media automation platform for Indian small businesses"
+2. **Upload Screenshots:** Show your login and posting interface
+3. **Demo Video:** Record OAuth flow and posting functionality
+4. **Submit:** Usually takes 3-7 business days
+
+---
+
+## Step 5: Configure Instagram Basic Display
+
+### 5.1 Add Instagram Product
+1. **Dashboard:** Your App → Add Product
+2. **Find:** "Instagram Basic Display"
+3. **Click:** "Set Up"
+
+### 5.2 Configure Instagram Settings
+**Navigate to:** Instagram Basic Display → Basic Display
+
+**Add Redirect URIs:**
+```
+Valid OAuth Redirect URIs:
+https://agentic-u5lx.onrender.com/api/oauth/instagram/callback
+http://localhost:8000/api/oauth/instagram/callback
+```
+
+**Copy Instagram App Details:**
+```
+Instagram App ID: 1234567890123456 (usually same as Facebook)
+Instagram App Secret: xyz789abc123def456ghi789jkl012
+```
+
+**Mock Example:**
+```
+INSTAGRAM_APP_ID=1234567890123456
+INSTAGRAM_APP_SECRET=xyz789abc123def456ghi789jkl012
+IG_APP_ID=1234567890123456
+IG_APP_SECRET=xyz789abc123def456ghi789jkl012
+INSTAGRAM_REDIRECT_URI=https://agentic-u5lx.onrender.com/api/oauth/instagram/callback
+```
+
+---
+
+## Step 6: Create Instagram Test Users
+
+### 6.1 Add Test Users (For Development)
+**Navigate to:** Roles → Test Users
+
+1. **Click:** "Add Instagram Test Users"
+2. **Add Test User:** Enter Instagram username
+3. **Send Invitation:** Test user must accept on Instagram
+4. **Test OAuth:** Use test account for development
+
+**Mock Test User:**
+```
+Instagram Username: @johntester123
+Status: Invitation Sent
+Role: Instagram Test User
+```
+
+---
+
+## Step 7: App Configuration Details
+
+### 7.1 Basic App Information
+**Navigate to:** Settings → Basic
+
+**Required Fields:**
+```
+Display Name: Social Media Automation Platform
+App Contact Email: john.developer@gmail.com
+Privacy Policy URL: https://agentic-u5lx.onrender.com/privacy
+Terms of Service URL: https://agentic-u5lx.onrender.com/terms
+App Icon: Upload 1024x1024 PNG logo
+```
+
+### 7.2 Advanced Settings
+**Navigate to:** Settings → Advanced
+
+**Configure:**
+```
+Server IP Whitelist: Your server IP (optional)
+App Secret Proof: Enabled (recommended)
+Client OAuth Login: Yes
+Web OAuth Login: Yes
+```
+
+---
+
+## Step 8: Final Environment Variables
+
+### 8.1 Complete .env Configuration
+```bash
+# Facebook Configuration
+FB_APP_ID=1234567890123456
+FB_APP_SECRET=abcd1234efgh5678ijkl9012mnop3456
+FB_REDIRECT_URI=https://agentic-u5lx.onrender.com/api/oauth/facebook/callback
+
+# Alternative Facebook Variables
+FACEBOOK_APP_ID=1234567890123456
+FACEBOOK_APP_SECRET=abcd1234efgh5678ijkl9012mnop3456
+META_APP_ID=1234567890123456
+META_APP_SECRET=abcd1234efgh5678ijkl9012mnop3456
+
+# Instagram Configuration
+INSTAGRAM_APP_ID=1234567890123456
+INSTAGRAM_APP_SECRET=xyz789abc123def456ghi789jkl012
+INSTAGRAM_REDIRECT_URI=https://agentic-u5lx.onrender.com/api/oauth/instagram/callback
+
+# Alternative Instagram Variables
+IG_APP_ID=1234567890123456
+IG_APP_SECRET=xyz789abc123def456ghi789jkl012
+```
+
+---
+
+## Step 9: Testing Your Setup
+
+### 9.1 Test Facebook Connection
+1. **Start your backend:** `python main1.py`
+2. **Visit:** `http://localhost:8000/api/oauth/facebook/authorize`
+3. **Should redirect to:** Facebook OAuth page
+4. **Login and authorize:** Your test Facebook account
+5. **Should redirect back to:** Your callback URL
+
+### 9.2 Test Instagram Connection
+1. **Visit:** `http://localhost:8000/api/oauth/instagram/authorize`
+2. **Should redirect to:** Instagram OAuth page
+3. **Login with:** Test Instagram account
+4. **Authorize and redirect back**
+
+---
+
+## Step 10: Production Deployment
+
+### 10.1 App Review Submission
+**Required for Production:**
+
+1. **Business Verification:** Verify your business (if applicable)
+2. **Privacy Policy:** Must be publicly accessible
+3. **Terms of Service:** Must be publicly accessible
+4. **App Review:** Submit permissions for review
+5. **Use Case Description:**
+   ```
+   "Multi-user social media automation platform that helps Indian 
+   small businesses automatically generate and post content to their 
+   Facebook pages and Instagram accounts using AI content generation."
+   ```
+
+### 10.2 Update Production URLs
+**In your Facebook App Settings:**
+```
+Valid OAuth Redirect URIs:
+https://agentic-u5lx.onrender.com/api/oauth/facebook/callback
+https://agentic-u5lx.onrender.com/api/oauth/instagram/callback
+
+Privacy Policy URL: https://agentic-u5lx.onrender.com/privacy
+Terms of Service URL: https://agentic-u5lx.onrender.com/terms
+```
+
+---
+
+## Step 11: Common Issues & Solutions
+
+### 11.1 OAuth Errors
+**Error:** "Invalid redirect_uri"
+**Solution:** Ensure exact match in app settings
+
+**Error:** "App not approved for this permission"
+**Solution:** Submit app for review or use test users
+
+### 11.2 API Errors
+**Error:** "Invalid access token"
+**Solution:** Check token expiration and refresh
+
+**Error:** "Rate limit exceeded"
+**Solution:** Implement proper rate limiting
+
+---
+
+## Step 12: Real Example Configuration
+
+Here's a real example with mock data:
+
+```bash
+# Mock Facebook App: "SocialBot Automation"
+FB_APP_ID=987654321098765
+FB_APP_SECRET=def456ghi789jkl012mno345pqr678
+FB_REDIRECT_URI=https://socialbot-api.onrender.com/api/oauth/facebook/callback
+
+# Mock Instagram App: Same as Facebook
+INSTAGRAM_APP_ID=987654321098765
+INSTAGRAM_APP_SECRET=stu901vwx234yzab567cde890fgh123
+INSTAGRAM_REDIRECT_URI=https://socialbot-api.onrender.com/api/oauth/instagram/callback
+
+# All alternative variables use same values
+META_APP_ID=987654321098765
+META_APP_SECRET=def456ghi789jkl012mno345pqr678
+FACEBOOK_APP_ID=987654321098765
+FACEBOOK_APP_SECRET=def456ghi789jkl012mno345pqr678
+IG_APP_ID=987654321098765
+IG_APP_SECRET=stu901vwx234yzab567cde890fgh123
+```
+
+This configuration would allow your application to authenticate users with Facebook and Instagram, manage their pages/accounts, and post content automatically.
