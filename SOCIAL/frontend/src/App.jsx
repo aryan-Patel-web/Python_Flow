@@ -226,9 +226,7 @@ function App() {
                   <Route path="/instagram" element={<ProtectedRoute><InstagramAutomation /></ProtectedRoute>} />
                   <Route path="/whatsapp" element={<ProtectedRoute><WhatsAppAutomation /></ProtectedRoute>} />
                   {/* <Route path="/youtube" element={<ProtectedRoute><YouTubeAutomation /></ProtectedRoute>} /> */}
-                  // In your App.jsx, replace the YouTube route with this:
-<Route path="/youtube" element={
-  // Check if it's an OAuth callback (has code parameter)
+                  <Route path="/youtube" element={
   new URLSearchParams(window.location.search).get('code') ? 
     <YouTubeAutomation /> : 
     <ProtectedRoute><YouTubeAutomation /></ProtectedRoute>
