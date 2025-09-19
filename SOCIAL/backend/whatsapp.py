@@ -1,6 +1,7 @@
 """
 WhatsApp Cloud API Automation Module - Complete WhatsApp Business Automation
 Multi-user support with message templates, media sending, and campaign management
+Enhanced error handling and credential validation
 """
 
 import os
@@ -14,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, field
 import httpx
+from httpx import TimeoutException, ConnectError
 import requests
 import aiofiles
 import tempfile
@@ -37,7 +39,7 @@ class WhatsAppConfig:
     timezone: str = "UTC"
 
 class WhatsAppCloudAPI:
-    """WhatsApp Cloud API connector"""
+    """WhatsApp Cloud API connector with enhanced error handling"""
     
     def __init__(self, access_token: str, phone_number_id: str, api_version: str = "v18.0"):
         self.access_token = access_token
@@ -48,6 +50,60 @@ class WhatsAppCloudAPI:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
+    
+    async def validate_credentials(self) -> Dict[str, Any]:
+        """Validate WhatsApp credentials by testing API access"""
+        try:
+            # Test with a simple API call to verify credentials
+            url = f"{self.base_url}/{self.phone_number_id}"
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    url,
+                    headers=self.headers,
+                    timeout=15
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return {
+                        "success": True,
+                        "message": "Credentials valid",
+                        "phone_number_id": self.phone_number_id,
+                        "verified_name": result.get("verified_name", "Unknown"),
+                        "display_phone_number": result.get("display_phone_number", "Unknown")
+                    }
+                elif response.status_code == 401:
+                    return {
+                        "success": False,
+                        "error": "Invalid WhatsApp access token",
+                        "code": "INVALID_TOKEN",
+                        "suggestion": "Generate a new access token from Meta Developer Console"
+                    }
+                elif response.status_code == 404:
+                    return {
+                        "success": False,
+                        "error": "Phone number ID not found",
+                        "code": "INVALID_PHONE_ID",
+                        "suggestion": "Verify your Phone Number ID in Meta Developer Console"
+                    }
+                else:
+                    error_data = response.json() if response.content else {}
+                    error_msg = error_data.get("error", {}).get("message", f"HTTP {response.status_code}")
+                    return {
+                        "success": False,
+                        "error": f"WhatsApp API error: {error_msg}",
+                        "code": error_data.get("error", {}).get("code"),
+                        "details": error_data
+                    }
+                    
+        except TimeoutException:
+            return {"success": False, "error": "Request timeout - check internet connection", "code": "TIMEOUT"}
+        except ConnectError:
+            return {"success": False, "error": "Cannot connect to WhatsApp API", "code": "CONNECTION_ERROR"}
+        except Exception as e:
+            logger.error(f"WhatsApp credential validation failed: {e}")
+            return {"success": False, "error": f"Validation failed: {str(e)}", "code": "UNKNOWN_ERROR"}
         
     async def send_text_message(self, to: str, message: str) -> Dict[str, Any]:
         """Send text message via WhatsApp Cloud API"""
@@ -86,17 +142,19 @@ class WhatsAppCloudAPI:
                     }
                 else:
                     error_data = response.json() if response.content else {}
+                    error_message = error_data.get("error", {}).get("message", "Unknown error")
                     logger.error(f"WhatsApp message failed: {response.status_code} - {error_data}")
                     
                     return {
                         "success": False,
-                        "error": f"HTTP {response.status_code}",
-                        "details": error_data.get("error", {}).get("message", "Unknown error")
+                        "error": f"HTTP {response.status_code}: {error_message}",
+                        "details": error_data.get("error", {}),
+                        "to": to
                     }
                     
         except Exception as e:
             logger.error(f"WhatsApp message send failed: {e}")
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": str(e), "to": to}
     
     async def send_media_message(
         self, 
@@ -144,10 +202,11 @@ class WhatsAppCloudAPI:
                     }
                 else:
                     error_data = response.json() if response.content else {}
+                    error_message = error_data.get("error", {}).get("message", "Unknown error")
                     return {
                         "success": False,
-                        "error": f"HTTP {response.status_code}",
-                        "details": error_data.get("error", {}).get("message", "Unknown error")
+                        "error": f"HTTP {response.status_code}: {error_message}",
+                        "details": error_data.get("error", {})
                     }
                     
         except Exception as e:
@@ -205,10 +264,11 @@ class WhatsAppCloudAPI:
                     }
                 else:
                     error_data = response.json() if response.content else {}
+                    error_message = error_data.get("error", {}).get("message", "Unknown error")
                     return {
                         "success": False,
-                        "error": f"HTTP {response.status_code}",
-                        "details": error_data.get("error", {}).get("message", "Unknown error")
+                        "error": f"HTTP {response.status_code}: {error_message}",
+                        "details": error_data.get("error", {})
                     }
                     
         except Exception as e:
@@ -216,7 +276,7 @@ class WhatsAppCloudAPI:
             return {"success": False, "error": str(e)}
     
     async def get_business_profile(self) -> Dict[str, Any]:
-        """Get WhatsApp Business profile information"""
+        """Get WhatsApp Business profile information with enhanced error handling"""
         try:
             url = f"{self.base_url}/{self.phone_number_id}"
             
@@ -234,14 +294,46 @@ class WhatsAppCloudAPI:
                         "profile": result
                     }
                 else:
+                    error_data = response.json() if response.content else {}
+                    error_message = error_data.get("error", {}).get("message", "Unknown API error")
+                    error_code = error_data.get("error", {}).get("code")
+                    error_type = error_data.get("error", {}).get("type")
+                    
+                    logger.error(f"WhatsApp profile fetch failed: {response.status_code} - {error_data}")
+                    
                     return {
                         "success": False,
-                        "error": f"HTTP {response.status_code}"
+                        "error": f"HTTP {response.status_code}: {error_message}",
+                        "details": error_message,
+                        "error_code": error_code,
+                        "error_type": error_type,
+                        "suggestion": self._get_error_suggestion(response.status_code, error_code)
                     }
                     
+        except TimeoutException:
+            logger.error("WhatsApp API timeout")
+            return {"success": False, "error": "Request timeout", "suggestion": "Check internet connection"}
+        except ConnectError:
+            logger.error("WhatsApp API connection failed")
+            return {"success": False, "error": "Connection failed", "suggestion": "Check internet connection"}
         except Exception as e:
             logger.error(f"WhatsApp profile fetch failed: {e}")
             return {"success": False, "error": str(e)}
+    
+    def _get_error_suggestion(self, status_code: int, error_code: str = None) -> str:
+        """Get helpful suggestion based on error"""
+        if status_code == 401:
+            return "Check your access token in Meta Developer Console"
+        elif status_code == 404:
+            return "Verify your Phone Number ID is correct"
+        elif status_code == 403:
+            return "Check if your WhatsApp Business account is verified"
+        elif error_code == "100":
+            return "Invalid parameter - check your phone number ID format"
+        elif error_code == "190":
+            return "Access token expired - generate a new one"
+        else:
+            return "Check WhatsApp Business API documentation"
     
     async def mark_message_read(self, message_id: str) -> Dict[str, Any]:
         """Mark incoming message as read"""
@@ -347,7 +439,7 @@ class WhatsAppWebhookHandler:
             return []
 
 class WhatsAppAutomationScheduler:
-    """WhatsApp automation and campaign scheduler"""
+    """WhatsApp automation and campaign scheduler with enhanced error handling"""
     
     def __init__(self, ai_service, database_manager):
         self.ai_service = ai_service
@@ -365,19 +457,40 @@ class WhatsAppAutomationScheduler:
         access_token: str,
         config: WhatsAppConfig
     ) -> Dict[str, Any]:
-        """Setup WhatsApp automation for user"""
+        """Setup WhatsApp automation for user with comprehensive validation"""
         try:
+            logger.info(f"Setting up WhatsApp automation for user {user_id}")
+            logger.info(f"Phone ID: {phone_number_id}")
+            logger.info(f"Token prefix: {access_token[:20]}...")
+            
             # Create WhatsApp API instance for user
             whatsapp_api = WhatsAppCloudAPI(access_token, phone_number_id)
             
-            # Test connection
-            profile_result = await whatsapp_api.get_business_profile()
-            if not profile_result.get("success"):
+            # Step 1: Validate credentials first
+            validation_result = await whatsapp_api.validate_credentials()
+            if not validation_result.get("success"):
+                logger.error(f"WhatsApp validation failed for user {user_id}: {validation_result}")
                 return {
                     "success": False,
-                    "error": "Failed to connect to WhatsApp API",
-                    "details": profile_result.get("error")
+                    "error": "WhatsApp credential validation failed",
+                    "details": validation_result.get("error"),
+                    "code": validation_result.get("code"),
+                    "suggestion": validation_result.get("suggestion", "Check your WhatsApp API credentials")
                 }
+            
+            logger.info(f"WhatsApp credentials validated successfully for user {user_id}")
+            
+            # Step 2: Test profile access (optional - for additional verification)
+            try:
+                profile_result = await whatsapp_api.get_business_profile()
+                if not profile_result.get("success"):
+                    logger.warning(f"WhatsApp profile access warning for user {user_id}: {profile_result}")
+                    # Don't fail setup for profile issues - credentials are already validated
+                else:
+                    logger.info(f"WhatsApp profile accessed successfully for user {user_id}")
+            except Exception as profile_error:
+                logger.warning(f"Profile test failed but continuing with setup: {profile_error}")
+                profile_result = {"success": True, "profile": {}}
             
             # Store API instance and config
             self.whatsapp_apis[user_id] = whatsapp_api
@@ -398,17 +511,20 @@ class WhatsAppAutomationScheduler:
             
             # Save to database
             if hasattr(self.database, 'store_automation_config'):
-                config_dict = config.__dict__.copy()
-                # Don't store sensitive tokens in config
-                config_dict.pop('access_token', None)
-                
-                await self.database.store_automation_config(
-                    user_id=user_id,
-                    config_type='whatsapp_automation',
-                    config_data=config_dict
-                )
+                try:
+                    config_dict = config.__dict__.copy()
+                    # Don't store sensitive tokens in config
+                    config_dict.pop('access_token', None)
+                    
+                    await self.database.store_automation_config(
+                        user_id=user_id,
+                        config_type='whatsapp_automation',
+                        config_data=config_dict
+                    )
+                except Exception as db_error:
+                    logger.warning(f"Database save failed but continuing: {db_error}")
             
-            logger.info(f"WhatsApp automation setup successful for user {user_id}")
+            logger.info(f"WhatsApp automation setup completed successfully for user {user_id}")
             
             return {
                 "success": True,
@@ -418,15 +534,21 @@ class WhatsAppAutomationScheduler:
                     "phone_number_id": phone_number_id,
                     "auto_reply_enabled": config.auto_reply_enabled,
                     "campaign_enabled": config.campaign_enabled,
-                    "business_hours": config.business_hours
+                    "business_hours": config.business_hours,
+                    "verified_name": validation_result.get("verified_name", "Unknown"),
+                    "display_phone_number": validation_result.get("display_phone_number", "Unknown")
                 },
                 "business_profile": profile_result.get("profile", {}),
                 "scheduler_status": "Active"
             }
             
         except Exception as e:
-            logger.error(f"WhatsApp automation setup failed: {e}")
-            return {"success": False, "error": str(e)}
+            logger.error(f"WhatsApp automation setup failed for user {user_id}: {e}")
+            return {
+                "success": False, 
+                "error": f"Setup failed: {str(e)}",
+                "suggestion": "Check WhatsApp Business API configuration and credentials"
+            }
     
     async def send_message(
         self,

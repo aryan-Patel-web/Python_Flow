@@ -647,81 +647,13 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+
+
+
 # Basic Routes
-@app.get("/api/oauth/{platform}/callback")
-async def oauth_callback(platform: str, code: str, state: str):
-    try:
-        user_id = oauth_states.get(state)
-        if not user_id:
-            return RedirectResponse(
-                url="https://frontend-agentic-bnc2.onrender.com/?error=invalid_state",
-                status_code=302
-            )
-        
-        if platform == "facebook":
-            result = await facebook_connector.exchange_code_for_token(code)
-            if result["success"]:
-                user_facebook_tokens[user_id] = {
-                    "access_token": result["access_token"],
-                    "facebook_username": result["user_info"].get("name", "Unknown"),
-                    "pages": result.get("pages", [])
-                }
-                
-                # Store in database if available
-                if hasattr(database_manager, 'store_platform_tokens'):
-                    await database_manager.store_platform_tokens(
-                        user_id=user_id,
-                        platform="facebook",
-                        token_data={
-                            "access_token": result["access_token"],
-                            "expires_in": result.get("expires_in", 3600),
-                            "username": result["user_info"].get("name", "Unknown"),
-                            "user_id": result["user_info"].get("id", ""),
-                            "pages": result.get("pages", [])
-                        }
-                    )
-                    
-        elif platform == "instagram":
-            result = await instagram_connector.exchange_code_for_token(code)
-            if result["success"]:
-                user_instagram_tokens[user_id] = {
-                    "access_token": result["access_token"],
-                    "instagram_username": result["user_info"].get("username", "Unknown"),
-                    "instagram_user_id": result["user_info"].get("id", "")
-                }
-                
-                # Store in database if available
-                if hasattr(database_manager, 'store_platform_tokens'):
-                    await database_manager.store_platform_tokens(
-                        user_id=user_id,
-                        platform="instagram",
-                        token_data={
-                            "access_token": result["access_token"],
-                            "expires_in": result.get("expires_in", 5184000),
-                            "username": result["user_info"].get("username", "Unknown"),
-                            "user_id": result["user_info"].get("id", "")
-                        }
-                    )
-        
-        oauth_states.pop(state, None)
-        
-        if result["success"]:
-            username = result["user_info"].get("name" if platform == "facebook" else "username", "User")
-            return RedirectResponse(
-                url=f"https://frontend-agentic-bnc2.onrender.com/?{platform}_connected=true&username={username}",
-                status_code=302
-            )
-        else:
-            return RedirectResponse(
-                url=f"https://frontend-agentic-bnc2.onrender.com/?error={platform}_auth_failed",
-                status_code=302
-            )
-    except Exception as e:
-        logger.error(f"OAuth callback error: {e}")
-        return RedirectResponse(
-            url="https://frontend-agentic-bnc2.onrender.com/?error=oauth_failed",
-            status_code=302
-        )
+
 
 # Connection Status Routes
 @app.get("/api/{platform}/connection-status")
@@ -807,6 +739,10 @@ async def manual_post(post_data: ManualPostRequest, current_user: dict = Depends
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+
+
+
+
 # WhatsApp Routes
 @app.post("/api/whatsapp/setup")
 async def setup_whatsapp(
@@ -815,6 +751,10 @@ async def setup_whatsapp(
 ):
     try:
         user_id = current_user["id"]
+        
+        logger.info(f"WhatsApp setup for user {user_id}")
+        logger.info(f"Phone ID: {setup_data.phone_number_id}")
+        logger.info(f"Token prefix: {setup_data.access_token[:20]}...")
         
         if not setup_data.phone_number_id or not setup_data.access_token:
             return {"success": False, "error": "Phone number ID and access token required"}
@@ -830,6 +770,7 @@ async def setup_whatsapp(
                 campaign_enabled=setup_data.campaign_enabled
             )
         else:
+            logger.warning("WhatsApp module not available, using mock")
             config = MockWhatsAppConfig(
                 user_id=user_id,
                 business_name=setup_data.business_name or f"{current_user['name']}'s Business",
@@ -840,6 +781,28 @@ async def setup_whatsapp(
                 business_hours=setup_data.business_hours,
                 timezone=setup_data.timezone
             )
+        
+        # Test WhatsApp API connection first
+        try:
+            from whatsapp import WhatsAppCloudAPI
+            test_api = WhatsAppCloudAPI(setup_data.access_token, setup_data.phone_number_id)
+            profile_test = await test_api.get_business_profile()
+            
+            logger.info(f"WhatsApp API test result: {profile_test}")
+            
+            if not profile_test.get("success"):
+                return {
+                    "success": False,
+                    "error": "Invalid WhatsApp credentials",
+                    "details": profile_test.get("error", "Token or Phone Number ID invalid")
+                }
+        except Exception as api_error:
+            logger.error(f"WhatsApp API test failed: {api_error}")
+            return {
+                "success": False,
+                "error": "WhatsApp API connection failed",
+                "details": str(api_error)
+            }
         
         # Setup automation for this user
         result = await whatsapp_scheduler.setup_whatsapp_automation(
@@ -874,7 +837,11 @@ async def setup_whatsapp(
         
     except Exception as e:
         logger.error(f"WhatsApp setup error: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Setup failed: {str(e)}"}
+
+
+
+
 
 @app.post("/api/whatsapp/send-message")
 async def send_whatsapp_message(message_data: WhatsAppMessageRequest, current_user: dict = Depends(get_current_user)):
@@ -1262,6 +1229,11 @@ async def login_user(login_data: LoginRequest):
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     return {"success": True, "user": current_user}
 
+
+
+
+
+
 # OAuth Routes
 @app.get("/api/oauth/{platform}/authorize")
 async def oauth_authorize(platform: str, current_user: dict = Depends(get_current_user)):
@@ -1284,9 +1256,83 @@ async def oauth_authorize(platform: str, current_user: dict = Depends(get_curren
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# @app.get("/api/auth/me")
-# async def get_current_user_info(current_user: dict = Depends(get_current_user)):
-#     return {"success": True, "user": current_user}
+
+
+
+@app.get("/api/oauth/{platform}/callback")
+async def oauth_callback(platform: str, code: str, state: str):
+    try:
+        user_id = oauth_states.get(state)
+        if not user_id:
+            return RedirectResponse(
+                url="https://frontend-agentic-bnc2.onrender.com/?error=invalid_state",
+                status_code=302
+            )
+        
+        if platform == "facebook":
+            result = await facebook_connector.exchange_code_for_token(code)
+            if result["success"]:
+                user_facebook_tokens[user_id] = {
+                    "access_token": result["access_token"],
+                    "facebook_username": result["user_info"].get("name", "Unknown"),
+                    "pages": result.get("pages", [])
+                }
+                
+                # Store in database if available
+                if hasattr(database_manager, 'store_platform_tokens'):
+                    await database_manager.store_platform_tokens(
+                        user_id=user_id,
+                        platform="facebook",
+                        token_data={
+                            "access_token": result["access_token"],
+                            "expires_in": result.get("expires_in", 3600),
+                            "username": result["user_info"].get("name", "Unknown"),
+                            "user_id": result["user_info"].get("id", ""),
+                            "pages": result.get("pages", [])
+                        }
+                    )
+                    
+        elif platform == "instagram":
+            result = await instagram_connector.exchange_code_for_token(code)
+            if result["success"]:
+                user_instagram_tokens[user_id] = {
+                    "access_token": result["access_token"],
+                    "instagram_username": result["user_info"].get("username", "Unknown"),
+                    "instagram_user_id": result["user_info"].get("id", "")
+                }
+                
+                # Store in database if available
+                if hasattr(database_manager, 'store_platform_tokens'):
+                    await database_manager.store_platform_tokens(
+                        user_id=user_id,
+                        platform="instagram",
+                        token_data={
+                            "access_token": result["access_token"],
+                            "expires_in": result.get("expires_in", 5184000),
+                            "username": result["user_info"].get("username", "Unknown"),
+                            "user_id": result["user_info"].get("id", "")
+                        }
+                    )
+        
+        oauth_states.pop(state, None)
+        
+        if result["success"]:
+            username = result["user_info"].get("name" if platform == "facebook" else "username", "User")
+            return RedirectResponse(
+                url=f"https://frontend-agentic-bnc2.onrender.com/?{platform}_connected=true&username={username}",
+                status_code=302
+            )
+        else:
+            return RedirectResponse(
+                url=f"https://frontend-agentic-bnc2.onrender.com/?error={platform}_auth_failed",
+                status_code=302
+            )
+    except Exception as e:
+        logger.error(f"OAuth callback error: {e}")
+        return RedirectResponse(
+            url="https://frontend-agentic-bnc2.onrender.com/?error=oauth_failed",
+            status_code=302
+        )
 
 # Main execution
 if __name__ == "__main__":
