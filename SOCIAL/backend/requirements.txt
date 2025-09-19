@@ -62,7 +62,7 @@ psutil==5.9.6
 
 # Social Media Specific
 tweepy==4.14.0
-instagram-basic-display-api==0.1.1
+
 
 # WhatsApp Cloud API
 facebook-business==18.0.2
