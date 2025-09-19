@@ -1,6 +1,6 @@
 """
-Clean Facebook & Instagram Automation Backend
-Properly organized with all imports, error-free implementation
+Complete Social Media Automation Backend - WhatsApp, Facebook, Instagram
+Fixed integration with proper webhook handling and all platform support
 """
 
 # Standard library imports
@@ -26,7 +26,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 
@@ -43,16 +43,28 @@ logger = logging.getLogger(__name__)
 
 # Try to import custom modules
 try:
-    from ai_service import AIService
+    from ai_service1 import EnhancedAIService
     AI_AVAILABLE = True
-except ImportError:
+    logger.info("AI Service imported successfully")
+except ImportError as e:
     AI_AVAILABLE = False
+    logger.warning(f"AI Service not available: {e}")
 
 try:
-    from database import MultiUserDatabaseManager
+    from database1 import MultiUserSocialDatabase
     DB_AVAILABLE = True
-except ImportError:
+    logger.info("Database module imported successfully")
+except ImportError as e:
     DB_AVAILABLE = False
+    logger.warning(f"Database not available: {e}")
+
+try:
+    from whatsapp import WhatsAppCloudAPI, WhatsAppWebhookHandler, WhatsAppAutomationScheduler, WhatsAppConfig
+    WHATSAPP_AVAILABLE = True
+    logger.info("WhatsApp module imported successfully")
+except ImportError as e:
+    WHATSAPP_AVAILABLE = False
+    logger.warning(f"WhatsApp module not available: {e}")
 
 # Pydantic Models
 class RegisterRequest(BaseModel):
@@ -81,6 +93,17 @@ class ManualPostRequest(BaseModel):
     content: str
     page_id: str = ""
     image_url: str = ""
+
+class WhatsAppMessageRequest(BaseModel):
+    to: str
+    message: str
+    message_type: str = "text"
+
+class WhatsAppBroadcastRequest(BaseModel):
+    recipient_list: List[str]
+    message: str
+    media_url: str = ""
+    media_type: str = ""
 
 class TestPostRequest(BaseModel):
     platform: str
@@ -261,16 +284,15 @@ class InstagramOAuthConnector:
 
 # Mock Classes for Development
 class MockAIService:
-    async def generate_reddit_domain_content(self, **kwargs):
+    async def generate_social_content(self, **kwargs):
         return {
             "success": False,
             "error": "Mock AI Service",
-            "title": f"Mock Title for {kwargs.get('domain', 'general')}",
             "content": "Configure MISTRAL_API_KEY or GROQ_API_KEY for real AI content",
             "ai_service": "mock"
         }
     
-    async def test_ai_connection(self):
+    async def test_ai_services(self):
         return {"success": False, "error": "Mock AI", "primary_service": "mock"}
 
 class MockDatabaseManager:
@@ -337,8 +359,11 @@ database_manager = None
 ai_service = None
 facebook_connector = None
 instagram_connector = None
+whatsapp_handler = None
+whatsapp_scheduler = None
 user_facebook_tokens = {}
 user_instagram_tokens = {}
+user_whatsapp_tokens = {}
 oauth_states = {}
 
 # Authentication
@@ -357,15 +382,15 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 # Application Lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global database_manager, ai_service, facebook_connector, instagram_connector
+    global database_manager, ai_service, facebook_connector, instagram_connector, whatsapp_handler, whatsapp_scheduler
     
-    logger.info("Starting Social Media Automation System...")
+    logger.info("Starting Complete Social Media Automation System...")
     
     # Initialize Database
     try:
         if DB_AVAILABLE:
             mongodb_uri = os.getenv("MONGODB_URI", "mongodb+srv://aryan:aryan@cluster0.7iquw6v.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
-            database_manager = MultiUserDatabaseManager(mongodb_uri)
+            database_manager = MultiUserSocialDatabase(mongodb_uri)
             await database_manager.connect()
             logger.info("Real database connected")
         else:
@@ -380,8 +405,8 @@ async def lifespan(app: FastAPI):
     # Initialize AI Service
     try:
         if AI_AVAILABLE:
-            ai_service = AIService()
-            test_result = await ai_service.test_ai_connection()
+            ai_service = EnhancedAIService()
+            test_result = await ai_service.test_ai_services()
             if test_result.get("success"):
                 logger.info(f"Real AI service ready: {test_result.get('primary_service')}")
             else:
@@ -393,18 +418,30 @@ async def lifespan(app: FastAPI):
         logger.error(f"AI service failed: {e}")
         ai_service = MockAIService()
     
-    # Initialize Connectors
+    # Initialize Facebook Connector
     facebook_connector = FacebookOAuthConnector(
-        app_id=os.getenv('FB_APP_ID', '1802724037303404'),
-        app_secret=os.getenv('FB_APP_SECRET', '88015121b7360d1f7f074f630a54a485'),
+        app_id=os.getenv('FB_APP_ID', '788457114351565'),
+        app_secret=os.getenv('FB_APP_SECRET', '3a6fba32779a94c001b274ab91c026ee'),
         redirect_uri=os.getenv('FB_REDIRECT_URI', 'https://agentic-u5lx.onrender.com/api/oauth/facebook/callback')
     )
     
+    # Initialize Instagram Connector
     instagram_connector = InstagramOAuthConnector(
-        app_id=os.getenv('INSTAGRAM_APP_ID', '1802724037303404'),
-        app_secret=os.getenv('INSTAGRAM_APP_SECRET', 'instagram_secret_here'),
+        app_id=os.getenv('INSTAGRAM_APP_ID', '2247747609000742'),
+        app_secret=os.getenv('INSTAGRAM_APP_SECRET', '55d50918f00e10f38a64c5e7b8dabdc8'),
         redirect_uri=os.getenv('INSTAGRAM_REDIRECT_URI', 'https://agentic-u5lx.onrender.com/api/oauth/instagram/callback')
     )
+    
+    # Initialize WhatsApp Handler
+    if WHATSAPP_AVAILABLE:
+        whatsapp_handler = WhatsAppWebhookHandler(
+            verify_token=os.getenv('WEBHOOK_VERIFY_TOKEN', 'whatsapp_webhook_verify_2024_secure_velocity'),
+            app_secret=os.getenv('META_APP_SECRET', '3a6fba32779a94c001b274ab91c026ee')
+        )
+        whatsapp_scheduler = WhatsAppAutomationScheduler(ai_service, database_manager)
+        logger.info("WhatsApp automation ready")
+    else:
+        logger.warning("WhatsApp module not available")
     
     logger.info("Application startup completed")
     yield
@@ -415,8 +452,9 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI App
 app = FastAPI(
-    title="Social Media Automation API",
-    version="1.0.0",
+    title="Complete Social Media Automation API",
+    description="WhatsApp, Facebook & Instagram automation with AI content generation",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -434,9 +472,10 @@ app.add_middleware(
 async def root():
     return {
         "success": True,
-        "message": "Social Media Automation API",
-        "platforms": ["facebook", "instagram"],
-        "version": "1.0.0",
+        "message": "Complete Social Media Automation API",
+        "platforms": ["whatsapp", "facebook", "instagram"],
+        "features": ["oauth", "automation", "ai_content", "webhooks", "campaigns"],
+        "version": "2.0.0",
         "timestamp": datetime.now().isoformat()
     }
 
@@ -449,10 +488,51 @@ async def health_check():
             "database": database_manager is not None,
             "ai": ai_service is not None and not isinstance(ai_service, MockAIService),
             "facebook": facebook_connector is not None and facebook_connector.is_configured,
-            "instagram": instagram_connector is not None and instagram_connector.is_configured
+            "instagram": instagram_connector is not None and instagram_connector.is_configured,
+            "whatsapp": WHATSAPP_AVAILABLE and whatsapp_handler is not None
         },
         "timestamp": datetime.now().isoformat()
     }
+
+@app.get("/privacy-policy", response_class=HTMLResponse)
+async def privacy_policy():
+    """Privacy policy page required for Meta app approval"""
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>VelocityAgent Privacy Policy</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+            h1 { color: #333; }
+            h2 { color: #666; margin-top: 30px; }
+            p { margin-bottom: 16px; }
+        </style>
+    </head>
+    <body>
+        <h1>Privacy Policy</h1>
+        <p><strong>Last updated:</strong> September 19, 2025</p>
+        
+        <h2>Information We Collect</h2>
+        <p>We collect information you provide when using our social media automation services, including account credentials and content preferences.</p>
+        
+        <h2>How We Use Information</h2>
+        <p>We use information to provide and improve our automation services, generate content, and manage your social media accounts as requested.</p>
+        
+        <h2>Data Security</h2>
+        <p>We implement appropriate security measures to protect your information and use encryption for sensitive data like access tokens.</p>
+        
+        <h2>Third-Party Services</h2>
+        <p>Our service integrates with Facebook, Instagram, and WhatsApp APIs. Please review their privacy policies for information about how they handle data.</p>
+        
+        <h2>Contact Us</h2>
+        <p>Questions about this policy: aryanpatel77462@gmail.com</p>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
 # Authentication Routes
 @app.post("/api/auth/register")
@@ -522,6 +602,21 @@ async def oauth_callback(platform: str, code: str, state: str):
                     "facebook_username": result["user_info"].get("name", "Unknown"),
                     "pages": result.get("pages", [])
                 }
+                
+                # Store in database if available
+                if hasattr(database_manager, 'store_platform_tokens'):
+                    await database_manager.store_platform_tokens(
+                        user_id=user_id,
+                        platform="facebook",
+                        token_data={
+                            "access_token": result["access_token"],
+                            "expires_in": result.get("expires_in", 3600),
+                            "username": result["user_info"].get("name", "Unknown"),
+                            "user_id": result["user_info"].get("id", ""),
+                            "pages": result.get("pages", [])
+                        }
+                    )
+                    
         elif platform == "instagram":
             result = await instagram_connector.exchange_code_for_token(code)
             if result["success"]:
@@ -530,6 +625,19 @@ async def oauth_callback(platform: str, code: str, state: str):
                     "instagram_username": result["user_info"].get("username", "Unknown"),
                     "instagram_user_id": result["user_info"].get("id", "")
                 }
+                
+                # Store in database if available
+                if hasattr(database_manager, 'store_platform_tokens'):
+                    await database_manager.store_platform_tokens(
+                        user_id=user_id,
+                        platform="instagram",
+                        token_data={
+                            "access_token": result["access_token"],
+                            "expires_in": result.get("expires_in", 5184000),
+                            "username": result["user_info"].get("username", "Unknown"),
+                            "user_id": result["user_info"].get("id", "")
+                        }
+                    )
         
         oauth_states.pop(state, None)
         
@@ -573,6 +681,15 @@ async def get_connection_status(platform: str, current_user: dict = Depends(get_
                     "connected": True,
                     "username": tokens.get("instagram_username")
                 }
+        elif platform == "whatsapp":
+            tokens = user_whatsapp_tokens.get(user_id)
+            if tokens:
+                return {
+                    "success": True,
+                    "connected": True,
+                    "phone_number": tokens.get("phone_number_id"),
+                    "business_name": tokens.get("business_name", "WhatsApp Business")
+                }
         
         return {"success": True, "connected": False}
     except Exception as e:
@@ -610,6 +727,150 @@ async def manual_post(post_data: ManualPostRequest, current_user: dict = Depends
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+# WhatsApp Routes
+@app.post("/api/whatsapp/setup")
+async def setup_whatsapp(
+    phone_number_id: str = Query(...),
+    access_token: str = Query(...),
+    business_name: str = Query(""),
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        if not WHATSAPP_AVAILABLE:
+            return {"success": False, "error": "WhatsApp module not available"}
+        
+        user_id = current_user["id"]
+        
+        # Create WhatsApp configuration
+        config = WhatsAppConfig(
+            user_id=user_id,
+            business_name=business_name,
+            phone_number_id=phone_number_id,
+            access_token=access_token,
+            auto_reply_enabled=True,
+            campaign_enabled=True
+        )
+        
+        # Setup automation
+        result = await whatsapp_scheduler.setup_whatsapp_automation(
+            user_id=user_id,
+            phone_number_id=phone_number_id,
+            access_token=access_token,
+            config=config
+        )
+        
+        if result["success"]:
+            # Store tokens for easy access
+            user_whatsapp_tokens[user_id] = {
+                "phone_number_id": phone_number_id,
+                "access_token": access_token,
+                "business_name": business_name
+            }
+        
+        return result
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/whatsapp/send-message")
+async def send_whatsapp_message(message_data: WhatsAppMessageRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        if not WHATSAPP_AVAILABLE:
+            return {"success": False, "error": "WhatsApp module not available"}
+        
+        user_id = current_user["id"]
+        
+        result = await whatsapp_scheduler.send_message(
+            user_id=user_id,
+            to=message_data.to,
+            message=message_data.message,
+            message_type=message_data.message_type
+        )
+        
+        return result
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/whatsapp/broadcast")
+async def send_whatsapp_broadcast(broadcast_data: WhatsAppBroadcastRequest, current_user: dict = Depends(get_current_user)):
+    try:
+        if not WHATSAPP_AVAILABLE:
+            return {"success": False, "error": "WhatsApp module not available"}
+        
+        user_id = current_user["id"]
+        
+        result = await whatsapp_scheduler.send_broadcast(
+            user_id=user_id,
+            recipient_list=broadcast_data.recipient_list,
+            message=broadcast_data.message,
+            media_url=broadcast_data.media_url if broadcast_data.media_url else None,
+            media_type=broadcast_data.media_type if broadcast_data.media_type else None
+        )
+        
+        return result
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# Webhook Routes
+@app.get("/webhook/{platform}")
+async def webhook_verify(platform: str, request: Request):
+    """Handle webhook verification for all platforms"""
+    try:
+        if platform == "whatsapp" and WHATSAPP_AVAILABLE and whatsapp_handler:
+            mode = request.query_params.get("hub.mode")
+            token = request.query_params.get("hub.verify_token")
+            challenge = request.query_params.get("hub.challenge")
+            
+            result = whatsapp_handler.verify_webhook(mode, token, challenge)
+            if result:
+                return Response(content=result, media_type="text/plain")
+        
+        return Response(content="Forbidden", status_code=403)
+        
+    except Exception as e:
+        logger.error(f"Webhook verification failed: {e}")
+        return Response(content="Error", status_code=500)
+
+@app.post("/webhook/{platform}")
+async def webhook_handler(platform: str, request: Request):
+    """Handle incoming webhook events for all platforms"""
+    try:
+        body = await request.body()
+        
+        if platform == "whatsapp" and WHATSAPP_AVAILABLE and whatsapp_handler:
+            # Verify signature if configured
+            signature = request.headers.get("x-hub-signature-256", "")
+            if not whatsapp_handler.verify_signature(body, signature):
+                return Response(content="Forbidden", status_code=403)
+            
+            # Parse webhook data
+            webhook_data = json.loads(body.decode())
+            events = whatsapp_handler.parse_webhook_event(webhook_data)
+            
+            # Process each event
+            for event in events:
+                if event["type"] == "message":
+                    # Find user by phone number ID
+                    user_id = None
+                    for uid, tokens in user_whatsapp_tokens.items():
+                        if tokens.get("phone_number_id") == event["phone_number_id"]:
+                            user_id = uid
+                            break
+                    
+                    if user_id:
+                        # Handle incoming message
+                        await whatsapp_scheduler.handle_incoming_message(user_id, event)
+            
+            return {"status": "ok"}
+        
+        return Response(content="Not Found", status_code=404)
+        
+    except Exception as e:
+        logger.error(f"Webhook handling failed: {e}")
+        return Response(content="Error", status_code=500)
+
 # AI Content Generation Routes
 @app.post("/api/automation/test-auto-post")
 async def test_auto_post(test_data: TestPostRequest, current_user: dict = Depends(get_current_user)):
@@ -621,7 +882,8 @@ async def test_auto_post(test_data: TestPostRequest, current_user: dict = Depend
                 "message": "Configure MISTRAL_API_KEY or GROQ_API_KEY environment variables"
             }
         
-        content_result = await ai_service.generate_reddit_domain_content(
+        content_result = await ai_service.generate_social_content(
+            platform=test_data.platform,
             domain=test_data.domain,
             business_type=test_data.business_type,
             business_description=test_data.business_description,
@@ -639,8 +901,9 @@ async def test_auto_post(test_data: TestPostRequest, current_user: dict = Depend
             "success": True,
             "message": f"Content generated using {content_result.get('ai_service')}!",
             "post_details": {
-                "title": content_result.get("title"),
-                "platform": test_data.platform
+                "platform": test_data.platform,
+                "content": content_result.get("content"),
+                "word_count": content_result.get("word_count", 0)
             },
             "content_preview": content_result.get("content"),
             "ai_service": content_result.get("ai_service"),
@@ -661,12 +924,15 @@ async def setup_auto_posting(config_data: AutoPostingRequest, current_user: dict
             return {"success": False, "error": "Facebook account not connected"}
         elif platform == "instagram" and user_id not in user_instagram_tokens:
             return {"success": False, "error": "Instagram account not connected"}
+        elif platform == "whatsapp" and user_id not in user_whatsapp_tokens:
+            return {"success": False, "error": "WhatsApp account not connected"}
         
         if isinstance(ai_service, MockAIService):
             return {"success": False, "error": "AI service not configured"}
         
         # Test AI service
-        test_content = await ai_service.generate_reddit_domain_content(
+        test_content = await ai_service.generate_social_content(
+            platform=platform,
             domain=config_data.domain,
             business_type=config_data.business_type,
             business_description=config_data.business_description,
@@ -675,6 +941,14 @@ async def setup_auto_posting(config_data: AutoPostingRequest, current_user: dict
         
         if not test_content.get("success", True):
             return {"success": False, "error": "AI service not working properly"}
+        
+        # Store automation config in database if available
+        if hasattr(database_manager, 'store_automation_config'):
+            await database_manager.store_automation_config(
+                user_id=user_id,
+                platform=platform,
+                config_data=config_data.dict()
+            )
         
         return {
             "success": True,
@@ -691,13 +965,21 @@ async def get_automation_status(current_user: dict = Depends(get_current_user)):
     try:
         user_id = current_user["id"]
         
+        # Get WhatsApp status
+        whatsapp_status = {}
+        if WHATSAPP_AVAILABLE and whatsapp_scheduler:
+            whatsapp_status = await whatsapp_scheduler.get_automation_status(user_id)
+        
         return {
             "success": True,
             "user_id": user_id,
             "facebook_connected": user_id in user_facebook_tokens,
             "instagram_connected": user_id in user_instagram_tokens,
+            "whatsapp_connected": user_id in user_whatsapp_tokens,
             "facebook_username": user_facebook_tokens.get(user_id, {}).get("facebook_username", ""),
             "instagram_username": user_instagram_tokens.get(user_id, {}).get("instagram_username", ""),
+            "whatsapp_business": user_whatsapp_tokens.get(user_id, {}).get("business_name", ""),
+            "whatsapp_automation": whatsapp_status.get("whatsapp_automation", {}),
             "real_ai": not isinstance(ai_service, MockAIService),
             "timestamp": datetime.now().isoformat()
         }
@@ -714,6 +996,8 @@ async def disconnect_platform(platform: str, current_user: dict = Depends(get_cu
             del user_facebook_tokens[user_id]
         elif platform == "instagram" and user_id in user_instagram_tokens:
             del user_instagram_tokens[user_id]
+        elif platform == "whatsapp" and user_id in user_whatsapp_tokens:
+            del user_whatsapp_tokens[user_id]
         
         return {"success": True, "message": f"{platform.title()} disconnected successfully"}
     except Exception as e:
@@ -722,4 +1006,4 @@ async def disconnect_platform(platform: str, current_user: dict = Depends(get_cu
 # Main execution
 if __name__ == "__main__":
     PORT = int(os.getenv("PORT", 10000))
-    uvicorn.run("main1:app", host="0.0.0.0", port=PORT, reload=False)
+    uvicorn.run("mainFBINSTA:app", host="0.0.0.0", port=PORT, reload=False)

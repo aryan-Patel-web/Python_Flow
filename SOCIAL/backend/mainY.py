@@ -762,13 +762,15 @@ async def youtube_status(user_id: str):
 
 
 
-
-
+from youtube import get_youtube_scheduler
 
 @app.post("/api/youtube/setup-automation")
 async def youtube_setup_automation(request: YouTubeSetupRequest):
     """Setup YouTube automation configuration"""
     try:
+        # Get the initialized scheduler
+        youtube_scheduler = get_youtube_scheduler()
+        
         if not youtube_scheduler:
             raise HTTPException(status_code=503, detail="YouTube scheduler not available")
         
@@ -795,6 +797,10 @@ async def youtube_setup_automation(request: YouTubeSetupRequest):
     except Exception as e:
         logger.error(f"YouTube automation setup failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
 
 @app.post("/api/youtube/upload")
 async def youtube_upload_video(request: YouTubeUploadRequest):

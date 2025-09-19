@@ -842,6 +842,11 @@ def get_youtube_database() -> YouTubeDatabase:
         youtube_database = YouTubeDatabase()
     return youtube_database
 
+
+
+
+
+
 async def initialize_youtube_service(database_manager=None, ai_service=None) -> bool:
     """Initialize YouTube service with required dependencies"""
     global youtube_connector, youtube_scheduler, youtube_database
@@ -863,7 +868,9 @@ async def initialize_youtube_service(database_manager=None, ai_service=None) -> 
             logger.error(f"Missing required environment variables: {missing}")
             return False
         
-        # Initialize database
+        # Import and use the YTdatabase manager
+        from YTdatabase import get_youtube_database
+        
         if not database_manager:
             youtube_database = get_youtube_database()
             connected = await youtube_database.connect()
@@ -891,6 +898,13 @@ async def initialize_youtube_service(database_manager=None, ai_service=None) -> 
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return False
+
+
+
+
+
+
+
 
 # Export functions for main app
 def get_youtube_connector():
