@@ -57,24 +57,34 @@ const YouTubeAutomation = () => {
     return null;
   };
 
-  useEffect(() => {
-    if (isAuthenticated && token) {
-      fetchAutomationStatus();
-    }
-    
-    // Handle OAuth redirect callback
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    const state = urlParams.get('state');
-    const error_param = urlParams.get('error');
-    
-    if (error_param) {
-      setError(`OAuth error: ${error_param}`);
-      window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (code && state === 'youtube_oauth') {
-      handleOAuthCallback(code);
-    }
-  }, [isAuthenticated, token]);
+
+
+
+
+useEffect(() => {
+  if (isAuthenticated && token) {
+    fetchAutomationStatus();
+  }
+  
+  // Handle OAuth redirect callback - ALREADY DYNAMIC
+  const urlParams = new URLSearchParams(window.location.search);
+  const code = urlParams.get('code');  // ✓ This extracts the code dynamically
+  const state = urlParams.get('state');
+  const error_param = urlParams.get('error');
+  
+  if (error_param) {
+    setError(`OAuth error: ${error_param}`);
+    window.history.replaceState({}, document.title, window.location.pathname);
+  } else if (code && state === 'youtube_oauth') {
+    handleOAuthCallback(code);  // ✓ This uses the dynamic code
+  }
+}, [isAuthenticated, token]);
+
+
+
+
+
+
 
   const fetchAutomationStatus = async () => {
     if (!token) {
@@ -180,102 +190,78 @@ const YouTubeAutomation = () => {
     }
   };
 
-  const handleOAuthCallback = async (code) => {
-    if (!token) {
-      setError('Authentication required');
+
+
+
+
+
+ const handleOAuthCallback = async (code) => {
+  console.log('=== OAuth Callback Started ===');
+  console.log('Authorization code:', code);
+  console.log('Token available:', !!token);
+  console.log('User authenticated:', isAuthenticated);
+  
+  if (!token) {
+    setError('Authentication required - please log in first');
+    console.error('No token available for OAuth callback');
+    return;
+  }
+
+  setLoading(true);
+  setError('');
+  
+  try {
+    const userData = getUserData();
+    console.log('User data for callback:', userData);
+    
+    if (!userData || !userData.user_id) {
+      setError('User ID not found. Please log in again.');
+      console.error('No user data available for OAuth callback');
       return;
     }
-
-    setLoading(true);
-    setError('');
     
-    try {
-      const userData = getUserData();
-      
-      if (!userData || !userData.user_id) {
-        setError('User ID not found. Please log in again.');
-        return;
-      }
-      
-      const response = await fetch(`${API_BASE}/api/youtube/oauth-callback`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          user_id: userData.user_id,
-          code: code,
-          redirect_uri: window.location.origin + '/youtube'
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        setError('');
-        alert('YouTube connected successfully!');
-        await fetchAutomationStatus();
-        setActiveTab('setup');
-        window.history.replaceState({}, document.title, window.location.pathname);
-      } else {
-        setError(result.error || result.message || 'YouTube connection failed');
-      }
-    } catch (error) {
-      setError('Connection failed: ' + error.message);
-      console.error('OAuth callback failed:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const setupYouTubeAutomation = async () => {
-    if (!token) {
-      setError('Authentication required');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
+    console.log('Making OAuth callback request...');
     
-    try {
-      const userData = getUserData();
-      
-      if (!userData || !userData.user_id) {
-        setError('User ID not found. Please log in again.');
-        return;
-      }
-      
-      const response = await fetch(`${API_BASE}/api/youtube/setup-automation`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          user_id: userData.user_id,
-          config: {
-            ...config,
-            user_id: userData.user_id
-          }
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        alert('YouTube automation setup successful!');
-        await fetchAutomationStatus();
-        setActiveTab('content');
-      } else {
-        setError(result.error || result.message || 'Setup failed');
-      }
-    } catch (error) {
-      setError('Setup failed: ' + error.message);
-    } finally {
-      setLoading(false);
+    const response = await fetch(`${API_BASE}/api/youtube/oauth-callback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        user_id: userData.user_id,
+        code: code,
+        redirect_uri: window.location.origin + '/youtube'
+      })
+    });
+    
+    console.log('OAuth callback response status:', response.status);
+    
+    const result = await response.json();
+    console.log('OAuth callback result:', result);
+    
+    if (result.success) {
+      setError('');
+      alert('YouTube connected successfully!');
+      await fetchAutomationStatus();
+      setActiveTab('setup');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else {
+      setError(result.error || result.message || 'YouTube connection failed');
     }
-  };
+  } catch (error) {
+    console.error('OAuth callback error:', error);
+    setError('Connection failed: ' + error.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+
+
+
+
+
 
   const generateContent = async () => {
     if (!token) {
