@@ -5,6 +5,7 @@ import ProtectedRoute from './quickpage/ProtectedRoute';
 import Login from './quickpage/Login';
 import Register from './quickpage/Register';
 import './App.css';
+import YouTubeCallback from './pages/YouTubeCallback';
 
 // Safer lazy loading with better error handling
 const RedditAUTO = lazy(() => 
@@ -226,11 +227,16 @@ function App() {
                   <Route path="/instagram" element={<ProtectedRoute><InstagramAutomation /></ProtectedRoute>} />
                   <Route path="/whatsapp" element={<ProtectedRoute><WhatsAppAutomation /></ProtectedRoute>} />
                   {/* <Route path="/youtube" element={<ProtectedRoute><YouTubeAutomation /></ProtectedRoute>} /> */}
-                  <Route path="/youtube" element={
-  new URLSearchParams(window.location.search).get('code') ? 
-    <YouTubeAutomation /> : 
-    <ProtectedRoute><YouTubeAutomation /></ProtectedRoute>
-} />
+<Route 
+  path="/youtube" 
+  element={
+    // Check if it's an OAuth callback
+    window.location.search.includes('code=') && window.location.search.includes('state=youtube_oauth') ? 
+      <YouTubeAutomation /> : 
+      <ProtectedRoute><YouTubeAutomation /></ProtectedRoute>
+  } 
+/>
+<Route path="/youtube/callback" element={<YouTubeCallback />} />
                 </Routes>
               </Suspense>
             </main>
