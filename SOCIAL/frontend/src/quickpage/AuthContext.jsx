@@ -44,12 +44,13 @@ export const AuthProvider = ({ children }) => {
             
             // Validate token format - should be JWT or backend format
             if (savedToken.length > 20) {
-              // Test token with backend
+              // Test token with backend - REMOVED credentials: 'include'
               const testResponse = await fetch(`${API_BASE_URL}/api/auth/me`, {
                 headers: {
                   'Authorization': `Bearer ${savedToken}`,
                   'Content-Type': 'application/json'
                 }
+                // credentials: 'include' // REMOVED - causes CORS issues
               });
               
               if (testResponse.ok) {
@@ -100,6 +101,7 @@ export const AuthProvider = ({ children }) => {
           'Accept': 'application/json' 
         },
         body: JSON.stringify({ email, password })
+        // credentials: 'include' // REMOVED - causes CORS issues
       });
 
       const data = await response.json();
@@ -162,6 +164,7 @@ export const AuthProvider = ({ children }) => {
           'Accept': 'application/json' 
         },
         body: JSON.stringify({ name, email, password })
+        // credentials: 'include' // REMOVED
       });
 
       const data = await response.json();
@@ -217,7 +220,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('cached_user', JSON.stringify(updatedUser));
   }, [user]);
 
-  // Fixed makeAuthenticatedRequest function
+  // Fixed makeAuthenticatedRequest function - REMOVED credentials: 'include'
   const makeAuthenticatedRequest = useCallback(async (endpoint, options = {}) => {
     // Use state token first, fallback to localStorage
     const authToken = token || localStorage.getItem('authToken');
@@ -236,8 +239,8 @@ export const AuthProvider = ({ children }) => {
 
     const requestOptions = {
       ...options,
-      headers,
-      credentials: 'include'
+      headers
+      // credentials: 'include' // REMOVED - this was causing CORS failures
     };
 
     try {
@@ -248,6 +251,12 @@ export const AuthProvider = ({ children }) => {
         console.error('401 Unauthorized - token expired or invalid');
         logout();
         throw new Error('Authentication failed - please log in again');
+      }
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`HTTP ${response.status}:`, errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText || 'Request failed'}`);
       }
       
       return response;
