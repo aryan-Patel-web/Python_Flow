@@ -627,20 +627,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS Middleware
+# Fix your CORS middleware by removing "*":
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://frontend-agentic-bnc2.onrender.com",  # Your frontend domain
         "http://localhost:3000",  # Local development
         "http://localhost:5173",  # Vite dev server
-        "*"  # Remove this in production
+        
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
-
 # Basic Routes
 @app.get("/api/oauth/{platform}/callback")
 async def oauth_callback(platform: str, code: str, state: str):
