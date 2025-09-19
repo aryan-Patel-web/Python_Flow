@@ -47,3 +47,23 @@ google-api-python-client==2.108.0
 google-auth==2.23.4
 google-auth-oauthlib==1.1.0
 google-auth-httplib2==0.2.0
+
+
+# Social Media Content Templates
+beautifulsoup4==4.12.2
+lxml==4.9.3
+
+
+
+# Threading Support
+threading
+
+# System Information
+psutil==5.9.6
+
+# Social Media Specific
+tweepy==4.14.0
+instagram-basic-display-api==0.1.1
+
+# WhatsApp Cloud API
+facebook-business==18.0.2
