@@ -55,8 +55,7 @@ lxml==4.9.3
 
 
 
-# Threading Support
-threading
+
 
 # System Information
 psutil==5.9.6
