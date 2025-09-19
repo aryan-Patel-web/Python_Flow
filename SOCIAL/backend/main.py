@@ -878,8 +878,8 @@ app.add_middleware(
         "http://localhost:5173", 
         "http://localhost:8080",
         "https://frontend-agentic-bnc2.onrender.com",  # Your frontend domain
-        "https://agentic-u5lx.onrender.com",  # Your backend domain
-        "*"  # Allow all origins for development
+        "https://agentic-u5lx.onrender.com"  # Your backend domain
+         # Allow all origins for development
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -896,6 +896,9 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=3600
 )
+
+
+
 
 app.add_middleware(
     TrustedHostMiddleware,
