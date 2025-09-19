@@ -1263,7 +1263,9 @@ async def oauth_authorize(platform: str, current_user: dict = Depends(get_curren
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+# @app.get("/api/auth/me")
+# async def get_current_user_info(current_user: dict = Depends(get_current_user)):
+#     return {"success": True, "user": current_user}
 
 # Main execution
 if __name__ == "__main__":

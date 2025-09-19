@@ -9,41 +9,92 @@ const Login = () => {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [networkError, setNetworkError] = useState(false);
 
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
   // Get the page user was trying to access before login
-  const from = location.state?.from?.pathname || '/';
+  const from = location.state?.from?.pathname || '/whatsapp';
 
   const handleChange = (e) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value
     });
-    // Clear error when user starts typing
+    // Clear errors when user starts typing
     if (error) setError('');
+    if (networkError) setNetworkError(false);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setNetworkError(false);
+
+    // Basic validation
+    if (!formData.email || !formData.password) {
+      setError('Please fill in all fields');
+      setLoading(false);
+      return;
+    }
+
+    if (!formData.email.includes('@')) {
+      setError('Please enter a valid email address');
+      setLoading(false);
+      return;
+    }
 
     try {
+      console.log('Login form submitted:', { email: formData.email });
       const result = await login(formData.email, formData.password);
       
+      console.log('Login result:', result);
+      
       if (result.success) {
-        // Redirect to intended page or reddit-auto
-        navigate(from, { replace: true });
+        console.log('Login successful, navigating to:', from);
+        // Small delay to ensure state is set
+        setTimeout(() => {
+          navigate(from, { replace: true });
+        }, 100);
       } else {
-        setError(result.error || 'Login failed');
+        // Handle specific error types
+        const errorMessage = result.error || 'Login failed';
+        
+        if (errorMessage.includes('Network error') || errorMessage.includes('fetch')) {
+          setNetworkError(true);
+          setError('Cannot connect to server. Please check your internet connection.');
+        } else if (errorMessage.includes('401') || errorMessage.includes('Invalid credentials')) {
+          setError('Invalid email or password. Please try again.');
+        } else if (errorMessage.includes('404')) {
+          setError('Server not found. Please try again later.');
+        } else if (errorMessage.includes('500')) {
+          setError('Server error. Please try again later.');
+        } else {
+          setError(errorMessage);
+        }
       }
     } catch (error) {
-      setError('An unexpected error occurred');
+      console.error('Login exception:', error);
+      setNetworkError(true);
+      setError('An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Quick test function for debugging
+  const testConnection = async () => {
+    try {
+      const response = await fetch('https://agentic-u5lx.onrender.com/health');
+      const data = await response.json();
+      console.log('Backend health:', data);
+      alert('Backend connection: ' + (data.success ? 'Working' : 'Failed'));
+    } catch (error) {
+      console.error('Connection test failed:', error);
+      alert('Backend connection failed: ' + error.message);
     }
   };
 
@@ -93,9 +144,37 @@ const Login = () => {
             color: '#666',
             margin: 0
           }}>
-            Sign in to your Reddit automation account
+            Sign in to your automation account
           </p>
         </div>
+
+        {/* Network Error Banner */}
+        {networkError && (
+          <div style={{
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: '8px',
+            padding: '12px 16px',
+            marginBottom: '16px',
+            color: '#dc2626',
+            fontSize: '14px'
+          }}>
+            🔴 Network connection issue detected.{' '}
+            <button 
+              onClick={testConnection}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#dc2626',
+                textDecoration: 'underline',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              Test Connection
+            </button>
+          </div>
+        )}
 
         {/* Error Message */}
         {error && (
@@ -208,6 +287,21 @@ const Login = () => {
             )}
           </button>
         </form>
+
+        {/* Test Credentials */}
+        <div style={{
+          background: 'rgba(34, 197, 94, 0.1)',
+          border: '1px solid rgba(34, 197, 94, 0.3)',
+          borderRadius: '8px',
+          padding: '12px 16px',
+          marginTop: '16px',
+          fontSize: '12px',
+          color: '#059669'
+        }}>
+          <strong>Test Account:</strong><br/>
+          Email: aryan@gmail.com<br/>
+          Password: test123
+        </div>
 
         {/* Register Link */}
         <div style={{
