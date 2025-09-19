@@ -34,6 +34,13 @@ from pydantic import BaseModel, EmailStr
 # Load environment variables first
 load_dotenv()
 
+# In mainFBINSTA.py, add this at the top after load_dotenv():
+WHATSAPP_ACCESS_TOKEN = os.getenv('WHATSAPP_TOKEN') or os.getenv('WHATSAPP_ACCESS_TOKEN')
+WHATSAPP_PHONE_NUMBER_ID = os.getenv('WHATSAPP_PHONE_NUMBER_ID')
+
+print(f"WhatsApp Token loaded: {WHATSAPP_ACCESS_TOKEN[:20]}..." if WHATSAPP_ACCESS_TOKEN else "No token")
+print(f"Phone Number ID: {WHATSAPP_PHONE_NUMBER_ID}")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -1009,6 +1016,21 @@ async def test_auto_post(test_data: TestPostRequest, current_user: dict = Depend
     except Exception as e:
         logger.error(f"AI test error: {e}")
         return {"success": False, "error": str(e)}
+
+
+
+
+@app.get("/api/debug/whatsapp")
+async def debug_whatsapp():
+    return {
+        "whatsapp_available": WHATSAPP_AVAILABLE,
+        "token_present": bool(os.getenv('WHATSAPP_TOKEN')),
+        "phone_id_present": bool(os.getenv('WHATSAPP_PHONE_NUMBER_ID')),
+        "token_prefix": os.getenv('WHATSAPP_TOKEN', '')[:10] if os.getenv('WHATSAPP_TOKEN') else None
+    }
+
+
+
 
 # Automation Setup Routes
 @app.post("/api/automation/setup-auto-posting")
