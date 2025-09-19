@@ -1,18 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext();
-
-const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) 
-    ? import.meta.env.VITE_API_URL 
-    : (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_URL) 
-    ? process.env.REACT_APP_API_URL 
-    : 'https://agentic-u5lx.onrender.com';
+const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || 'https://agentic-u5lx.onrender.com';
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };
 
@@ -25,47 +18,28 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        const savedToken = localStorage.getItem('auth_token') || localStorage.getItem('token') || localStorage.getItem('authToken');
+        const savedToken = localStorage.getItem('auth_token') || localStorage.getItem('token');
+        const cachedUser = localStorage.getItem('user') || localStorage.getItem('cached_user');
         
-        if (savedToken) {
-          setToken(savedToken);
-          
+        if (savedToken && cachedUser) {
           try {
-            // Get user from multiple possible storage keys
-            let cachedUser = localStorage.getItem('user') || localStorage.getItem('cached_user');
-            
-            if (cachedUser) {
-              try {
-                const userData = JSON.parse(cachedUser);
-                console.log('🔧 Restored user from localStorage:', userData);
-                setUser(userData);
-                setIsAuthenticated(true);
-                console.log('✅ User authenticated:', userData.email);
-              } catch (parseError) {
-                console.error('Error parsing cached user:', parseError);
-                clearTokens();
-              }
-            } else {
-              clearTokens();
-            }
-          } catch (apiError) {
-            console.warn('Auth check failed:', apiError.message);
+            const userData = JSON.parse(cachedUser);
+            setUser(userData); setToken(savedToken); setIsAuthenticated(true);
+            console.log('User restored:', userData.email);
+          } catch (parseError) {
+            console.error('Parse error:', parseError);
             clearTokens();
           }
-        }
+        } else { clearTokens(); }
       } catch (error) {
-        console.error('Auth initialization failed:', error);
+        console.error('Auth init failed:', error);
         clearTokens();
-      } finally {
-        setLoading(false);
-      }
+      } finally { setLoading(false); }
     };
 
     const clearTokens = () => {
-      ['auth_token', 'token', 'authToken', 'cached_user', 'user', 'reddit_username', 'reddit_session_id'].forEach(key => localStorage.removeItem(key));
-      setToken(null);
-      setUser(null);
-      setIsAuthenticated(false);
+      ['auth_token', 'token', 'authToken', 'cached_user', 'user'].forEach(key => localStorage.removeItem(key));
+      setToken(null); setUser(null); setIsAuthenticated(false);
     };
 
     initAuth();
@@ -74,162 +48,96 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     setLoading(true);
     try {
-      console.log('🔧 Login attempt:', { email, apiUrl: API_BASE_URL });
+      console.log('Login attempt:', { email, apiUrl: API_BASE_URL });
       
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ email, password })
       });
 
-      console.log('🔧 Login response status:', response.status);
-      
-      let data;
-      try {
-        data = await response.json();
-        console.log('🔧 Login response data:', data);
-      } catch (parseError) {
-        console.error('Failed to parse login response:', parseError);
-        throw new Error('Invalid response from server');
-      }
+      const data = await response.json();
+      console.log('Login response:', data);
       
       if (response.ok && data.success) {
-        // Your backend returns: { success: true, message: "Login successful", user: { user_id, email, name, platforms_connected } }
-        const userData = {
-          user_id: data.user.user_id,
-          email: data.user.email,
-          name: data.user.name,
-          platforms_connected: data.user.platforms_connected || []
-        };
+        // Extract real JWT token from backend response
+        const realToken = data.token;
+        const userData = { user_id: data.user_id, id: data.user_id, email: data.email, name: data.name };
         
-        setUser(userData);
-        setIsAuthenticated(true);
+        setUser(userData); setIsAuthenticated(true); setToken(realToken);
         
-        // Create a proper token
-        const userToken = `token_${userData.user_id}_${Date.now()}`;
-        setToken(userToken);
-        
-        // Store user data in BOTH locations for compatibility
+        // Store real backend data
         localStorage.setItem('user', JSON.stringify(userData));
         localStorage.setItem('cached_user', JSON.stringify(userData));
-        localStorage.setItem('auth_token', userToken);
-        localStorage.setItem('token', userToken);
+        localStorage.setItem('auth_token', realToken);
+        localStorage.setItem('token', realToken);
         
-        console.log('✅ Login successful');
-        console.log('✅ User stored:', JSON.stringify(userData));
-        console.log('✅ Token stored:', userToken);
-        
+        console.log('Login successful with real token');
         return { success: true, user: userData };
       } else {
-        console.error('❌ Login failed:', data);
+        console.error('Login failed:', data);
         return { success: false, error: data.error || data.message || 'Login failed' };
       }
     } catch (error) {
-      console.error('❌ Login error:', error);
+      console.error('Login error:', error);
       return { success: false, error: 'Login failed: ' + error.message };
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-
-
-
-const register = async (name, email, password) => {
-  setLoading(true);
-  try {
-    console.log('🔧 Registration attempt:', { email, name, apiUrl: API_BASE_URL });
-    
-    // Test backend connection first
-    const healthResponse = await fetch(`${API_BASE_URL}/health`);
-    const healthData = await healthResponse.json();
-    console.log('🔧 Backend health:', healthData);
-
-    const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({ 
-        name: name, 
-        email: email, 
-        password: password 
-      })
-    });
-
-    console.log('🔧 Registration response status:', response.status);
-    
-    const data = await response.json();
-    console.log('🔧 Registration response data:', data);
-    
-    if (response.ok && data.success) {
-      // Auto-login after successful registration
-      if (data.user) {
-        const userData = {
-          user_id: data.user.user_id,
-          email: data.user.email,
-          name: data.user.name,
-          platforms_connected: data.user.platforms_connected || []
-        };
-        
-        setUser(userData);
-        setIsAuthenticated(true);
-        
-        // Create a proper token
-        const userToken = `token_${userData.user_id}_${Date.now()}`;
-        setToken(userToken);
-        
-        // Store in localStorage
-        localStorage.setItem('user', JSON.stringify(userData));
-        localStorage.setItem('cached_user', JSON.stringify(userData));
-        localStorage.setItem('auth_token', userToken);
-        localStorage.setItem('token', userToken);
-        
-        console.log('✅ Registration and auto-login successful');
-        return { success: true, user: userData, message: data.message };
-      }
+  const register = async (name, email, password) => {
+    setLoading(true);
+    try {
+      console.log('Registration attempt:', { email, name });
       
-      console.log('✅ Registration successful');
-      return { success: true, message: data.message };
-    } else {
-      console.error('❌ Registration failed:', data);
-      return { success: false, error: data.error || data.message || 'Registration failed' };
-    }
-  } catch (error) {
-    console.error('❌ Registration error:', error);
-    return { success: false, error: 'Registration failed: ' + error.message };
-  } finally {
-    setLoading(false);
-  }
-};
+      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ name, email, password })
+      });
+
+      const data = await response.json();
+      console.log('Registration response:', data);
+      
+      if (response.ok && data.success) {
+        // Auto-login with real token from registration
+        if (data.token) {
+          const userData = { user_id: data.user_id, id: data.user_id, email: data.email, name: data.name };
+          
+          setUser(userData); setIsAuthenticated(true); setToken(data.token);
+          
+          localStorage.setItem('user', JSON.stringify(userData));
+          localStorage.setItem('cached_user', JSON.stringify(userData));
+          localStorage.setItem('auth_token', data.token);
+          localStorage.setItem('token', data.token);
+          
+          console.log('Registration and auto-login successful');
+          return { success: true, user: userData, message: data.message };
+        }
+        return { success: true, message: data.message };
+      } else {
+        return { success: false, error: data.error || data.message || 'Registration failed' };
+      }
+    } catch (error) {
+      console.error('Registration error:', error);
+      return { success: false, error: 'Registration failed: ' + error.message };
+    } finally { setLoading(false); }
+  };
 
   const logout = () => {
-    setToken(null);
-    setUser(null);
-    setIsAuthenticated(false);
-    ['auth_token', 'token', 'authToken', 'cached_user', 'user', 'reddit_username', 'reddit_session_id'].forEach(key => localStorage.removeItem(key));
-    console.log('✅ User logged out');
+    setToken(null); setUser(null); setIsAuthenticated(false);
+    ['auth_token', 'token', 'authToken', 'cached_user', 'user'].forEach(key => localStorage.removeItem(key));
+    console.log('User logged out');
   };
 
   const updateUser = (userData) => {
     const updatedUser = { ...user, ...userData };
     setUser(updatedUser);
-    // Update both storage locations
     localStorage.setItem('user', JSON.stringify(updatedUser));
     localStorage.setItem('cached_user', JSON.stringify(updatedUser));
   };
 
   const makeAuthenticatedRequest = async (endpoint, options = {}) => {
-    const headers = { 
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      ...(options.headers || {}) 
-    };
-    
+    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(options.headers || {}) };
     const requestOptions = { ...options, headers };
 
     try {
@@ -241,29 +149,7 @@ const register = async (name, email, password) => {
     }
   };
 
-  // Debug function to check auth state
-  const debugAuth = () => {
-    console.log('🔧 Auth Debug State:');
-    console.log('- isAuthenticated:', isAuthenticated);
-    console.log('- user:', user);
-    console.log('- token:', token);
-    console.log('- localStorage user:', localStorage.getItem('user'));
-    console.log('- localStorage cached_user:', localStorage.getItem('cached_user'));
-    console.log('- localStorage token:', localStorage.getItem('token'));
-  };
-
-  const value = { 
-    isAuthenticated, 
-    user, 
-    token, 
-    loading, 
-    login, 
-    register, 
-    logout, 
-    updateUser, 
-    makeAuthenticatedRequest,
-    debugAuth
-  };
+  const value = { isAuthenticated, user, token, loading, login, register, logout, updateUser, makeAuthenticatedRequest };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
