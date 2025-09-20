@@ -18,8 +18,8 @@ const WhatsAppAutomation = () => {
 
   const [isConnected, setIsConnected] = useState(false);
   const [automationConfig, setAutomationConfig] = useState({
-    auto_reply_enabled: false,
-    campaign_enabled: false,
+    auto_reply_enabled: true,
+    campaign_enabled: true,
     business_hours: { start: '09:00', end: '18:00' },
     timezone: 'Asia/Calcutta'
   });
