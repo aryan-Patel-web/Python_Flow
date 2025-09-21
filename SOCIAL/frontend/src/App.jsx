@@ -1,11 +1,10 @@
 import React, { useEffect, Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './quickpage/AuthContext';
 import ProtectedRoute from './quickpage/ProtectedRoute';
 import Login from './quickpage/Login';
 import Register from './quickpage/Register';
 import './App.css';
-import YouTubeCallback from './pages/YouTubeCallback';
 
 // Safer lazy loading with better error handling
 const RedditAUTO = lazy(() => 
@@ -52,6 +51,35 @@ const YouTubeAutomation = lazy(() =>
     </div>
   }))
 );
+
+// YouTube Route Wrapper to handle OAuth callbacks properly
+const YouTubeRouteWrapper = () => {
+  const location = useLocation();
+  const { isAuthenticated } = useAuth();
+  
+  // Check if this is an OAuth callback
+  const isOAuthCallback = location.search.includes('code=') && 
+                          location.search.includes('state=youtube_oauth');
+  
+  console.log('YouTube Route Wrapper:', {
+    isOAuthCallback,
+    search: location.search,
+    isAuthenticated
+  });
+  
+  // If it's an OAuth callback, render YouTube component directly
+  // (user must be logged in to have initiated OAuth)
+  if (isOAuthCallback) {
+    return <YouTubeAutomation />;
+  }
+  
+  // For normal visits, require authentication
+  return (
+    <ProtectedRoute>
+      <YouTubeAutomation />
+    </ProtectedRoute>
+  );
+};
 
 const LoadingSpinner = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
@@ -144,9 +172,6 @@ const Navbar = () => {
 const HomePage = () => {
   const { isAuthenticated } = useAuth();
 
-  // REMOVED the problematic redirect logic that was causing issues
-  // No automatic redirects on homepage
-
   const platforms = [
     { name: 'Facebook', emoji: '📘', color: '#4267B2', route: '/facebook-instagram', features: ['AI Content', 'Multi-Page', 'Smart Scheduling', 'Analytics'] },
     { name: 'Instagram', emoji: '📸', color: '#E4405F', route: '/instagram', features: ['AI Images', 'Smart Tags', 'Story Auto', 'Engagement'] },
@@ -226,17 +251,7 @@ function App() {
                   <Route path="/facebook-instagram" element={<ProtectedRoute><SocialMediaAutomation /></ProtectedRoute>} />
                   <Route path="/instagram" element={<ProtectedRoute><InstagramAutomation /></ProtectedRoute>} />
                   <Route path="/whatsapp" element={<ProtectedRoute><WhatsAppAutomation /></ProtectedRoute>} />
-                  {/* <Route path="/youtube" element={<ProtectedRoute><YouTubeAutomation /></ProtectedRoute>} /> */}
-<Route 
-  path="/youtube" 
-  element={
-    // Check if it's an OAuth callback
-    window.location.search.includes('code=') && window.location.search.includes('state=youtube_oauth') ? 
-      <YouTubeAutomation /> : 
-      <ProtectedRoute><YouTubeAutomation /></ProtectedRoute>
-  } 
-/>
-<Route path="/youtube/callback" element={<YouTubeCallback />} />
+                  <Route path="/youtube" element={<YouTubeRouteWrapper />} />
                 </Routes>
               </Suspense>
             </main>
