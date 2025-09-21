@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 
@@ -10,13 +10,41 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [networkError, setNetworkError] = useState(false);
+  const [debugInfo, setDebugInfo] = useState('');
 
-  const { login } = useAuth();
+  const { login, isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Get the page user was trying to access before login
-  const from = location.state?.from?.pathname || '/whatsapp';
+  // Platform routes mapping
+  const platformRoutes = {
+    whatsapp: '/whatsapp',
+    facebook: '/facebook', 
+    instagram: '/instagram',
+    youtube: '/youtube',
+    reddit: '/reddit-auto',
+    default: '/whatsapp'
+  };
+
+  // Get the platform from URL or default
+  const getPlatformFromPath = () => {
+    const path = location.state?.from?.pathname || location.pathname;
+    for (const [platform, route] of Object.entries(platformRoutes)) {
+      if (path.includes(platform) || path === route) {
+        return route;
+      }
+    }
+    return platformRoutes.default;
+  };
+
+  const targetPlatform = getPlatformFromPath();
+
+  // If already authenticated, redirect
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      navigate(targetPlatform, { replace: true });
+    }
+  }, [isAuthenticated, user, navigate, targetPlatform]);
 
   const handleChange = (e) => {
     setFormData({
@@ -26,6 +54,26 @@ const Login = () => {
     // Clear errors when user starts typing
     if (error) setError('');
     if (networkError) setNetworkError(false);
+    if (debugInfo) setDebugInfo('');
+  };
+
+  const validateForm = () => {
+    if (!formData.email || !formData.password) {
+      setError('Please fill in all fields');
+      return false;
+    }
+
+    if (!formData.email.includes('@')) {
+      setError('Please enter a valid email address');
+      return false;
+    }
+
+    if (formData.password.length < 3) {
+      setError('Password must be at least 3 characters long');
+      return false;
+    }
+
+    return true;
   };
 
   const handleSubmit = async (e) => {
@@ -33,51 +81,47 @@ const Login = () => {
     setLoading(true);
     setError('');
     setNetworkError(false);
+    setDebugInfo('');
 
-    // Basic validation
-    if (!formData.email || !formData.password) {
-      setError('Please fill in all fields');
-      setLoading(false);
-      return;
-    }
-
-    if (!formData.email.includes('@')) {
-      setError('Please enter a valid email address');
+    if (!validateForm()) {
       setLoading(false);
       return;
     }
 
     try {
-      console.log('Login form submitted:', { email: formData.email });
+      console.log('=== LOGIN ATTEMPT START ===');
+      console.log('Email:', formData.email);
+      console.log('Target Platform:', targetPlatform);
+      
       const result = await login(formData.email, formData.password);
       
-      console.log('Login result:', result);
+      console.log('=== LOGIN RESULT ANALYSIS ===');
+      console.log('Raw result:', result);
+      console.log('result.success:', result.success);
+      console.log('result.success type:', typeof result.success);
+      console.log('result.user exists:', !!result.user);
+      console.log('result.error:', result.error);
+      console.log('=== END ANALYSIS ===');
+
+      // Force success check - be very explicit
+      const isSuccessful = result && result.success === true && result.user;
       
-      if (result.success) {
-        console.log('Login successful, navigating to:', from);
-        // Small delay to ensure state is set
-        setTimeout(() => {
-          navigate(from, { replace: true });
-        }, 100);
-      } else {
-        // Handle specific error types
-        const errorMessage = result.error || 'Login failed';
+      if (isSuccessful) {
+        console.log('✅ LOGIN SUCCESS - Redirecting to:', targetPlatform);
+        setDebugInfo(`Login successful! Redirecting to ${targetPlatform}...`);
         
-        if (errorMessage.includes('Network error') || errorMessage.includes('fetch')) {
-          setNetworkError(true);
-          setError('Cannot connect to server. Please check your internet connection.');
-        } else if (errorMessage.includes('401') || errorMessage.includes('Invalid credentials')) {
-          setError('Invalid email or password. Please try again.');
-        } else if (errorMessage.includes('404')) {
-          setError('Server not found. Please try again later.');
-        } else if (errorMessage.includes('500')) {
-          setError('Server error. Please try again later.');
-        } else {
-          setError(errorMessage);
-        }
+        // Small delay to ensure state is properly set
+        setTimeout(() => {
+          navigate(targetPlatform, { replace: true });
+        }, 500);
+        
+      } else {
+        console.log('❌ LOGIN FAILED - Processing error');
+        handleLoginError(result);
       }
+
     } catch (error) {
-      console.error('Login exception:', error);
+      console.error('LOGIN EXCEPTION:', error);
       setNetworkError(true);
       setError('An unexpected error occurred. Please try again.');
     } finally {
@@ -85,17 +129,53 @@ const Login = () => {
     }
   };
 
-  // Quick test function for debugging
+  const handleLoginError = (result) => {
+    const errorMessage = result?.error || result?.message || 'Login failed';
+    
+    if (errorMessage.includes('Network error') || errorMessage.includes('fetch')) {
+      setNetworkError(true);
+      setError('Cannot connect to server. Please check your internet connection.');
+    } else if (errorMessage.includes('401') || errorMessage.includes('Invalid credentials') || errorMessage.includes('invalid')) {
+      setError('Invalid email or password. Please try again.');
+    } else if (errorMessage.includes('404')) {
+      setError('Account not found. Please register first or check your email.');
+    } else if (errorMessage.includes('500')) {
+      setError('Server error. Please try again later.');
+    } else if (errorMessage.includes('timeout')) {
+      setError('Request timed out. Please try again.');
+    } else {
+      setError(errorMessage);
+    }
+  };
+
   const testConnection = async () => {
     try {
-      const response = await fetch('https://agentic-u5lx.onrender.com/health');
-      const data = await response.json();
-      console.log('Backend health:', data);
-      alert('Backend connection: ' + (data.success ? 'Working' : 'Failed'));
+      setDebugInfo('Testing connection...');
+      const API_BASE = 'https://agentic-u5lx.onrender.com';
+      
+      const response = await fetch(`${API_BASE}/api/test-route`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setDebugInfo(`✅ Backend connection successful: ${data.message}`);
+      } else {
+        setDebugInfo(`❌ Backend responded with status: ${response.status}`);
+      }
     } catch (error) {
       console.error('Connection test failed:', error);
-      alert('Backend connection failed: ' + error.message);
+      setDebugInfo(`❌ Connection failed: ${error.message}`);
     }
+  };
+
+  const quickLogin = async (email, password) => {
+    setFormData({ email, password });
+    // Trigger form submission
+    setTimeout(() => {
+      document.getElementById('login-form').requestSubmit();
+    }, 100);
   };
 
   return (
@@ -113,7 +193,7 @@ const Login = () => {
         borderRadius: '20px',
         padding: '40px',
         width: '100%',
-        maxWidth: '400px',
+        maxWidth: '450px',
         boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)'
       }}>
         {/* Header */}
@@ -144,7 +224,7 @@ const Login = () => {
             color: '#666',
             margin: 0
           }}>
-            Sign in to your automation account
+            Sign in to access {targetPlatform.replace('/', '').toUpperCase()} automation
           </p>
         </div>
 
@@ -176,6 +256,21 @@ const Login = () => {
           </div>
         )}
 
+        {/* Debug Info */}
+        {debugInfo && (
+          <div style={{
+            background: 'rgba(59, 130, 246, 0.1)',
+            border: '1px solid rgba(59, 130, 246, 0.3)',
+            borderRadius: '8px',
+            padding: '12px 16px',
+            marginBottom: '16px',
+            color: '#1d4ed8',
+            fontSize: '14px'
+          }}>
+            {debugInfo}
+          </div>
+        )}
+
         {/* Error Message */}
         {error && (
           <div style={{
@@ -191,8 +286,53 @@ const Login = () => {
           </div>
         )}
 
+        {/* Quick Test Accounts */}
+        <div style={{
+          background: 'rgba(34, 197, 94, 0.1)',
+          border: '1px solid rgba(34, 197, 94, 0.3)',
+          borderRadius: '8px',
+          padding: '16px',
+          marginBottom: '24px'
+        }}>
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#059669', marginBottom: '12px' }}>
+            Quick Test Login:
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            <button
+              onClick={() => quickLogin('aryan@gmail.com', 'test123')}
+              disabled={loading}
+              style={{
+                padding: '6px 12px',
+                background: '#059669',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '12px',
+                cursor: loading ? 'not-allowed' : 'pointer'
+              }}
+            >
+              aryan@gmail.com
+            </button>
+            <button
+              onClick={() => quickLogin('aryanpatel7746@gmail.com', 'test123')}
+              disabled={loading}
+              style={{
+                padding: '6px 12px',
+                background: '#059669',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '12px',
+                cursor: loading ? 'not-allowed' : 'pointer'
+              }}
+            >
+              aryanpatel7746@gmail.com
+            </button>
+          </div>
+        </div>
+
         {/* Login Form */}
-        <form onSubmit={handleSubmit}>
+        <form id="login-form" onSubmit={handleSubmit}>
           <div style={{ marginBottom: '24px' }}>
             <label style={{
               display: 'block',
@@ -283,24 +423,41 @@ const Login = () => {
                 Signing In...
               </>
             ) : (
-              'Sign In'
+              `Sign In to ${targetPlatform.replace('/', '').toUpperCase()}`
             )}
           </button>
         </form>
 
-        {/* Test Credentials */}
+        {/* Platform Navigation */}
         <div style={{
-          background: 'rgba(34, 197, 94, 0.1)',
-          border: '1px solid rgba(34, 197, 94, 0.3)',
-          borderRadius: '8px',
-          padding: '12px 16px',
-          marginTop: '16px',
-          fontSize: '12px',
-          color: '#059669'
+          marginTop: '24px',
+          padding: '16px',
+          background: 'rgba(99, 102, 241, 0.1)',
+          borderRadius: '8px'
         }}>
-          <strong>Test Account:</strong><br/>
-          Email: aryan@gmail.com<br/>
-          Password: test123
+          <div style={{ fontSize: '14px', fontWeight: '600', color: '#4338ca', marginBottom: '8px' }}>
+            Available Platforms:
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+            {Object.entries(platformRoutes).filter(([key]) => key !== 'default').map(([platform, route]) => (
+              <Link
+                key={platform}
+                to={route}
+                style={{
+                  padding: '4px 8px',
+                  background: targetPlatform === route ? '#4338ca' : 'transparent',
+                  color: targetPlatform === route ? 'white' : '#4338ca',
+                  border: '1px solid #4338ca',
+                  borderRadius: '4px',
+                  textDecoration: 'none',
+                  fontSize: '12px',
+                  textTransform: 'capitalize'
+                }}
+              >
+                {platform}
+              </Link>
+            ))}
+          </div>
         </div>
 
         {/* Register Link */}

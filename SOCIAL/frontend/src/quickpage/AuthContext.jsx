@@ -15,6 +15,19 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(null);
 
+  // Debug helper for auth state
+  const debugAuth = useCallback(() => {
+    console.log('Auth Debug State:', {
+      isAuthenticated,
+      user,
+      token: token ? token.substring(0, 20) + '...' : null,
+      localStorage: {
+        authToken: localStorage.getItem('authToken') ? 'present' : 'missing',
+        cached_user: localStorage.getItem('cached_user') ? 'present' : 'missing'
+      }
+    });
+  }, [isAuthenticated, user, token]);
+
   // Clear all tokens helper
   const clearAllTokens = useCallback(() => {
     ['auth_token', 'token', 'authToken', 'cached_user', 'user'].forEach(key => 
@@ -41,16 +54,16 @@ export const AuthProvider = ({ children }) => {
         if (savedToken && cachedUser) {
           try {
             const userData = JSON.parse(cachedUser);
+            console.log('Attempting to restore user session...');
             
             // Validate token format - should be JWT or backend format
             if (savedToken.length > 20) {
-              // Test token with backend - REMOVED credentials: 'include'
+              // Test token with backend
               const testResponse = await fetch(`${API_BASE_URL}/api/auth/me`, {
                 headers: {
                   'Authorization': `Bearer ${savedToken}`,
                   'Content-Type': 'application/json'
                 }
-                // credentials: 'include' // REMOVED - causes CORS issues
               });
               
               if (testResponse.ok) {
@@ -62,7 +75,7 @@ export const AuthProvider = ({ children }) => {
                   
                   // Ensure token is stored with correct key
                   localStorage.setItem('authToken', savedToken);
-                  console.log('User restored:', userData.email);
+                  console.log('User session restored:', userData.email);
                   setLoading(false);
                   return;
                 }
@@ -76,6 +89,7 @@ export const AuthProvider = ({ children }) => {
             clearAllTokens();
           }
         } else {
+          console.log('No saved session found');
           clearAllTokens();
         }
       } catch (error) {
@@ -101,14 +115,26 @@ export const AuthProvider = ({ children }) => {
           'Accept': 'application/json' 
         },
         body: JSON.stringify({ email, password })
-        // credentials: 'include' // REMOVED - causes CORS issues
       });
 
-      const data = await response.json();
       console.log('Login response status:', response.status);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Network error' }));
+        console.error('Login HTTP error:', response.status, errorData);
+        return { 
+          success: false, 
+          error: errorData.error || errorData.message || `HTTP ${response.status}: Login failed` 
+        };
+      }
+
+      const data = await response.json();
       console.log('Login response data:', data);
       
-      if (response.ok && data.success && data.token) {
+      // Check if response indicates success
+      if (data.success === true && data.token) {
+        console.log('Login successful - processing user data');
+        
         // Create user object
         const userData = { 
           user_id: data.user_id, 
@@ -132,15 +158,18 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         
-        console.log('Login successful - token stored as authToken');
+        console.log('Login successful - user authenticated:', userData.email);
         return { success: true, user: userData };
+        
       } else {
-        console.error('Login failed:', data);
+        // Explicit failure case
+        console.error('Login failed - backend returned error:', data);
         return { 
           success: false, 
-          error: data.error || data.message || `HTTP ${response.status}: Login failed` 
+          error: data.error || data.message || 'Login failed - invalid credentials' 
         };
       }
+      
     } catch (error) {
       console.error('Login network error:', error);
       return { 
@@ -164,7 +193,6 @@ export const AuthProvider = ({ children }) => {
           'Accept': 'application/json' 
         },
         body: JSON.stringify({ name, email, password })
-        // credentials: 'include' // REMOVED
       });
 
       const data = await response.json();
@@ -220,7 +248,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('cached_user', JSON.stringify(updatedUser));
   }, [user]);
 
-  // Fixed makeAuthenticatedRequest function - REMOVED credentials: 'include'
+  // Fixed makeAuthenticatedRequest function
   const makeAuthenticatedRequest = useCallback(async (endpoint, options = {}) => {
     // Use state token first, fallback to localStorage
     const authToken = token || localStorage.getItem('authToken');
@@ -240,7 +268,6 @@ export const AuthProvider = ({ children }) => {
     const requestOptions = {
       ...options,
       headers
-      // credentials: 'include' // REMOVED - this was causing CORS failures
     };
 
     try {
@@ -278,7 +305,8 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     updateUser,
-    makeAuthenticatedRequest
+    makeAuthenticatedRequest,
+    debugAuth // Added for debugging
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
