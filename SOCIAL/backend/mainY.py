@@ -711,38 +711,51 @@ async def youtube_oauth_callback(request: YouTubeOAuthCallback):
         logger.error(f"YouTube OAuth callback failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
 @app.get("/api/youtube/status/{user_id}")
 async def youtube_status(user_id: str):
-    """Get YouTube connection and automation status"""
+    """Get YouTube connection and automation status with persistent token check"""
     try:
         logger.info(f"Checking YouTube status for user: {user_id}")
         
         # Check if user has YouTube credentials stored
         youtube_connected = False
         channel_info = None
+        credentials_valid = False
         
         try:
             credentials = await database_manager.get_youtube_credentials(user_id)
-            youtube_connected = credentials is not None
-            if credentials:
+            if credentials and credentials.get("is_active"):
+                youtube_connected = True
                 channel_info = credentials.get("channel_info")
-                logger.info(f"YouTube credentials found for user {user_id}")
+                
+                # Check if token is still valid
+                expires_at = credentials.get("expires_at")
+                if expires_at and isinstance(expires_at, datetime):
+                    credentials_valid = datetime.now() < expires_at
+                else:
+                    credentials_valid = True  # Assume valid if no expiry
+                
+                logger.info(f"YouTube credentials found for user {user_id}, valid: {credentials_valid}")
             else:
-                logger.info(f"No YouTube credentials found for user {user_id}")
+                logger.info(f"No active YouTube credentials found for user {user_id}")
         except Exception as db_error:
             logger.error(f"Database error fetching YouTube status: {db_error}")
         
         # Get automation status if scheduler is available
         automation_status = {}
         youtube_scheduler = get_youtube_scheduler()
-        if youtube_scheduler:
+        if youtube_scheduler and youtube_connected:
             automation_status = await youtube_scheduler.get_automation_status(user_id)
         
         return {
             "success": True,
             "user_id": user_id,
-            "youtube_connected": youtube_connected,
+            "youtube_connected": youtube_connected and credentials_valid,
             "channel_info": channel_info,
+            "connected_at": credentials.get("created_at") if credentials else None,
+            "last_updated": credentials.get("updated_at") if credentials else None,
             "youtube_automation": automation_status.get("youtube_automation", {
                 "enabled": False,
                 "config": None,
@@ -758,8 +771,23 @@ async def youtube_status(user_id: str):
         logger.error(f"YouTube status check failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
+@app.post("/api/youtube/disconnect/{user_id}")
+async def youtube_disconnect(user_id: str):
+    """Disconnect YouTube and remove stored credentials"""
+    try:
+        success = await database_manager.revoke_youtube_access(user_id)
+        
+        if success:
+            return {
+                "success": True,
+                "message": "YouTube disconnected successfully"
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Failed to disconnect YouTube")
+            
+    except Exception as e:
+        logger.error(f"YouTube disconnect failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 from youtube import get_youtube_scheduler

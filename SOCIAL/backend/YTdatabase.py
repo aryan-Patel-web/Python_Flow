@@ -146,6 +146,10 @@ class YouTubeDatabaseManager:
             logger.error(f"User update failed: {e}")
             return False
     
+
+
+
+
     # YouTube Credentials Management
     async def store_youtube_credentials(
         self,
@@ -165,7 +169,9 @@ class YouTubeDatabaseManager:
                 "expires_at": credentials.get("expires_at"),
                 "channel_info": credentials.get("channel_info", {}),
                 "created_at": datetime.now(),
-                "updated_at": datetime.now()
+                "updated_at": datetime.now(),
+                "is_active": True,
+                "platform": "youtube"
             }
             
             # Upsert (update if exists, insert if not)

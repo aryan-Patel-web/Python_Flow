@@ -255,83 +255,89 @@ const YouTubeAutomation = () => {
     }
   }, [token, getUserData, API_BASE]);
 
-  const handleOAuthCallbackDirect = useCallback(async (code) => {
-    try {
-      setLoading(true);
-      setError('');
-      
-      console.log('Processing OAuth callback with code:', code.substring(0, 20) + '...');
-      
-      let userData = getUserData();
-      let currentToken = token;
-      
-      if (!userData) {
-        const possibleTokenKeys = ['token', 'auth_token', 'access_token'];
-        for (const key of possibleTokenKeys) {
-          const storedToken = localStorage.getItem(key);
-          if (storedToken) {
-            currentToken = storedToken;
-            break;
-          }
-        }
-        userData = getUserData();
-      }
-      
-      if (!userData || !userData.user_id) {
-        throw new Error('User authentication required. Please log in first.');
-      }
-      
-      if (!currentToken) {
-        throw new Error('Authentication token not found. Please log in again.');
-      }
-      
-      const currentOrigin = window.location.origin;
-      const redirectUri = `${currentOrigin}/youtube`;
-      
-      console.log('Making OAuth callback request for user:', userData.user_id);
-      
-      const response = await fetch(`${API_BASE}/api/youtube/oauth-callback`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentToken}`,
-          'X-User-ID': userData.user_id
-        },
-        body: JSON.stringify({
-          user_id: userData.user_id,
-          code: code,
-          redirect_uri: redirectUri
-        })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Network error' }));
-        throw new Error(`OAuth callback failed: ${errorData.error || response.statusText}`);
-      }
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        setError('');
-        setStatus(prev => ({ ...prev, youtube_connected: true, ...result }));
-        setActiveTab('setup');
-        
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, document.title, newUrl);
-        
-        await fetchAutomationStatus();
-        console.log('YouTube connected successfully');
-      } else {
-        throw new Error(result.error || result.message || 'YouTube connection failed');
-      }
-    } catch (error) {
-      console.error('OAuth callback error:', error);
-      setError(error.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [getUserData, token, API_BASE, fetchAutomationStatus]);
 
+
+
+
+
+const handleOAuthCallbackDirect = useCallback(async (code) => {
+  try {
+    setLoading(true);
+    setError('');
+    
+    console.log('Processing OAuth callback with code:', code.substring(0, 20) + '...');
+    
+    let userData = getUserData();
+    let currentToken = token;
+    
+    if (!userData) {
+      const possibleTokenKeys = ['token', 'auth_token', 'access_token', 'authToken'];
+      for (const key of possibleTokenKeys) {
+        const storedToken = localStorage.getItem(key);
+        if (storedToken) {
+          currentToken = storedToken;
+          break;
+        }
+      }
+      userData = getUserData();
+    }
+    
+    if (!userData || !userData.user_id) {
+      throw new Error('User authentication required. Please log in first.');
+    }
+    
+    if (!currentToken) {
+      throw new Error('Authentication token not found. Please log in again.');
+    }
+    
+    const currentOrigin = window.location.origin;
+    const redirectUri = `${currentOrigin}/youtube`;
+    
+    console.log('Making OAuth callback request for user:', userData.user_id);
+    
+    const response = await fetch(`${API_BASE}/api/youtube/oauth-callback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentToken}`,
+        'X-User-ID': userData.user_id
+      },
+      body: JSON.stringify({
+        user_id: userData.user_id,
+        code: code,
+        redirect_uri: redirectUri
+      })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Network error' }));
+      throw new Error(`OAuth callback failed: ${errorData.error || response.statusText}`);
+    }
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      // Clear URL parameters AFTER successful processing
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      setError('');
+      setStatus(prev => ({ ...prev, youtube_connected: true, ...result }));
+      setActiveTab('setup');
+      
+      await fetchAutomationStatus();
+      console.log('YouTube connected successfully - redirecting to setup');
+    } else {
+      throw new Error(result.error || result.message || 'YouTube connection failed');
+    }
+  } catch (error) {
+    // Clear URL on error too
+    window.history.replaceState({}, document.title, window.location.pathname);
+    console.error('OAuth callback error:', error);
+    setError(error.message);
+  } finally {
+    setLoading(false);
+  }
+}, [getUserData, token, API_BASE, fetchAutomationStatus]);
 
 
 
