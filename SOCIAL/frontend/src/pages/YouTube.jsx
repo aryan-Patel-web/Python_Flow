@@ -332,28 +332,49 @@ const YouTubeAutomation = () => {
     }
   }, [getUserData, token, API_BASE, fetchAutomationStatus]);
 
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    const state = urlParams.get('state');
-    const error_param = urlParams.get('error');
-    
-    if (error_param) {
-      setError(`OAuth error: ${error_param}`);
-      window.history.replaceState({}, document.title, window.location.pathname);
-      return;
-    }
-    
-    if (code && state === 'youtube_oauth') {
-      console.log('OAuth callback detected, processing...');
-      handleOAuthCallbackDirect(code);
-      return;
-    }
-    
-    if (isAuthenticated && token) {
-      fetchAutomationStatus();
-    }
-  }, [isAuthenticated, token, handleOAuthCallbackDirect]);
+
+
+
+
+
+
+useEffect(() => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const code = urlParams.get('code');
+  const state = urlParams.get('state');
+  const error_param = urlParams.get('error');
+  
+  console.log('YouTube useEffect - URL params:', { 
+    code: code ? code.substring(0, 20) + '...' : null, 
+    state, 
+    error: error_param,
+    fullURL: window.location.href
+  });
+  console.log('YouTube useEffect - Auth state:', { isAuthenticated, hasToken: !!token });
+  
+  if (error_param) {
+    console.error('OAuth error detected:', error_param);
+    setError(`OAuth error: ${error_param}`);
+    window.history.replaceState({}, document.title, window.location.pathname);
+    return;
+  }
+  
+  if (code && state === 'youtube_oauth') {
+    console.log('✅ OAuth callback detected - processing code:', code.substring(0, 20) + '...');
+    handleOAuthCallbackDirect(code);
+    return;
+  }
+  
+  // Normal initialization
+  if (isAuthenticated && token) {
+    console.log('Normal initialization - fetching status');
+    fetchAutomationStatus();
+  } else {
+    console.log('Waiting for authentication...');
+  }
+}, [isAuthenticated, token, handleOAuthCallbackDirect]);
+
+
 
   const generateOAuthUrl = useCallback(async () => {
     if (!token) {
