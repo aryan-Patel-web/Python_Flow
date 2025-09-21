@@ -1194,6 +1194,48 @@ async def health_check():
         logger.error(f"Health check failed: {e}")
         return {"success": False, "error": str(e), "status": "unhealthy"}
 
+
+# API Routes (add these near the end of your routes)
+@app.get("/api/health")
+async def api_health_check():
+    """API health check endpoint with CORS support"""
+    try:
+        health_data = await health_check()
+        return Response(
+            content=json.dumps(health_data),
+            media_type="application/json",
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                "Cache-Control": "no-cache"
+            }
+        )
+    except Exception as e:
+        logger.error(f"API health check failed: {e}")
+        return Response(
+            content=json.dumps({"success": False, "error": str(e)}),
+            status_code=500,
+            media_type="application/json"
+        )
+
+@app.get("/api/")
+async def api_root():
+    """API root endpoint"""
+    root_data = await root()
+    return Response(
+        content=json.dumps(root_data),
+        media_type="application/json",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS", 
+            "Access-Control-Allow-Headers": "Content-Type, Authorization"
+        }
+    )
+
+
+
+
 # Multi-User Authentication endpoints
 @app.post("/api/auth/register")
 async def register_user(user_data: RegisterRequest):
