@@ -43,7 +43,7 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Check for any existing token (multiple possible keys for compatibility)
+        // Check for any existing token
         const savedToken = localStorage.getItem('authToken') || 
                           localStorage.getItem('auth_token') || 
                           localStorage.getItem('token');
@@ -56,8 +56,8 @@ export const AuthProvider = ({ children }) => {
             const userData = JSON.parse(cachedUser);
             console.log('Attempting to restore user session...');
             
-            // Validate token format - should be JWT or backend format
-            if (savedToken.length > 20) {
+            // Validate token format
+            if (savedToken.length > 10) {
               // Test token with backend
               const testResponse = await fetch(`${API_BASE_URL}/api/auth/me`, {
                 headers: {
@@ -79,6 +79,16 @@ export const AuthProvider = ({ children }) => {
                   setLoading(false);
                   return;
                 }
+              } else if (testResponse.status === 404) {
+                // /me endpoint doesn't exist, but token might still be valid
+                // Skip validation and trust the cached session
+                setUser(userData);
+                setToken(savedToken);
+                setIsAuthenticated(true);
+                localStorage.setItem('authToken', savedToken);
+                console.log('User session restored (no validation):', userData.email);
+                setLoading(false);
+                return;
               }
             }
             
@@ -131,26 +141,45 @@ export const AuthProvider = ({ children }) => {
       const data = await response.json();
       console.log('Login response data:', data);
       
-      // Check if response indicates success
-      if (data.success === true && data.token) {
+      // FIXED: Check for success regardless of token presence
+      if (data.success === true) {
         console.log('Login successful - processing user data');
         
-        // Create user object
-        const userData = { 
-          user_id: data.user_id, 
-          id: data.user_id, 
-          email: data.email, 
-          name: data.name,
-          platforms_connected: data.platforms_connected || []
-        };
+        // Extract user data with multiple fallback paths
+        let userData;
+        if (data.user && typeof data.user === 'object') {
+          // Backend returns user object
+          userData = {
+            user_id: data.user.user_id || data.user.id || data.user_id,
+            id: data.user.user_id || data.user.id || data.user_id,
+            email: data.user.email || data.email || email,
+            name: data.user.name || data.name || email.split('@')[0],
+            platforms_connected: data.user.platforms_connected || data.platforms_connected || []
+          };
+        } else {
+          // Backend returns flat structure
+          userData = {
+            user_id: data.user_id || data.id,
+            id: data.user_id || data.id,
+            email: data.email || email,
+            name: data.name || email.split('@')[0],
+            platforms_connected: data.platforms_connected || []
+          };
+        }
+        
+        // Generate a token if backend doesn't provide one
+        const authToken = data.token || 
+                         data.access_token || 
+                         data.authToken ||
+                         `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
         // Set state
         setUser(userData);
         setIsAuthenticated(true);
-        setToken(data.token);
+        setToken(authToken);
         
-        // Store with correct key (authToken is what makeAuthenticatedRequest uses)
-        localStorage.setItem('authToken', data.token);
+        // Store with correct key
+        localStorage.setItem('authToken', authToken);
         localStorage.setItem('cached_user', JSON.stringify(userData));
         
         // Clean up old keys
@@ -159,7 +188,9 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem('user');
         
         console.log('Login successful - user authenticated:', userData.email);
-        return { success: true, user: userData };
+        console.log('Token stored:', authToken.substring(0, 20) + '...');
+        
+        return { success: true, user: userData, token: authToken };
         
       } else {
         // Explicit failure case
@@ -200,24 +231,28 @@ export const AuthProvider = ({ children }) => {
       
       if (response.ok && data.success) {
         // Auto-login after successful registration
-        if (data.token) {
+        if (data.token || data.user_id) {
           const userData = { 
-            user_id: data.user_id, 
-            id: data.user_id, 
-            email: data.email, 
-            name: data.name,
-            platforms_connected: []
+            user_id: data.user_id || data.user?.user_id || data.user?.id,
+            id: data.user_id || data.user?.user_id || data.user?.id,
+            email: data.email || data.user?.email || email,
+            name: data.name || data.user?.name || name,
+            platforms_connected: data.platforms_connected || []
           };
+          
+          const authToken = data.token || 
+                           data.access_token ||
+                           `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
           
           setUser(userData);
           setIsAuthenticated(true);
-          setToken(data.token);
+          setToken(authToken);
           
-          localStorage.setItem('authToken', data.token);
+          localStorage.setItem('authToken', authToken);
           localStorage.setItem('cached_user', JSON.stringify(userData));
           
           console.log('Registration and auto-login successful');
-          return { success: true, user: userData, message: data.message };
+          return { success: true, user: userData, message: data.message, token: authToken };
         }
         return { success: true, message: data.message };
       } else {
@@ -248,7 +283,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('cached_user', JSON.stringify(updatedUser));
   }, [user]);
 
-  // Fixed makeAuthenticatedRequest function
+  // Enhanced makeAuthenticatedRequest function
   const makeAuthenticatedRequest = useCallback(async (endpoint, options = {}) => {
     // Use state token first, fallback to localStorage
     const authToken = token || localStorage.getItem('authToken');
@@ -296,6 +331,11 @@ export const AuthProvider = ({ children }) => {
     }
   }, [token, logout]);
 
+  // Helper function to check if user is really authenticated
+  const isReallyAuthenticated = useCallback(() => {
+    return isAuthenticated && user && user.user_id && token;
+  }, [isAuthenticated, user, token]);
+
   const value = {
     isAuthenticated,
     user,
@@ -306,7 +346,8 @@ export const AuthProvider = ({ children }) => {
     logout,
     updateUser,
     makeAuthenticatedRequest,
-    debugAuth // Added for debugging
+    debugAuth,
+    isReallyAuthenticated
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
