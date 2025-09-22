@@ -143,36 +143,26 @@ const RedditAutomation = () => {
 
 
 // Initialize app state - FIXED VERSION
+// Initialize app state - FIXED VERSION
 useEffect(() => {
   const initApp = async () => {
-    // STRICT: Only run once per user session
+    // Only run for authenticated users
     if (!user?.email || user.email.includes('mock')) {
       return;
     }
 
-    // FIXED: Better initialization guard
-    const initKey = `reddit_init_${user.email}_${Date.now()}`;
-    const existingInit = localStorage.getItem(`reddit_init_${user.email}`);
-    
-    if (existingInit) {
+    // Prevent multiple initializations
+    const initKey = `reddit_init_${user.email}`;
+    if (localStorage.getItem(initKey)) {
       console.log('Already initialized for', user.email);
       return;
     }
 
     try {
-      console.log('🚀 Initializing Reddit Auto component for real user:', user.email);
-      
-      // Mark as initialized IMMEDIATELY
-      localStorage.setItem(`reddit_init_${user.email}`, 'true');
-      
-      // Set initial Reddit connection from user context
-      if (user?.reddit_connected && user?.reddit_username) {
-        setRedditConnected(true);
-        setRedditUsername(user.reddit_username);
-        console.log('✅ Real Reddit connection detected:', user.reddit_username);
-      }
+      console.log('🚀 Initializing Reddit Auto component for user:', user.email);
+      localStorage.setItem(initKey, 'true');
 
-      // Handle OAuth callback
+      // Handle OAuth callback first
       const urlParams = new URLSearchParams(window.location.search);
       const redditConnectedParam = urlParams.get('reddit_connected');
       const usernameParam = urlParams.get('username');
@@ -186,7 +176,7 @@ useEffect(() => {
       }
 
       if (redditConnectedParam === 'true' && usernameParam) {
-        console.log('✅ Real Reddit OAuth success:', { username: usernameParam });
+        console.log('✅ Reddit OAuth success:', { username: usernameParam });
         setRedditUsername(usernameParam);
         setRedditConnected(true);
         updateUser({
@@ -195,27 +185,46 @@ useEffect(() => {
         });
         showNotification(`Reddit connected! Welcome u/${usernameParam}!`, 'success');
         window.history.replaceState({}, '', window.location.pathname);
-        return; // Exit early after OAuth
+        
+        // Force check connection status after OAuth
+        setTimeout(async () => {
+          try {
+            const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
+            const result = await response.json();
+            if (result.success && result.connected) {
+              setRedditConnected(true);
+              setRedditUsername(result.reddit_username);
+              console.log('✅ OAuth connection confirmed via API');
+            }
+          } catch (error) {
+            console.error('Failed to verify OAuth connection:', error);
+          }
+        }, 1000);
+        return;
       }
 
-      // Only check existing connection if not already set
-      if (!user?.reddit_connected) {
-        try {
-          const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
-          const result = await response.json();
-          
-          if (result.success && result.connected && result.reddit_username) {
-            setRedditConnected(true);
-            setRedditUsername(result.reddit_username);
-            updateUser({
-              reddit_connected: true,
-              reddit_username: result.reddit_username
-            });
-            console.log('✅ Existing Reddit connection verified:', result.reddit_username);
-          }
-        } catch (error) {
-          console.error('Failed to check Reddit connection:', error);
+      // Check existing Reddit connection status
+      try {
+        const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
+        const result = await response.json();
+        
+        if (result.success && result.connected && result.reddit_username) {
+          setRedditConnected(true);
+          setRedditUsername(result.reddit_username);
+          updateUser({
+            reddit_connected: true,
+            reddit_username: result.reddit_username
+          });
+          console.log('✅ Existing Reddit connection verified:', result.reddit_username);
+        } else {
+          setRedditConnected(false);
+          setRedditUsername('');
+          console.log('❌ No Reddit connection found');
         }
+      } catch (error) {
+        console.error('Failed to check Reddit connection:', error);
+        setRedditConnected(false);
+        setRedditUsername('');
       }
 
       // Load saved profile
@@ -223,15 +232,13 @@ useEffect(() => {
         const savedProfile = localStorage.getItem('redditUserProfile');
         if (savedProfile) {
           const profile = JSON.parse(savedProfile);
-          if (!JSON.stringify(profile).toLowerCase().includes('mock')) {
-            setUserProfile(profile);
-          }
+          setUserProfile(profile);
         }
       } catch (error) {
         console.error('Error loading profile:', error);
       }
 
-      // Test backend connection - USE AUTHENTICATED REQUEST
+      // Test backend connection
       try {
         const healthResponse = await makeAuthenticatedRequest('/health');
         const healthData = await healthResponse.json();
@@ -250,13 +257,11 @@ useEffect(() => {
     }
   };
 
-  // FIXED: Only initialize once when user is first loaded
-  if (user?.email && !user.email.includes('mock') && !localStorage.getItem(`reddit_init_${user.email}`)) {
+  // Only initialize when user changes and is authenticated
+  if (user?.email && !user.email.includes('mock')) {
     initApp();
   }
-}, []); // FIXED: Remove ALL dependencies to prevent re-runs
-
-
+}, [user?.email, makeAuthenticatedRequest, updateUser, showNotification]);
 
   const saveUserProfile = useCallback(() => {
     try {
