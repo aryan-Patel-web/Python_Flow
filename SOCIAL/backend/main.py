@@ -1276,10 +1276,11 @@ async def login_user(login_data: LoginRequest):
 
 @app.get("/api/auth/me")
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
-    """Get current user information"""
+    """Get current user info from token"""
     return {
         "success": True,
-        "user": current_user
+        "user": current_user,
+        "authenticated": True
     }
 
 
@@ -1289,13 +1290,16 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
 
 @app.get("/api/oauth/reddit/authorize")
 async def reddit_oauth_authorize(current_user: dict = Depends(get_current_user)):
-    """Start Reddit OAuth flow for authenticated user"""
+    """Start Reddit OAuth flow for authenticated user - FIXED VERSION"""
     try:
         user_id = current_user["id"]
         
-        # Generate OAuth state with user_id
+        # Generate OAuth state
         state = f"oauth_{user_id}_{uuid.uuid4().hex[:12]}"
-        oauth_states[state] = user_id
+        
+        # FIXED: Store in database with expiration (15 minutes)
+        expires_at = datetime.utcnow() + timedelta(minutes=15)
+        await database_manager.store_oauth_state(state, user_id, expires_at)
         
         reddit_client_id = os.getenv("REDDIT_CLIENT_ID")
         reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI", "https://agentic-u5lx.onrender.com/api/oauth/reddit/callback")
@@ -1303,10 +1307,9 @@ async def reddit_oauth_authorize(current_user: dict = Depends(get_current_user))
         if not reddit_client_id:
             raise HTTPException(status_code=500, detail="Reddit credentials not configured")
         
-        # Enhanced OAuth URL with identity scope
         oauth_url = f"https://www.reddit.com/api/v1/authorize?client_id={reddit_client_id}&response_type=code&state={state}&redirect_uri={reddit_redirect_uri}&duration=permanent&scope=identity,submit,edit,read"
         
-        logger.info(f"Starting OAuth for user {user_id} ({current_user['email']})")
+        logger.info(f"Starting OAuth for user {user_id} ({current_user['email']}) - state: {state}")
         
         return {
             "success": True,
@@ -1322,25 +1325,29 @@ async def reddit_oauth_authorize(current_user: dict = Depends(get_current_user))
 
 
 
+
+
 @app.get("/api/oauth/reddit/callback")
 async def reddit_oauth_callback(code: str, state: str):
-    """Handle Reddit OAuth callback for authenticated user"""
+    """Handle Reddit OAuth callback for authenticated user - FIXED VERSION"""
     try:
-        # Get user_id from OAuth state
-        user_id = oauth_states.get(state)
-        if not user_id:
-            logger.error(f"Invalid OAuth state: {state}")
+        # FIXED: Get user_id from database instead of memory
+        state_data = await database_manager.get_oauth_state(state)
+        if not state_data:
+            logger.error(f"Invalid OAuth state from database: {state}")
+            logger.error(f"Available states in database: {await database_manager.get_all_oauth_states() if hasattr(database_manager, 'get_all_oauth_states') else 'method not available'}")
             return RedirectResponse(
                 url="https://frontend-agentic-bnc2.onrender.com/?error=invalid_oauth_state",
                 status_code=302
             )
         
-        logger.info(f"Processing OAuth callback for user {user_id}")
+        user_id = state_data["user_id"]
+        logger.info(f"Processing OAuth callback for user {user_id} (state found in database)")
         
         # Exchange code for token
         reddit_client_id = os.getenv("REDDIT_CLIENT_ID")
         reddit_client_secret = os.getenv("REDDIT_CLIENT_SECRET")
-        reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI")
+        reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI", "https://agentic-u5lx.onrender.com/api/oauth/reddit/callback")
         
         if not reddit_client_id or not reddit_client_secret:
             logger.error("Reddit credentials missing from environment")
@@ -1365,7 +1372,7 @@ async def reddit_oauth_callback(code: str, state: str):
             'redirect_uri': reddit_redirect_uri
         }
         
-        logger.info("Exchanging code for access token...")
+        logger.info(f"Exchanging code for access token with redirect_uri: {reddit_redirect_uri}")
         
         response = requests.post(
             'https://www.reddit.com/api/v1/access_token',
@@ -1459,7 +1466,14 @@ async def reddit_oauth_callback(code: str, state: str):
                     "user_info": user_info or {"name": username, "id": reddit_user_id}
                 }
                 
-                # Clean up OAuth state
+                # FIXED: Clean up OAuth state from database
+                try:
+                    await database_manager.cleanup_oauth_state(state)
+                    logger.info(f"OAuth state cleaned up from database: {state}")
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup OAuth state: {e}")
+                
+                # Also clean up from memory (if it exists)
                 oauth_states.pop(state, None)
                 
                 # Redirect to main page instead of /reddit-auto to avoid 404
