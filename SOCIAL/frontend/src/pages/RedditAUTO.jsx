@@ -158,15 +158,19 @@ useEffect(() => {
 
 // Initialize app state - FIXED VERSION
 // Initialize app state - FIXED VERSION
+// Initialize app state - FIXED VERSION
 useEffect(() => {
   const initApp = async () => {
     // Only run for authenticated users
     if (!user?.email || user.email.includes('mock')) {
+      console.log('Skipping init - no user or mock user');
       return;
     }
 
-    // Prevent multiple initializations
+    // TEMPORARILY CLEAR INIT FLAG TO FORCE CONNECTION CHECK
     const initKey = `reddit_init_${user.email}`;
+    localStorage.removeItem(initKey); // ADD THIS LINE TO FORCE REFRESH
+    
     if (localStorage.getItem(initKey)) {
       console.log('Already initialized for', user.email);
       return;
@@ -203,8 +207,10 @@ useEffect(() => {
         // Force check connection status after OAuth
         setTimeout(async () => {
           try {
+            console.log('Making OAuth verification request...');
             const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
             const result = await response.json();
+            console.log('OAuth verification result:', result);
             if (result.success && result.connected) {
               setRedditConnected(true);
               setRedditUsername(result.reddit_username);
@@ -218,9 +224,12 @@ useEffect(() => {
       }
 
       // Check existing Reddit connection status
+      console.log('Checking existing Reddit connection...');
       try {
         const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
+        console.log('Connection check response status:', response.status);
         const result = await response.json();
+        console.log('Connection check result:', result);
         
         if (result.success && result.connected && result.reddit_username) {
           setRedditConnected(true);
@@ -233,13 +242,15 @@ useEffect(() => {
         } else {
           setRedditConnected(false);
           setRedditUsername('');
-          console.log('❌ No Reddit connection found');
+          console.log('❌ No Reddit connection found', result);
         }
       } catch (error) {
         console.error('Failed to check Reddit connection:', error);
         setRedditConnected(false);
         setRedditUsername('');
       }
+
+      // Load saved profile
 
 
 
