@@ -67,6 +67,7 @@ class MultiUserDatabaseManager:
             "ai_usage": "ai_content_generation",
             "analytics": "platform_analytics",
             "automation_logs": "automation_logs",
+            "oauth_states": "oauth_states",  # ADDED: OAuth state storage
             "migrations": "migrations"
         }
 
@@ -178,6 +179,15 @@ class MultiUserDatabaseManager:
             except Exception as e:
                 logger.warning(f"Activity indexes creation failed: {e}")
             
+            # ADDED: OAuth state indexes
+            try:
+                await self.database.oauth_states.create_index("expires_at", expireAfterSeconds=900)  # Auto-cleanup after 15 min
+                await self.database.oauth_states.create_index("user_id")
+                await self.database.oauth_states.create_index("created_at")
+                logger.debug("OAuth state indexes created")
+            except Exception as e:
+                logger.warning(f"OAuth state indexes creation failed: {e}")
+            
             logger.info("Multi-user database indexes setup completed")
             
         except Exception as e:
@@ -207,6 +217,96 @@ class MultiUserDatabaseManager:
                 return computed_hash == hash_value
             except:
                 return False
+
+    # ADDED: OAuth State Management Methods
+    async def store_oauth_state(self, state: str, user_id: str, expires_at: datetime) -> Dict[str, Any]:
+        """Store OAuth state for Reddit authorization flow"""
+        try:
+            if not self.connected:
+                return {"success": False, "error": "Database not connected"}
+            
+            state_doc = {
+                "_id": state,  # Use state as the document ID for easy lookup
+                "user_id": user_id,
+                "expires_at": expires_at,
+                "created_at": datetime.utcnow(),
+                "oauth_type": "reddit"
+            }
+            
+            await self.database.oauth_states.insert_one(state_doc)
+            
+            logger.info(f"OAuth state stored: {state} for user {user_id}")
+            
+            return {"success": True, "message": "OAuth state stored successfully"}
+            
+        except Exception as e:
+            logger.error(f"Store OAuth state failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_oauth_state(self, state: str) -> Optional[Dict[str, Any]]:
+        """Get OAuth state from database"""
+        try:
+            if not self.connected:
+                return None
+                
+            state_doc = await self.database.oauth_states.find_one({"_id": state})
+            
+            if not state_doc:
+                logger.warning(f"OAuth state not found: {state}")
+                return None
+            
+            # Check if expired
+            if state_doc["expires_at"] <= datetime.utcnow():
+                logger.warning(f"OAuth state expired: {state}")
+                # Clean up expired state
+                await self.database.oauth_states.delete_one({"_id": state})
+                return None
+            
+            logger.info(f"OAuth state found: {state} for user {state_doc['user_id']}")
+            return {
+                "user_id": state_doc["user_id"],
+                "expires_at": state_doc["expires_at"],
+                "created_at": state_doc["created_at"]
+            }
+            
+        except Exception as e:
+            logger.error(f"Get OAuth state failed: {e}")
+            return None
+
+    async def cleanup_oauth_state(self, state: str) -> Dict[str, Any]:
+        """Remove OAuth state from database after use"""
+        try:
+            if not self.connected:
+                return {"success": False, "error": "Database not connected"}
+            
+            result = await self.database.oauth_states.delete_one({"_id": state})
+            
+            if result.deleted_count > 0:
+                logger.info(f"OAuth state cleaned up: {state}")
+                return {"success": True, "message": "OAuth state cleaned up"}
+            else:
+                return {"success": False, "message": "OAuth state not found"}
+            
+        except Exception as e:
+            logger.error(f"Cleanup OAuth state failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_all_oauth_states(self) -> List[str]:
+        """Debug method to get all stored OAuth states"""
+        try:
+            if not self.connected:
+                return []
+            
+            cursor = self.database.oauth_states.find({}, {"_id": 1})
+            states = []
+            async for doc in cursor:
+                states.append(doc["_id"])
+            
+            return states
+            
+        except Exception as e:
+            logger.error(f"Get all OAuth states failed: {e}")
+            return []
 
     # User Authentication Methods
     async def register_user(self, email: str, password: str, name: str) -> Dict[str, Any]:
@@ -717,6 +817,17 @@ class MultiUserDatabaseManager:
         except Exception as e:
             logger.error(f"Get automation config failed: {e}")
             return None
+        
+
+
+
+
+
+
+
+
+
+
 
     async def get_all_active_automations(self, config_type: str) -> List[Dict[str, Any]]:
         """Get all active automation configs for scheduling across all users"""
