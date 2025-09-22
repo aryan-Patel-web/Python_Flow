@@ -556,7 +556,46 @@ class MockMultiUserDatabase:
         return list(self.oauth_states.keys())
 
 
+class MockAIService:
+    def __init__(self):
+        self.is_mock = True
+        logger.warning("MockAIService initialized - Configure MISTRAL_API_KEY or GROQ_API_KEY for real AI")
+    
+    async def generate_reddit_domain_content(self, **kwargs):
+        return {
+            "success": False,
+            "error": "Mock AI Service Active",
+            "title": f"Mock Title for {kwargs.get('domain', 'general')}",
+            "content": f"Mock content for {kwargs.get('business_type', 'business')}",
+            "ai_service": "mock"
+        }
+    
+    async def test_ai_connection(self):
+        return {"success": False, "error": "Mock AI", "primary_service": "mock"}
 
+class MockRedditConnector:
+    def __init__(self):
+        self.is_configured = False
+    
+    async def post_content_with_token(self, **kwargs):
+        return {"success": False, "error": "Mock Reddit connector"}
+
+class MockAutomationScheduler:
+    def __init__(self): 
+        self.is_running = True
+        self.active_configs = {}
+    
+    def start_scheduler(self): 
+        pass
+    
+    async def setup_auto_posting(self, config): 
+        return {"success": False, "error": "Mock scheduler"}
+    
+    async def setup_auto_replies(self, config): 
+        return {"success": False, "error": "Mock scheduler"}
+    
+    async def get_automation_status(self, user_id): 
+        return {"success": True, "user_id": user_id, "mock_warning": True}
 
 
 
