@@ -1,8 +1,7 @@
 """
-Streamlined AI Service - Real Mistral/Groq Integration
-Compatible with main.py - Enhanced with asyncio and better error handling
-Uses direct HTTP API calls instead of mistralai library to avoid pyarrow dependency
-Generates unique, human-like content for Reddit automation
+Human-like AI Service - Natural Reddit Content Generation
+Generates authentic, conversational content that passes human detection
+No formatting, lists, or obvious AI patterns
 """
 
 import asyncio
@@ -18,7 +17,7 @@ import time
 logger = logging.getLogger(__name__)
 
 class AIService:
-    """Streamlined AI Service for Reddit content generation using HTTP APIs"""
+    """Human-like AI Service for authentic Reddit content"""
     
     def __init__(self):
         """Initialize with HTTP clients for APIs"""
@@ -53,23 +52,23 @@ class AIService:
         self.groq_available = bool(self.groq_key and len(self.groq_key) > 20)
         
         # Rate limiting and request management
-        self.mistral_semaphore = asyncio.Semaphore(3)  # Max 3 concurrent Mistral requests
-        self.groq_semaphore = asyncio.Semaphore(2)     # Max 2 concurrent Groq requests
+        self.mistral_semaphore = asyncio.Semaphore(3)
+        self.groq_semaphore = asyncio.Semaphore(2)
         self.mistral_last_request = 0
         self.groq_last_request = 0
-        self.min_request_interval = 3.0  # Minimum 3 seconds between requests
+        self.min_request_interval = 3.0
         
-        # Enhanced model configurations with multiple fallbacks
+        # Enhanced model configurations
         self.mistral_models = [
-            "mistral-small-latest",    # Primary - most reliable
-            "mistral-medium-latest",   # Fallback 1
-            "open-mistral-7b"          # Fallback 2 - fastest
+            "mistral-small-latest",
+            "mistral-medium-latest",
+            "open-mistral-7b"
         ]
         
         self.groq_models = [
-            "llama-3.1-8b-instant",    # Primary - fast and reliable
-            "llama3-70b-8192",         # Fallback 1 - higher quality  
-            "mixtral-8x7b-32768"       # Fallback 2 - good performance
+            "llama-3.1-8b-instant",
+            "llama3-70b-8192",
+            "mixtral-8x7b-32768"
         ]
         
         if self.mistral_available:
@@ -84,35 +83,98 @@ class AIService:
             print("❌ No AI services configured - check API keys")
             logger.warning("No AI services available")
         
-        # Content variety templates
-        self.content_styles = {
-            "question": ["Have you ever wondered...", "What's your experience with...", "How do you handle..."],
-            "tip": ["Here's a practical tip:", "Something that helped me:", "A technique worth trying:"],
-            "story": ["I recently discovered...", "Here's what I learned...", "My experience with..."],
-            "discussion": ["Let's talk about...", "What are your thoughts on...", "I'm curious about..."],
-            "advice": ["If you're struggling with...", "Here's what works for...", "Consider this approach:"]
+        # Natural conversation starters and patterns
+        self.natural_starters = [
+            "So I've been thinking about",
+            "Anyone else notice that",
+            "This might sound weird but",
+            "Not sure if this is just me but",
+            "Been dealing with this lately and",
+            "Quick question for everyone here",
+            "Maybe I'm overthinking this but",
+            "Had this experience recently and",
+            "Probably a dumb question but",
+            "Just realized something about"
+        ]
+        
+        self.casual_connectors = [
+            "but honestly", "like", "idk", "tbh", "basically", "anyway", 
+            "so yeah", "also", "btw", "i mean", "right?", "you know"
+        ]
+        
+        self.human_quirks = [
+            "edit: typo", "sorry for rambling", "hope this makes sense",
+            "correct me if im wrong", "not an expert but", "just my 2 cents",
+            "might be completely off here", "take this with a grain of salt"
+        ]
+        
+        # Common typos and casual writing patterns
+        self.casual_replacements = {
+            "you": ["u", "you"],
+            "are": ["r", "are"], 
+            "because": ["bc", "cuz", "because"],
+            "probably": ["prob", "probably"],
+            "definitely": ["def", "definitely"],
+            "really": ["rly", "really"],
+            "something": ["smth", "something"],
+            "someone": ["someone", "sb"],
+            "though": ["tho", "though"],
+            "through": ["thru", "through"]
         }
         
+        # Domain-specific authentic experiences
         self.domain_contexts = {
             "education": {
-                "topics": ["study techniques", "exam strategies", "time management", "motivation", "career planning"],
-                "audiences": ["JEE aspirants", "NEET students", "college students", "working professionals"],
-                "pain_points": ["exam stress", "time management", "concentration issues", "career confusion"]
+                "real_struggles": [
+                    "cant concentrate for more than 20 mins",
+                    "feeling behind compared to classmates", 
+                    "parents keep asking about marks",
+                    "coaching classes are so expensive",
+                    "online vs offline classes confusion"
+                ],
+                "casual_mentions": [
+                    "my friend told me", "saw this on youtube", "teacher mentioned",
+                    "read somewhere that", "cousin who's in college said"
+                ]
             },
             "tech": {
-                "topics": ["programming tips", "career advice", "tool recommendations", "learning paths", "project ideas"],
-                "audiences": ["new developers", "experienced programmers", "career switchers", "students"],
-                "pain_points": ["learning curve", "imposter syndrome", "staying updated", "work-life balance"]
+                "real_struggles": [
+                    "impostor syndrome is real", 
+                    "tutorial hell is a thing",
+                    "stack overflow copy paste guilt",
+                    "job market feels impossible",
+                    "everyone seems smarter than me"
+                ],
+                "casual_mentions": [
+                    "saw on twitter", "colleague mentioned", "read on medium",
+                    "some guy on youtube said", "friend who works at"
+                ]
             },
             "health": {
-                "topics": ["fitness routines", "nutrition tips", "mental wellness", "healthy habits", "workout motivation"],
-                "audiences": ["fitness beginners", "health enthusiasts", "busy professionals", "students"],
-                "pain_points": ["lack of time", "motivation issues", "diet confusion", "stress management"]
+                "real_struggles": [
+                    "motivation dies after 2 weeks",
+                    "healthy food is so expensive", 
+                    "gym feels intimidating",
+                    "work schedule kills workout plans",
+                    "family doesnt understand diet changes"
+                ],
+                "casual_mentions": [
+                    "doctor said", "friend who's into fitness", "saw on instagram",
+                    "my sister tries", "colleague at work"
+                ]
             },
             "business": {
-                "topics": ["startup advice", "business strategies", "marketing tips", "financial planning", "productivity"],
-                "audiences": ["entrepreneurs", "small business owners", "freelancers", "corporate professionals"],
-                "pain_points": ["funding challenges", "market competition", "work-life balance", "scaling issues"]
+                "real_struggles": [
+                    "clients always want discounts",
+                    "cash flow is unpredictable",
+                    "competition is everywhere",
+                    "marketing feels like throwing money away",
+                    "work life balance doesnt exist"
+                ],
+                "casual_mentions": [
+                    "mentor told me", "read in some blog", "customer feedback",
+                    "business partner thinks", "accountant suggested"
+                ]
             }
         }
     
@@ -141,10 +203,9 @@ class AIService:
         if not self.mistral_available:
             return None
         
-        async with self.mistral_semaphore:  # Limit concurrent requests
+        async with self.mistral_semaphore:
             await self._wait_for_rate_limit("mistral")
             
-            # Try multiple Mistral models
             for model_idx, model in enumerate(self.mistral_models):
                 try:
                     payload = {
@@ -156,7 +217,7 @@ class AIService:
                         "stream": False
                     }
                     
-                    timeout_duration = 45.0 + (model_idx * 15.0)  # Increase timeout for fallback models
+                    timeout_duration = 45.0 + (model_idx * 15.0)
                     
                     async with httpx.AsyncClient(
                         timeout=httpx.Timeout(timeout_duration, connect=10.0),
@@ -178,7 +239,7 @@ class AIService:
                         elif response.status_code == 429:
                             logger.warning(f"⚠️ Mistral rate limit hit with {model}")
                             if model_idx < len(self.mistral_models) - 1:
-                                await asyncio.sleep(5.0)  # Wait before trying next model
+                                await asyncio.sleep(5.0)
                                 continue
                             else:
                                 logger.error("All Mistral models hit rate limit")
@@ -212,10 +273,9 @@ class AIService:
         if not self.groq_available:
             return None
         
-        async with self.groq_semaphore:  # Limit concurrent requests
+        async with self.groq_semaphore:
             await self._wait_for_rate_limit("groq")
             
-            # Try multiple Groq models
             for model_idx, model in enumerate(self.groq_models):
                 try:
                     payload = {
@@ -227,7 +287,7 @@ class AIService:
                         "stream": False
                     }
                     
-                    timeout_duration = 45.0 + (model_idx * 15.0)  # Increase timeout for fallback models
+                    timeout_duration = 45.0 + (model_idx * 15.0)
                     
                     async with httpx.AsyncClient(
                         timeout=httpx.Timeout(timeout_duration, connect=10.0),
@@ -248,19 +308,17 @@ class AIService:
                         
                         elif response.status_code == 429:
                             logger.warning(f"⚠️ Groq rate limit hit with {model}")
-                            # Extract wait time from error message if available
                             try:
                                 error_data = response.json()
                                 error_msg = error_data.get("error", {}).get("message", "")
                                 if "Please try again in" in error_msg:
-                                    # Extract milliseconds and convert to seconds
                                     import re
                                     match = re.search(r'(\d+(?:\.\d+)?)ms', error_msg)
                                     if match:
                                         wait_ms = float(match.group(1))
-                                        wait_time = (wait_ms / 1000.0) + 2.0  # Add 2 seconds buffer
+                                        wait_time = (wait_ms / 1000.0) + 2.0
                                         logger.info(f"Groq suggested wait: {wait_time:.1f}s")
-                                        await asyncio.sleep(min(wait_time, 10.0))  # Cap at 10 seconds
+                                        await asyncio.sleep(min(wait_time, 10.0))
                                     else:
                                         await asyncio.sleep(8.0)
                                 else:
@@ -298,12 +356,11 @@ class AIService:
             return None
     
     async def test_ai_connection(self) -> Dict[str, Any]:
-        """Test AI service connections - SEQUENTIAL to avoid rate limits"""
+        """Test AI service connections"""
         try:
             services = {}
             primary = None
             
-            # Test Mistral first (SEQUENTIAL, not concurrent)
             if self.mistral_available:
                 try:
                     messages = [{"role": "user", "content": "Hi"}]
@@ -321,10 +378,8 @@ class AIService:
             else:
                 services["mistral"] = "not configured"
             
-            # Wait between tests to avoid rate limits
             await asyncio.sleep(2.0)
             
-            # Test Groq second (SEQUENTIAL)
             if self.groq_available:
                 try:
                     messages = [{"role": "user", "content": "Hi"}]
@@ -361,6 +416,120 @@ class AIService:
                 "services": {}
             }
     
+    def _create_human_like_prompt(
+        self, 
+        domain: str, 
+        business_type: str, 
+        business_description: str,
+        target_audience: str,
+        content_style: str
+    ) -> str:
+        """Create prompts for authentic, human-like Reddit content"""
+        
+        context = self.domain_contexts.get(domain, {
+            "real_struggles": ["daily challenges", "common issues"],
+            "casual_mentions": ["friend said", "read somewhere"]
+        })
+        
+        struggle = random.choice(context["real_struggles"])
+        mention = random.choice(context["casual_mentions"])
+        starter = random.choice(self.natural_starters)
+        
+        prompt = f"""Write a completely natural Reddit post that sounds like a real person sharing their genuine experience. This is for r/{domain} community.
+
+CRITICAL: This must pass human detection and subreddit rules. 
+
+Writing style requirements:
+- Write like you're typing on your phone casually
+- Use lowercase sometimes, normal capitalization other times  
+- Include natural typos (but not too many)
+- Use casual words like "tbh", "idk", "bc", "u", "rly"
+- NO bullet points, numbered lists, or formatting
+- NO bold text, asterisks, or markdown
+- Sound conversational, not formal
+- Include natural pauses with "..." sometimes
+- Use "edit:" if you want to add something
+- Make small grammar mistakes occasionally 
+
+Content requirements:
+- Share a real personal struggle: {struggle}
+- Mention learning from: {mention}
+- NO promotion, business mentions, or services
+- Ask genuine questions to the community
+- Include vulnerable moments or confusion
+- Sound relatable and human
+- Length: 150-300 words total
+- Context: {domain} community
+
+Subreddit rules to follow:
+- No self-promotion whatsoever
+- Provide value through sharing experience
+- Be authentic and conversational  
+- Ask for community input
+- Follow reddiquette
+
+Format should be:
+A natural title (not "TITLE:" - just write the title)
+[blank line]
+The post content in conversational paragraphs
+
+Examples of natural writing:
+"idk if this is just me but i've been struggling with..."
+"anyone else feel like..."
+"prob a dumb question but..."
+"edit: spelling"
+"this might sound weird but..."
+
+Make it sound like someone genuinely asking for help or sharing experience, not like marketing content or AI writing.
+
+Current context: Regular person sharing on Reddit in {datetime.now().strftime('%B %Y')}"""
+        
+        return prompt
+    
+    def _make_content_natural(self, content: str) -> str:
+        """Make content more human-like with casual language and minor imperfections"""
+        
+        # Apply casual replacements randomly
+        words = content.split()
+        for i, word in enumerate(words):
+            word_lower = word.lower().strip('.,!?')
+            if word_lower in self.casual_replacements and random.random() < 0.3:
+                replacement_options = self.casual_replacements[word_lower]
+                words[i] = word.replace(word_lower, random.choice(replacement_options))
+        
+        content = ' '.join(words)
+        
+        # Add casual connectors randomly
+        if random.random() < 0.4:
+            connector = random.choice(self.casual_connectors)
+            sentences = content.split('. ')
+            if len(sentences) > 1:
+                insert_pos = random.randint(1, len(sentences) - 1)
+                sentences[insert_pos] = connector + ' ' + sentences[insert_pos]
+                content = '. '.join(sentences)
+        
+        # Occasionally add human quirks
+        if random.random() < 0.3:
+            quirk = random.choice(self.human_quirks)
+            content += f"\n\n{quirk}"
+        
+        # Random capitalization changes (but not too many)
+        if random.random() < 0.2:
+            content = content.replace('I ', 'i ')
+        
+        # Remove obvious AI formatting
+        content = content.replace('**', '')
+        content = content.replace('###', '')
+        content = content.replace('####', '')
+        content = content.replace('- ', '')
+        content = content.replace('* ', '')
+        
+        # Replace numbered lists with natural flow
+        import re
+        content = re.sub(r'\d+\.\s*', '', content)
+        
+        return content
+    
     async def generate_reddit_domain_content(
         self,
         domain: str,
@@ -372,12 +541,11 @@ class AIService:
         test_mode: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
-        """Generate unique, human-like Reddit content using HTTP APIs - SEQUENTIAL FALLBACK"""
+        """Generate authentic, human-like Reddit content"""
         
         try:
-            logger.info(f"🚀 Generating content for {domain} domain using AI HTTP APIs")
+            logger.info(f"🚀 Generating natural content for {domain} domain")
             
-            # Create unique prompt
             prompt = self._create_human_like_prompt(
                 domain, business_type, business_description, 
                 target_audience, content_style
@@ -385,64 +553,62 @@ class AIService:
             
             messages = [{"role": "user", "content": prompt}]
             
-            # Try Mistral first (primary) - SEQUENTIAL not concurrent
+            # Try Mistral first
             if self.mistral_available:
                 try:
-                    logger.info("🎯 Using Mistral AI HTTP API for content generation")
+                    logger.info("🎯 Using Mistral AI for natural content generation")
                     
                     content = await self._call_mistral_api(
                         messages,
                         max_tokens=600,
-                        temperature=0.9,
-                        top_p=0.95
+                        temperature=1.1,  # Higher temperature for more natural variation
+                        top_p=0.92
                     )
                     
                     if content:
-                        parsed = self._parse_content(content, domain, business_type)
+                        parsed = self._parse_natural_content(content, domain, business_type)
                         
                         if parsed.get("title") and parsed.get("content"):
                             parsed["ai_service"] = "mistral"
                             parsed["success"] = True
-                            logger.info(f"✅ Mistral generated {len(parsed['content'])} chars")
+                            logger.info(f"✅ Mistral generated natural content: {len(parsed['content'])} chars")
                             return parsed
                     
                 except Exception as e:
                     logger.error(f"❌ Mistral generation failed: {e}")
             
-            # Wait before trying Groq fallback
             await asyncio.sleep(2.0)
             
-            # Fallback to Groq - SEQUENTIAL
+            # Fallback to Groq
             if self.groq_available:
                 try:
-                    logger.info("🔄 Using Groq AI HTTP API for content generation (fallback)")
+                    logger.info("🔄 Using Groq AI for natural content generation")
                     
                     content = await self._call_groq_api(
                         messages,
                         max_tokens=600,
-                        temperature=0.9,
-                        top_p=0.95
+                        temperature=1.1,
+                        top_p=0.92
                     )
                     
                     if content:
-                        parsed = self._parse_content(content, domain, business_type)
+                        parsed = self._parse_natural_content(content, domain, business_type)
                         
                         if parsed.get("title") and parsed.get("content"):
                             parsed["ai_service"] = "groq"
                             parsed["success"] = True
-                            logger.info(f"✅ Groq generated {len(parsed['content'])} chars")
+                            logger.info(f"✅ Groq generated natural content: {len(parsed['content'])} chars")
                             return parsed
                     
                 except Exception as e:
                     logger.error(f"❌ Groq generation failed: {e}")
             
-            # No AI services available
             logger.error("🚫 No AI services available for content generation")
             return {
                 "success": False,
                 "error": "No AI services configured",
-                "title": "AI Configuration Error",
-                "content": "AI services not properly configured. Check API keys.",
+                "title": "Need help with something",
+                "content": "anyone else dealing with similar issues? would love to hear your thoughts",
                 "ai_service": "none"
             }
             
@@ -451,178 +617,35 @@ class AIService:
             return {
                 "success": False,
                 "error": str(e),
-                "title": "Generation Error",
-                "content": f"Content generation failed: {str(e)}",
+                "title": "having some issues here",
+                "content": f"been struggling with this and wondering if anyone has similar experience",
                 "ai_service": "error"
             }
     
-    def _create_human_like_prompt(
-        self, 
-        domain: str, 
-        business_type: str, 
-        business_description: str,
-        target_audience: str,
-        content_style: str
-    ) -> str:
-        """Create prompts that generate rule-compliant, human-like content"""
-        
-        # Get domain context
-        context = self.domain_contexts.get(domain, {
-            "topics": ["general advice", "tips", "experiences"],
-            "audiences": ["users", "people interested"],
-            "pain_points": ["common challenges", "daily issues"]
-        })
-        
-        # Random elements for variety
-        topic = random.choice(context["topics"])
-        audience = random.choice(context["audiences"])
-        pain_point = random.choice(context["pain_points"])
-        style_opener = random.choice(self.content_styles[random.choice(list(self.content_styles.keys()))])
-        
-        # Subreddit-specific rules and guidelines
-        subreddit_rules = {
-            "education": """
-            Educational subreddit rules:
-            - NO direct promotion or advertising
-            - Share genuine study experiences and tips
-            - Focus on helping students, not selling services
-            - Use clear, helpful language
-            - Include practical advice that anyone can use
-            - No "my coaching institute" mentions
-            """,
-            "tech": """
-            Tech subreddit rules:
-            - NO self-promotion without value
-            - Share genuine technical insights
-            - Focus on helping developers
-            - Include code examples or practical tips
-            - No company/service promotion
-            - Ask technical questions that spark discussion
-            """,
-            "health": """
-            Health subreddit rules:
-            - NO medical advice or claims
-            - Share personal fitness experiences only
-            - Focus on lifestyle and motivation
-            - No supplement or service promotion
-            - Use disclaimers like "this worked for me"
-            - Encourage consulting professionals
-            """,
-            "business": """
-            Business subreddit rules:
-            - NO direct business promotion
-            - Share genuine business experiences
-            - Focus on lessons learned, not success stories
-            - Ask for community input and advice
-            - No service selling or client hunting
-            - Be humble and authentic
-            """,
-            "general": """
-            General Reddit rules:
-            - NO spam or self-promotion
-            - Provide value first, always
-            - Be authentic and conversational
-            - Follow reddiquette guidelines
-            """
-        }
-        
-        rules = subreddit_rules.get(domain, subreddit_rules["general"])
-        
-        # Create rule-compliant prompt
-        prompt = f"""Write a Reddit post that strictly follows subreddit rules and sounds genuinely human.
-
-{rules}
-
-Context:
-- You're someone with experience in {domain}
-- Topic focus: {topic}
-- Audience: {audience}
-- Common challenge: {pain_point}
-
-CRITICAL REQUIREMENTS:
-- NO business promotion whatsoever
-- NO mentions of services, products, or companies
-- Write as a regular person sharing experience
-- Focus 100% on helping others
-- Use casual, conversational tone
-- Include personal struggles or learning moments
-- Ask genuine questions to the community
-- Be humble and relatable
-- Length: 150-300 words
-- Indian context is fine but subtle
-
-Format your response as:
-TITLE: [Helpful, non-promotional title - max 100 characters]
-
-CONTENT: [Genuine, rule-compliant content that provides real value]
-
-Examples of what NOT to do:
-- "My coaching institute helps..."
-- "Our service provides..."
-- "Contact me for..."
-- "Check out my..."
-
-Examples of what TO do:
-- "I struggled with... here's what helped"
-- "Has anyone else noticed..."
-- "What's your experience with..."
-- "Here's something I learned..."
-
-Write like you're genuinely helping the Reddit community, not promoting anything.
-Current context: {datetime.now().strftime('%B %Y')}"""
-        
-        return prompt
-    
-    def _parse_content(self, ai_response: str, domain: str, business_type: str) -> Dict[str, Any]:
-        """Parse AI response into structured content"""
+    def _parse_natural_content(self, ai_response: str, domain: str, business_type: str) -> Dict[str, Any]:
+        """Parse AI response but keep it natural and unformatted"""
         try:
-            title = ""
-            content = ""
+            # Split into lines
+            lines = [line.strip() for line in ai_response.strip().split('\n') if line.strip()]
             
-            # Extract title and content
-            lines = ai_response.strip().split('\n')
+            if not lines:
+                return self._create_fallback_content(domain, business_type)
             
-            for i, line in enumerate(lines):
-                if line.upper().startswith('TITLE:'):
-                    title = line[6:].strip().replace('"', '').replace("'", "")
-                    break
+            # First line is usually the title
+            title = lines[0]
             
-            # Extract content after CONTENT: marker
-            content_started = False
-            content_lines = []
+            # Rest is content
+            content_lines = lines[1:] if len(lines) > 1 else [title]
+            content = '\n\n'.join(content_lines)
             
-            for line in lines:
-                if line.upper().startswith('CONTENT:'):
-                    content_started = True
-                    content_part = line[8:].strip()
-                    if content_part:
-                        content_lines.append(content_part)
-                elif content_started and line.strip():
-                    content_lines.append(line.strip())
+            # Clean up any remaining formatting
+            title = self._clean_title(title)
+            content = self._make_content_natural(content)
             
-            content = '\n\n'.join(content_lines) if content_lines else ""
-            
-            # Fallback parsing
-            if not title or not content:
-                paragraphs = [p.strip() for p in ai_response.split('\n\n') if p.strip()]
-                if paragraphs:
-                    # Use first line/paragraph as title
-                    potential_title = paragraphs[0].split('\n')[0]
-                    title = potential_title[:100] if len(potential_title) > 10 else f"{business_type} Tips for {domain.title()}"
-                    
-                    # Use rest as content
-                    if len(paragraphs) > 1:
-                        content = '\n\n'.join(paragraphs[1:])
-                    else:
-                        content = paragraphs[0]
-            
-            # Ensure content quality
-            if len(content.strip()) < 100:
-                content += f"\n\nWhat's your experience with {domain}? Share your thoughts below!"
-            
-            # Clean up title
-            if len(title) > 150:
-                title = title[:147] + "..."
+            # Ensure minimum length
+            if len(content.strip()) < 80:
+                extra = f"\n\nanyone else dealing with this? would love to hear your thoughts or experiences"
+                content += extra
             
             return {
                 "title": title,
@@ -630,20 +653,51 @@ Current context: {datetime.now().strftime('%B %Y')}"""
                 "body": content,
                 "word_count": len(content.split()),
                 "character_count": len(content),
-                "parsed_successfully": bool(title and content)
+                "parsed_successfully": True
             }
             
         except Exception as e:
-            logger.error(f"Content parsing failed: {e}")
-            # Return the raw content if parsing fails
-            return {
-                "title": f"{business_type} - {domain.title()} Insights",
-                "content": ai_response[:400] if ai_response else "Content generation failed",
-                "body": ai_response[:400] if ai_response else "Content generation failed",
-                "word_count": len(ai_response.split()) if ai_response else 0,
-                "character_count": len(ai_response) if ai_response else 0,
-                "parsed_successfully": False
-            }
+            logger.error(f"Natural content parsing failed: {e}")
+            return self._create_fallback_content(domain, business_type)
+    
+    def _clean_title(self, title: str) -> str:
+        """Clean title to make it natural"""
+        # Remove obvious AI patterns
+        title = title.replace('TITLE:', '').replace('Title:', '').strip()
+        title = title.replace('**', '').replace('###', '').strip()
+        title = title.replace('"', '').replace("'", "").strip()
+        
+        # Ensure reasonable length
+        if len(title) > 200:
+            title = title[:197] + "..."
+        
+        # Make slightly more casual
+        if random.random() < 0.3:
+            title = title.lower()
+        
+        return title
+    
+    def _create_fallback_content(self, domain: str, business_type: str) -> Dict[str, Any]:
+        """Create fallback content when parsing fails"""
+        starters = [
+            f"been thinking about {domain} stuff lately",
+            f"anyone else struggling with {domain} things?",
+            f"quick question about {domain}",
+            f"not sure if this is the right place but",
+            f"maybe dumb question but"
+        ]
+        
+        title = random.choice(starters)
+        content = f"idk if this makes sense but i've been dealing with some {domain} related stuff and wondering if anyone has experience with this kind of thing\n\nwould appreciate any thoughts or advice"
+        
+        return {
+            "title": title,
+            "content": content,
+            "body": content,
+            "word_count": len(content.split()),
+            "character_count": len(content),
+            "parsed_successfully": False
+        }
     
     async def generate_qa_answer(
         self,
@@ -653,65 +707,65 @@ Current context: {datetime.now().strftime('%B %Y')}"""
         expertise_level: str = "intermediate",
         **kwargs
     ) -> Dict[str, Any]:
-        """Generate Q&A answers for auto-replies - SEQUENTIAL FALLBACK"""
+        """Generate natural Q&A answers"""
         
-        prompt = f"""Answer this {platform} question naturally and helpfully:
+        prompt = f"""Answer this {platform} question in a completely natural, human way:
 
 Question: {question}
 
-Requirements:
-- Write like a knowledgeable person, not a bot
-- Provide practical, actionable advice
-- Keep it 100-250 words
-- Be conversational and friendly
-- Include personal touch if relevant
-- Don't be promotional
-{f"- Focus on {domain} expertise" if domain else ""}
+Write like a real person responding, not an AI:
+- Use casual language and natural flow
+- Include personal touches like "in my experience" or "i've found that"
+- Make it conversational, not formal
+- 100-200 words max
+- Sound helpful but humble
+- Use lowercase sometimes, normal grammar other times
+- NO bullet points or formatting
+{f"- Draw from {domain} knowledge but don't sound like a textbook" if domain else ""}
 
-Write a helpful, human-like response that adds real value."""
+Write like you're genuinely trying to help someone, not like you're writing content."""
         
         try:
             messages = [{"role": "user", "content": prompt}]
             
-            # Try Mistral first - SEQUENTIAL
             if self.mistral_available:
                 answer = await self._call_mistral_api(
                     messages,
-                    max_tokens=400,
-                    temperature=0.8
+                    max_tokens=300,
+                    temperature=1.0
                 )
                 
                 if answer:
+                    natural_answer = self._make_content_natural(answer)
                     return {
                         "success": True,
-                        "answer": answer,
+                        "answer": natural_answer,
                         "ai_service": "mistral",
-                        "word_count": len(answer.split())
+                        "word_count": len(natural_answer.split())
                     }
             
-            # Wait before trying Groq
             await asyncio.sleep(2.0)
             
-            # Fallback to Groq - SEQUENTIAL
             if self.groq_available:
                 answer = await self._call_groq_api(
                     messages,
-                    max_tokens=400,
-                    temperature=0.8
+                    max_tokens=300,
+                    temperature=1.0
                 )
                 
                 if answer:
+                    natural_answer = self._make_content_natural(answer)
                     return {
                         "success": True,
-                        "answer": answer,
+                        "answer": natural_answer,
                         "ai_service": "groq",
-                        "word_count": len(answer.split())
+                        "word_count": len(natural_answer.split())
                     }
             
             return {
                 "success": False,
                 "error": "No AI service available",
-                "answer": "Unable to generate response - AI service not configured"
+                "answer": "sorry cant help with this right now"
             }
             
         except Exception as e:
@@ -719,5 +773,5 @@ Write a helpful, human-like response that adds real value."""
             return {
                 "success": False,
                 "error": str(e),
-                "answer": "Error generating response"
+                "answer": "having some technical issues, sorry"
             }
