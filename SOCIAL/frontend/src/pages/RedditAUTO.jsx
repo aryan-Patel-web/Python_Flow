@@ -139,7 +139,21 @@ const RedditAutomation = () => {
 
 
 
-
+// TEMPORARY DEBUG - Add this after your state declarations
+useEffect(() => {
+  console.log('=== REDDIT STATE DEBUG ===');
+  console.log('redditConnected:', redditConnected);
+  console.log('redditUsername:', redditUsername);
+  console.log('user:', user);
+  console.log('makeAuthenticatedRequest available:', !!makeAuthenticatedRequest);
+  
+  // Check URL parameters
+  const urlParams = new URLSearchParams(window.location.search);
+  console.log('URL params:');
+  console.log('- reddit_connected:', urlParams.get('reddit_connected'));
+  console.log('- username:', urlParams.get('username'));
+  console.log('- error:', urlParams.get('error'));
+}, [redditConnected, redditUsername, user, makeAuthenticatedRequest]);
 
 
 // Initialize app state - FIXED VERSION
@@ -226,6 +240,12 @@ useEffect(() => {
         setRedditConnected(false);
         setRedditUsername('');
       }
+
+
+
+
+
+
 
       // Load saved profile
       try {
