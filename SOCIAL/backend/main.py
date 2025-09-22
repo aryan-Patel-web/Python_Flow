@@ -506,121 +506,54 @@ class MockMultiUserDatabase:
             "automation_configs": len(self.automation_configs)
         }
 
-
-
-
-
-
-class MockAIService:
-    def __init__(self):
-        self.is_mock = True
-        logger.warning("MockAIService initialized - Configure MISTRAL_API_KEY or GROQ_API_KEY for real AI")
-    
-    async def generate_reddit_domain_content(self, **kwargs):
-        logger.error("USING MOCK AI SERVICE - Real AI not configured")
-        return {
-            "success": False,
-            "error": "Mock AI Service Active",
-            "title": f"CONFIGURE REAL AI - Mock Title for {kwargs.get('domain', 'general')}",
-            "content": f"MOCK CONTENT ALERT: Configure your MISTRAL_API_KEY or GROQ_API_KEY environment variables to generate real AI content. This is placeholder text for {kwargs.get('business_type', 'your business')} in {kwargs.get('domain', 'general')} domain.",
-            "body": "Mock content - needs real AI configuration",
-            "ai_service": "mock",
-            "mock_warning": "Real AI keys not found"
-        }
-    
-    async def test_ai_connection(self):
-        return {
-            "success": False, 
-            "error": "Mock AI - no real API keys", 
-            "primary_service": "mock", 
-            "services": {"mistral": False, "groq": False}
-        }
-
-class MockRedditConnector:
-    def __init__(self):
-        self.is_configured = False
+    # OAUTH STATE MANAGEMENT METHODS - ADDED FOR REDDIT CONNECTION FIX
+    async def store_oauth_state(self, state: str, user_id: str, expires_at: datetime) -> Dict[str, Any]:
+        """Store OAuth state in mock database"""
+        if not hasattr(self, 'oauth_states'):
+            self.oauth_states = {}
         
-    def generate_oauth_url(self, state=None):
-        return {
-            "success": True,
-            "authorization_url": "https://www.reddit.com/api/v1/authorize?client_id=mock&response_type=code&state=mock_state&redirect_uri=http://localhost:8000/api/oauth/reddit/callback&duration=permanent&scope=submit,edit,read",
-            "state": state or "mock_state"
-        }
-    
-    async def exchange_code_for_token(self, code):
-        return {
-            "success": True,
-            "access_token": "mock_access_token",
-            "refresh_token": "mock_refresh_token", 
-            "expires_in": 3600,
-            "user_info": {"username": "MockUser", "id": "mock_user_id"}
-        }
-        
-    async def post_content_with_token(self, **kwargs):
-        return {
-            "success": False,
-            "error": "Mock Reddit connector - configure real Reddit API credentials",
-            "message": "Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET environment variables"
-        }
-
-class MockAutomationScheduler:
-    def __init__(self): 
-        self.is_running = True
-        self.active_configs = {}
-        
-    def start_scheduler(self): 
-        logger.info("Mock automation scheduler started")
-        
-    async def setup_auto_posting(self, config): 
-        config_dict = config.__dict__ if hasattr(config, '__dict__') else config
-        user_id = config_dict.get('user_id', 'mock_user')
-        self.active_configs[user_id] = {
-            "auto_posting": {"config": config_dict, "enabled": True}
-        }
-        return {
-            "success": False, 
-            "error": "Mock scheduler active",
-            "message": "Configure real API keys: MISTRAL_API_KEY, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET",
-            "config": config_dict,
-            "scheduler_status": "Mock scheduler - needs real API configuration",
-            "mock_warning": True
-        }
-        
-    async def setup_auto_replies(self, config): 
-        config_dict = config.__dict__ if hasattr(config, '__dict__') else config
-        user_id = config_dict.get('user_id', 'mock_user')
-        if user_id not in self.active_configs:
-            self.active_configs[user_id] = {}
-        self.active_configs[user_id]["auto_replies"] = {"config": config_dict, "enabled": True}
-        return {
-            "success": False, 
-            "error": "Mock scheduler active",
-            "message": "Configure real API keys for auto-replies",
-            "config": config_dict
-        }
-        
-    async def get_automation_status(self, user_id): 
-        user_config = self.active_configs.get(user_id, {})
-        return {
-            "success": True,
+        self.oauth_states[state] = {
             "user_id": user_id,
-            "reddit_connected": user_id in user_reddit_tokens,
-            "reddit_username": user_reddit_tokens.get(user_id, {}).get("reddit_username", ""),
-            "auto_posting": {
-                "enabled": "auto_posting" in user_config,
-                "config": user_config.get("auto_posting", {}).get("config"),
-                "stats": {"total_posts": 0, "successful_posts": 0, "failed_posts": 0}
-            },
-            "auto_replies": {
-                "enabled": "auto_replies" in user_config,
-                "config": user_config.get("auto_replies", {}).get("config"),
-                "stats": {"total_replies": 0, "successful_replies": 0}
-            },
-            "daily_stats": {"posts_today": 0, "recent_replies": 0, "total_karma": 0},
-            "scheduler_running": False,
-            "mock_warning": "Configure real API keys",
-            "last_updated": datetime.now().isoformat()
+            "expires_at": expires_at,
+            "created_at": datetime.utcnow()
         }
+        logger.info(f"OAuth state stored in mock DB: {state} for user {user_id}")
+        return {"success": True}
+
+    async def get_oauth_state(self, state: str) -> Optional[Dict[str, Any]]:
+        """Get OAuth state from mock database"""
+        if not hasattr(self, 'oauth_states'):
+            self.oauth_states = {}
+        
+        state_data = self.oauth_states.get(state)
+        if not state_data:
+            logger.warning(f"OAuth state not found in mock DB: {state}")
+            return None
+        
+        if state_data["expires_at"] <= datetime.utcnow():
+            logger.warning(f"OAuth state expired in mock DB: {state}")
+            del self.oauth_states[state]
+            return None
+        
+        logger.info(f"OAuth state found in mock DB: {state} for user {state_data['user_id']}")
+        return state_data
+
+    async def cleanup_oauth_state(self, state: str) -> Dict[str, Any]:
+        """Remove OAuth state from mock database"""
+        if not hasattr(self, 'oauth_states'):
+            self.oauth_states = {}
+        
+        if state in self.oauth_states:
+            del self.oauth_states[state]
+            logger.info(f"OAuth state cleaned up from mock DB: {state}")
+            return {"success": True}
+        return {"success": False, "message": "State not found"}
+
+    async def get_all_oauth_states(self) -> List[str]:
+        """Debug method to see all stored states in mock database"""
+        if not hasattr(self, 'oauth_states'):
+            self.oauth_states = {}
+        return list(self.oauth_states.keys())
 
 
 
@@ -1195,43 +1128,7 @@ async def health_check():
         return {"success": False, "error": str(e), "status": "unhealthy"}
 
 
-# API Routes (add these near the end of your routes)
-@app.get("/api/health")
-async def api_health_check():
-    """API health check endpoint with CORS support"""
-    try:
-        health_data = await health_check()
-        return Response(
-            content=json.dumps(health_data),
-            media_type="application/json",
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                "Cache-Control": "no-cache"
-            }
-        )
-    except Exception as e:
-        logger.error(f"API health check failed: {e}")
-        return Response(
-            content=json.dumps({"success": False, "error": str(e)}),
-            status_code=500,
-            media_type="application/json"
-        )
 
-@app.get("/api/")
-async def api_root():
-    """API root endpoint"""
-    root_data = await root()
-    return Response(
-        content=json.dumps(root_data),
-        media_type="application/json",
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS", 
-            "Access-Control-Allow-Headers": "Content-Type, Authorization"
-        }
-    )
 
 
 
@@ -1276,13 +1173,11 @@ async def login_user(login_data: LoginRequest):
 
 @app.get("/api/auth/me")
 async def get_current_user_info(current_user: dict = Depends(get_current_user)):
-    """Get current user info from token"""
+    """Get current user information"""
     return {
         "success": True,
-        "user": current_user,
-        "authenticated": True
+        "user": current_user
     }
-
 
 
 
@@ -1324,9 +1219,6 @@ async def reddit_oauth_authorize(current_user: dict = Depends(get_current_user))
 
 
 
-
-
-
 @app.get("/api/oauth/reddit/callback")
 async def reddit_oauth_callback(code: str, state: str):
     """Handle Reddit OAuth callback for authenticated user - FIXED VERSION"""
@@ -1344,10 +1236,12 @@ async def reddit_oauth_callback(code: str, state: str):
         user_id = state_data["user_id"]
         logger.info(f"Processing OAuth callback for user {user_id} (state found in database)")
         
+        # ... rest of your existing callback code remains the same
+        
         # Exchange code for token
         reddit_client_id = os.getenv("REDDIT_CLIENT_ID")
         reddit_client_secret = os.getenv("REDDIT_CLIENT_SECRET")
-        reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI", "https://agentic-u5lx.onrender.com/api/oauth/reddit/callback")
+        reddit_redirect_uri = os.getenv("REDDIT_REDIRECT_URI")
         
         if not reddit_client_id or not reddit_client_secret:
             logger.error("Reddit credentials missing from environment")
@@ -1372,7 +1266,7 @@ async def reddit_oauth_callback(code: str, state: str):
             'redirect_uri': reddit_redirect_uri
         }
         
-        logger.info(f"Exchanging code for access token with redirect_uri: {reddit_redirect_uri}")
+        logger.info("Exchanging code for access token...")
         
         response = requests.post(
             'https://www.reddit.com/api/v1/access_token',
@@ -1466,14 +1360,7 @@ async def reddit_oauth_callback(code: str, state: str):
                     "user_info": user_info or {"name": username, "id": reddit_user_id}
                 }
                 
-                # FIXED: Clean up OAuth state from database
-                try:
-                    await database_manager.cleanup_oauth_state(state)
-                    logger.info(f"OAuth state cleaned up from database: {state}")
-                except Exception as e:
-                    logger.warning(f"Failed to cleanup OAuth state: {e}")
-                
-                # Also clean up from memory (if it exists)
+                # Clean up OAuth state
                 oauth_states.pop(state, None)
                 
                 # Redirect to main page instead of /reddit-auto to avoid 404
