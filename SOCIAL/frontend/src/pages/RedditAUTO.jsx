@@ -424,6 +424,11 @@ useEffect(() => {
     }
   }, [manualPost, makeAuthenticatedRequest, redditUsername, redditConnected, showNotification]);
 
+
+
+
+
+
   const startAutoPosting = useCallback(async () => {
     if (!userProfile.isConfigured) {
       showNotification('Please configure your profile first', 'error');
@@ -440,17 +445,17 @@ useEffect(() => {
       setLoading(true);
       showNotification('Setting up REAL automation...', 'info');
       
-      const config = {
-        domain: userProfile.domain,
-        business_type: userProfile.businessType,
-        business_description: userProfile.businessDescription,
-        target_audience: userProfile.targetAudience,
-        language: userProfile.language,
-        subreddits: autoPostConfig.subreddits,
-        posts_per_day: autoPostConfig.postsPerDay,
-        posting_times: autoPostConfig.postingTimes,
-        content_style: userProfile.contentStyle
-      };
+  const config = {
+    domain: userProfile.domain,
+    business_type: userProfile.businessType,
+    business_description: userProfile.businessDescription,
+    target_audience: userProfile.targetAudience,
+    language: userProfile.language,
+    subreddits: autoPostConfig.subreddits,
+    posts_per_day: autoPostConfig.postsPerDay,
+    posting_times: autoPostConfig.postingTimes, // This preserves test times
+    content_style: userProfile.contentStyle
+  };
 
       const response = await makeAuthenticatedRequest('/api/automation/setup-auto-posting', {
         method: 'POST',

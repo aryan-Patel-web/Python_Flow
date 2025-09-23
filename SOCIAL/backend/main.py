@@ -1685,19 +1685,32 @@ async def setup_auto_posting(
         user_id = current_user["id"]
         logger.info(f"🚀 AUTOMATION SETUP: Starting for user {user_id} ({current_user.get('email')})")
         
-        # Debug: Log available Reddit tokens
-        logger.info(f"Available Reddit token user IDs: {list(user_reddit_tokens.keys()) if user_reddit_tokens else []}")
+        # CRITICAL FIX: Preserve existing test times
+        existing_config = automation_configs.get(user_id, {}).get("auto_posting", {}).get("config", {})
+        existing_times = existing_config.get("posting_times", []) if existing_config else []
         
-        # Enhanced Reddit connection check with fallback
+        # Merge frontend times with existing test times
+        frontend_times = config_data.posting_times or []
+        all_times = list(set(existing_times + frontend_times))  # Remove duplicates
+        all_times.sort()  # Sort chronologically
+        
+        logger.info(f"TIME MERGE: Frontend times: {frontend_times}")
+        logger.info(f"TIME MERGE: Existing times: {existing_times}")
+        logger.info(f"TIME MERGE: Final merged times: {all_times}")
+        
+        # Update config_data with merged times
+        config_data.posting_times = all_times
+        
+        # Rest of your existing setup code...
         reddit_token_found = False
         reddit_username = "Unknown"
         
-        # Primary check: Direct user_id match
         if user_id in user_reddit_tokens:
             reddit_token_found = True
             reddit_username = user_reddit_tokens[user_id].get("reddit_username", "Unknown")
             logger.info(f"✅ Reddit token found directly for user {user_id}: {reddit_username}")
         
+        # ... continue with rest of your existing code ...
         # Fallback 1: Check database
         elif database_manager and hasattr(database_manager, 'check_reddit_connection'):
             try:
