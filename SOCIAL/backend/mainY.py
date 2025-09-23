@@ -607,20 +607,25 @@ async def login(request: LoginRequest):
 
 
 
+
 # =============================================================================
-# YOUTUBE OAUTH FIX - UPDATE THESE ENDPOINTS IN YOUR mainALL.py
+# YOUTUBE OAUTH FIX FOR mainY.py
+# Replace your existing YouTube OAuth endpoints with these
 # =============================================================================
 
 @app.post("/api/youtube/oauth-url")
 async def youtube_oauth_url(request: YouTubeOAuthRequest):
-    """Generate YouTube OAuth URL - FIXED VERSION"""
+    """Generate YouTube OAuth URL - FIXED VERSION for mainY.py"""
     try:
         logger.info(f"YouTube OAuth request for user_id: {request.user_id}")
         
+        youtube_connector = get_youtube_connector()
+        
         if not youtube_connector:
+            logger.error("YouTube connector is not initialized")
             raise HTTPException(
                 status_code=503, 
-                detail="YouTube service not initialized"
+                detail="YouTube service not properly initialized. Check server logs."
             )
         
         # FIXED: Use BACKEND redirect URI, not frontend
@@ -636,6 +641,8 @@ async def youtube_oauth_url(request: YouTubeOAuthRequest):
             redirect_uri=redirect_uri
         )
         
+        logger.info(f"OAuth URL generation result: {result.get('success', False)}")
+        
         if result["success"]:
             return result
         else:
@@ -645,10 +652,10 @@ async def youtube_oauth_url(request: YouTubeOAuthRequest):
         raise
     except Exception as e:
         logger.error(f"YouTube OAuth URL generation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
-
-@app.get("/api/youtube/oauth-callback")
+# REPLACE your existing POST callback with this GET version
+@app.get("/api/youtube/oauth-callback") 
 async def youtube_oauth_callback_get(code: str, state: str):
     """Handle YouTube OAuth callback - GET version for Google redirect"""
     try:
@@ -672,6 +679,7 @@ async def youtube_oauth_callback_get(code: str, state: str):
                 status_code=302
             )
         
+        youtube_connector = get_youtube_connector()
         if not youtube_connector:
             logger.error("YouTube connector not available")
             return RedirectResponse(
@@ -695,6 +703,7 @@ async def youtube_oauth_callback_get(code: str, state: str):
                 status_code=302
             )
         
+        # Store YouTube tokens in database
         youtube_credentials = {
             "access_token": token_result["access_token"],
             "refresh_token": token_result["refresh_token"],
@@ -706,27 +715,20 @@ async def youtube_oauth_callback_get(code: str, state: str):
             "channel_info": token_result["channel_info"]
         }
         
-        # Store in database
+        # Store in database using the YouTube database
         try:
-            if database_manager and hasattr(database_manager, 'store_youtube_credentials'):
-                await database_manager.store_youtube_credentials(
-                    user_id=user_id,
-                    credentials=youtube_credentials
-                )
-                logger.info(f"YouTube credentials stored in primary database for user {user_id}")
-            elif youtube_database_manager:
-                await youtube_database_manager.store_youtube_credentials(
-                    user_id=user_id,
-                    credentials=youtube_credentials
-                )
-                logger.info(f"YouTube credentials stored in YouTube database for user {user_id}")
+            success = await database_manager.store_youtube_credentials(
+                user_id=user_id,
+                credentials=youtube_credentials
+            )
+            
+            if success:
+                logger.info(f"YouTube credentials stored for user {user_id}")
             else:
-                logger.warning("No database available to store YouTube credentials")
+                logger.error(f"Failed to store YouTube credentials for user {user_id}")
+                
         except Exception as db_error:
-            logger.error(f"Database storage failed: {db_error}")
-        
-        # Store in memory
-        user_youtube_tokens[user_id] = youtube_credentials
+            logger.error(f"Database error storing YouTube credentials: {db_error}")
         
         channel_title = token_result["channel_info"].get("title", "Unknown Channel")
         logger.info(f"YouTube OAuth successful for user {user_id} - Channel: {channel_title}")
@@ -745,20 +747,46 @@ async def youtube_oauth_callback_get(code: str, state: str):
             status_code=302
         )
 
+# Keep your existing POST version but rename it (for backward compatibility)
+@app.post("/api/youtube/oauth-callback-post")
+async def youtube_oauth_callback_post(request: YouTubeOAuthCallback):
+    """POST version - kept for compatibility but redirect to GET"""
+    return RedirectResponse(
+        url=f"/api/youtube/oauth-callback?code={request.code}&state={request.state}",
+        status_code=307
+    )
 
-# ALSO ADD THIS ENVIRONMENT VARIABLE CHECK
-@app.get("/api/debug/youtube-oauth-config")
-async def debug_youtube_oauth_config():
-    """Debug YouTube OAuth configuration"""
+# Add debug endpoint to check YouTube service status
+@app.get("/api/debug/youtube-status")
+async def debug_youtube_status():
+    """Debug YouTube service initialization in mainY.py"""
+    youtube_connector = get_youtube_connector()
+    youtube_scheduler = get_youtube_scheduler()
+    
     return {
-        "google_client_id": "✓" if os.getenv("GOOGLE_CLIENT_ID") else "✗",
-        "google_client_secret": "✓" if os.getenv("GOOGLE_CLIENT_SECRET") else "✗",
-        "backend_url": os.getenv("BACKEND_URL", "https://agentic-u5lx.onrender.com"),
-        "frontend_url": os.getenv("FRONTEND_URL", "https://frontend-agentic-bnc2.onrender.com"),
-        "expected_redirect_uri": f"{os.getenv('BACKEND_URL', 'https://agentic-u5lx.onrender.com')}/api/youtube/oauth-callback",
-        "youtube_connector_available": youtube_connector is not None
+        "youtube_connector_available": youtube_connector is not None,
+        "youtube_scheduler_available": youtube_scheduler is not None,
+        "database_manager_available": database_manager is not None,
+        "ai_service_available": ai_service is not None,
+        "environment_vars": {
+            "GOOGLE_CLIENT_ID": "✓" if os.getenv("GOOGLE_CLIENT_ID") else "✗",
+            "GOOGLE_CLIENT_SECRET": "✓" if os.getenv("GOOGLE_CLIENT_SECRET") else "✗",
+            "GOOGLE_OAUTH_REDIRECT_URI": os.getenv("GOOGLE_OAUTH_REDIRECT_URI"),
+            "BACKEND_URL": os.getenv("BACKEND_URL", "https://agentic-u5lx.onrender.com"),
+            "MONGODB_URI": "✓" if os.getenv("MONGODB_URI") else "✗"
+        },
+        "expected_redirect_uri": f"{os.getenv('BACKEND_URL', 'https://agentic-u5lx.onrender.com')}/api/youtube/oauth-callback"
     }
 
+# Add this to your environment variables section or startup
+# Make sure these are set in your Render environment:
+"""
+BACKEND_URL=https://agentic-u5lx.onrender.com
+FRONTEND_URL=https://frontend-agentic-bnc2.onrender.com
+GOOGLE_CLIENT_ID=308062302638-i7u6trjc9cefbe7e989d2605kfq68g2m.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_actual_secret_here
+GOOGLE_OAUTH_REDIRECT_URI=https://agentic-u5lx.onrender.com/api/youtube/oauth-callback
+"""
 
 
 
