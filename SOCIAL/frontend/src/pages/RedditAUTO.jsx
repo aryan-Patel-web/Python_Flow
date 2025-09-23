@@ -428,58 +428,107 @@ useEffect(() => {
 
 
 
+const startAutoPosting = useCallback(async () => {
+  if (!userProfile.isConfigured) {
+    showNotification('Please configure your profile first', 'error');
+    setActiveTab('setup');
+    return;
+  }
 
-  const startAutoPosting = useCallback(async () => {
-    if (!userProfile.isConfigured) {
-      showNotification('Please configure your profile first', 'error');
-      setActiveTab('setup');
+  if (!redditConnected) {
+    showNotification('Please connect your Reddit account first', 'error');
+    return;
+  }
+
+  try {
+    setLoading(true);
+    showNotification('Setting up REAL automation...', 'info');
+    
+    const config = {
+      domain: userProfile.domain,
+      business_type: userProfile.businessType,
+      business_description: userProfile.businessDescription,
+      target_audience: userProfile.targetAudience,
+      language: userProfile.language,
+      subreddits: autoPostConfig.subreddits,
+      posts_per_day: autoPostConfig.postsPerDay,
+      posting_times: autoPostConfig.postingTimes,
+      content_style: userProfile.contentStyle
+    };
+    
+    // Enhanced debugging
+    console.log('🔍 SENDING TO BACKEND:');
+    console.log('posting_times:', config.posting_times);
+    console.log('posts_per_day:', config.posts_per_day);
+    console.log('subreddits:', config.subreddits);
+    
+    // Validate posting times before sending
+    if (!config.posting_times || config.posting_times.length === 0) {
+      showNotification('Please add at least one posting time in the Schedule tab', 'error');
+      setActiveTab('schedule');
       return;
     }
-
-    if (!redditConnected) {
-      showNotification('Please connect your Reddit account first', 'error');
+    
+    // Validate time format
+    const timePattern = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    const invalidTimes = config.posting_times.filter(time => !timePattern.test(time));
+    if (invalidTimes.length > 0) {
+      showNotification(`Invalid time format: ${invalidTimes.join(', ')}. Use HH:MM format.`, 'error');
       return;
     }
-
-    try {
-      setLoading(true);
-      showNotification('Setting up REAL automation...', 'info');
+    
+    const response = await makeAuthenticatedRequest('/api/automation/setup-auto-posting', {
+      method: 'POST',
+      body: JSON.stringify(config)
+    });
+    
+    const result = await response.json();
+    
+    // Enhanced response handling
+    if (result.success) {
+      setAutoPostConfig(prev => ({ ...prev, enabled: true }));
+      showNotification(`Auto-posting started for ${redditUsername}!`, 'success');
       
-  const config = {
-    domain: userProfile.domain,
-    business_type: userProfile.businessType,
-    business_description: userProfile.businessDescription,
-    target_audience: userProfile.targetAudience,
-    language: userProfile.language,
-    subreddits: autoPostConfig.subreddits,
-    posts_per_day: autoPostConfig.postsPerDay,
-    posting_times: autoPostConfig.postingTimes, // This preserves test times
-    content_style: userProfile.contentStyle
-  };
-
-      const response = await makeAuthenticatedRequest('/api/automation/setup-auto-posting', {
-        method: 'POST',
-        body: JSON.stringify(config)
-      });
+      // Show the actual times being used
+      if (result.posting_times_used && result.posting_times_used.length > 0) {
+        showNotification(`Using times: ${result.posting_times_used.join(', ')}`, 'info');
+      }
       
-      const result = await response.json();
+      if (result.next_post_time) {
+        showNotification(`Next post: ${result.next_post_time}`, 'info');
+      }
       
-      if (result.success) {
-        setAutoPostConfig(prev => ({ ...prev, enabled: true }));
-        showNotification(`Auto-posting started for ${redditUsername}!`, 'success');
-        if (result.next_post_time) {
-          showNotification(`Next post: ${result.next_post_time}`, 'info');
-        }
+      // Debug log the successful setup
+      console.log('✅ Automation setup successful:', result);
+      
+    } else {
+      // Enhanced error handling
+      console.error('❌ Automation setup failed:', result);
+      
+      if (result.error === "No posting times provided") {
+        showNotification('No posting times found. Please set times in Schedule tab first.', 'error');
+        setActiveTab('schedule');
+      } else if (result.error === "Reddit account not connected") {
+        showNotification('Reddit connection lost. Please reconnect.', 'error');
+        setRedditConnected(false);
       } else {
         showNotification(result.error || 'Automation setup failed', 'error');
       }
-    } catch (error) {
-      showNotification('Setup failed: ' + error.message, 'error');
-    } finally {
-      setLoading(false);
     }
-  }, [userProfile, redditConnected, autoPostConfig, makeAuthenticatedRequest, redditUsername, showNotification]);
-
+    
+  } catch (error) {
+    console.error('❌ Setup request failed:', error);
+    
+    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      showNotification('Network error. Please check your connection.', 'error');
+    } else {
+      showNotification('Setup failed: ' + error.message, 'error');
+    }
+    
+  } finally {
+    setLoading(false);
+  }
+}, [userProfile, redditConnected, autoPostConfig, makeAuthenticatedRequest, redditUsername, showNotification, setActiveTab, setRedditConnected]);
 
 
 
@@ -509,125 +558,125 @@ const addTestTime = async () => {
 
 
 
-{/* Add this section after the existing "Add Test Time" button */}
-<div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#f8f9fa', borderRadius: '12px' }}>
-  <h5 style={{ marginBottom: '16px', color: '#374151' }}>Debug Tools</h5>
-  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+// {/* Add this section after the existing "Add Test Time" button */}
+// <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#f8f9fa', borderRadius: '12px' }}>
+//   <h5 style={{ marginBottom: '16px', color: '#374151' }}>Debug Tools</h5>
+//   <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
     
-    {/* Check Scheduler Status Button */}
-    <button
-      onClick={async () => {
-        try {
-          const response = await makeAuthenticatedRequest('/api/debug/scheduler-active-configs');
-          const result = await response.json();
-          console.log('Scheduler Status:', result);
-          if (result.success) {
-            showNotification(
-              `Scheduler has ${result.scheduler_has_user ? result.posting_times.length : 0} times for you`, 
-              'info'
-            );
-          } else {
-            showNotification(result.error, 'error');
-          }
-        } catch (error) {
-          showNotification('Failed to check scheduler: ' + error.message, 'error');
-        }
-      }}
-      style={{
-        padding: '10px 16px',
-        backgroundColor: '#3b82f6',
-        color: 'white',
-        border: 'none',
-        borderRadius: '8px',
-        fontSize: '14px',
-        cursor: 'pointer'
-      }}
-    >
-      Check Scheduler Status
-    </button>
+//     {/* Check Scheduler Status Button */}
+//     <button
+//       onClick={async () => {
+//         try {
+//           const response = await makeAuthenticatedRequest('/api/debug/scheduler-active-configs');
+//           const result = await response.json();
+//           console.log('Scheduler Status:', result);
+//           if (result.success) {
+//             showNotification(
+//               `Scheduler has ${result.scheduler_has_user ? result.posting_times.length : 0} times for you`, 
+//               'info'
+//             );
+//           } else {
+//             showNotification(result.error, 'error');
+//           }
+//         } catch (error) {
+//           showNotification('Failed to check scheduler: ' + error.message, 'error');
+//         }
+//       }}
+//       style={{
+//         padding: '10px 16px',
+//         backgroundColor: '#3b82f6',
+//         color: 'white',
+//         border: 'none',
+//         borderRadius: '8px',
+//         fontSize: '14px',
+//         cursor: 'pointer'
+//       }}
+//     >
+//       Check Scheduler Status
+//     </button>
 
-    {/* Trigger Immediate Post Button */}
-    <button
-      onClick={async () => {
-        if (!redditConnected) {
-          showNotification('Reddit not connected', 'error');
-          return;
-        }
-        try {
-          setLoading(true);
-          showNotification('Triggering immediate test post...', 'info');
-          const response = await makeAuthenticatedRequest('/api/debug/trigger-immediate-post', {
-            method: 'POST'
-          });
-          const result = await response.json();
+//     {/* Trigger Immediate Post Button */}
+//     <button
+//       onClick={async () => {
+//         if (!redditConnected) {
+//           showNotification('Reddit not connected', 'error');
+//           return;
+//         }
+//         try {
+//           setLoading(true);
+//           showNotification('Triggering immediate test post...', 'info');
+//           const response = await makeAuthenticatedRequest('/api/debug/trigger-immediate-post', {
+//             method: 'POST'
+//           });
+//           const result = await response.json();
           
-          if (result.success) {
-            showNotification('Test post successful!', 'success');
-            console.log('Post result:', result);
-          } else {
-            showNotification(result.error || 'Test post failed', 'error');
-          }
-        } catch (error) {
-          showNotification('Test post failed: ' + error.message, 'error');
-        } finally {
-          setLoading(false);
-        }
-      }}
-      disabled={loading || !redditConnected}
-      style={{
-        padding: '10px 16px',
-        backgroundColor: loading || !redditConnected ? '#9ca3af' : '#10b981',
-        color: 'white',
-        border: 'none',
-        borderRadius: '8px',
-        fontSize: '14px',
-        cursor: loading || !redditConnected ? 'not-allowed' : 'pointer'
-      }}
-    >
-      {loading ? 'Posting...' : 'Test Post Now'}
-    </button>
+//           if (result.success) {
+//             showNotification('Test post successful!', 'success');
+//             console.log('Post result:', result);
+//           } else {
+//             showNotification(result.error || 'Test post failed', 'error');
+//           }
+//         } catch (error) {
+//           showNotification('Test post failed: ' + error.message, 'error');
+//         } finally {
+//           setLoading(false);
+//         }
+//       }}
+//       disabled={loading || !redditConnected}
+//       style={{
+//         padding: '10px 16px',
+//         backgroundColor: loading || !redditConnected ? '#9ca3af' : '#10b981',
+//         color: 'white',
+//         border: 'none',
+//         borderRadius: '8px',
+//         fontSize: '14px',
+//         cursor: loading || !redditConnected ? 'not-allowed' : 'pointer'
+//       }}
+//     >
+//       {loading ? 'Posting...' : 'Test Post Now'}
+//     </button>
 
-    {/* Current Schedule Button */}
-    <button
-      onClick={async () => {
-        try {
-          const response = await makeAuthenticatedRequest('/api/debug/current-schedule');
-          const result = await response.json();
-          console.log('Current Schedule:', result);
-          if (result.success) {
-            const times = result.debug_info.configured_posting_times;
-            showNotification(
-              `Current time: ${result.debug_info.current_time}. Configured times: ${times.length}`, 
-              'info'
-            );
-          }
-        } catch (error) {
-          showNotification('Failed to check schedule: ' + error.message, 'error');
-        }
-      }}
-      style={{
-        padding: '10px 16px',
-        backgroundColor: '#f59e0b',
-        color: 'white',
-        border: 'none',
-        borderRadius: '8px',
-        fontSize: '14px',
-        cursor: 'pointer'
-      }}
-    >
-      Check Current Schedule
-    </button>
-  </div>
+//     {/* Current Schedule Button */}
+//     <button
+//       onClick={async () => {
+//         try {
+//           const response = await makeAuthenticatedRequest('/api/debug/current-schedule');
+//           const result = await response.json();
+//           console.log('Current Schedule:', result);
+//           if (result.success) {
+//             const times = result.debug_info.configured_posting_times;
+//             showNotification(
+//               `Current time: ${result.debug_info.current_time}. Configured times: ${times.length}`, 
+//               'info'
+//             );
+//           }
+//         } catch (error) {
+//           showNotification('Failed to check schedule: ' + error.message, 'error');
+//         }
+//       }}
+//       style={{
+//         padding: '10px 16px',
+//         backgroundColor: '#f59e0b',
+//         color: 'white',
+//         border: 'none',
+//         borderRadius: '8px',
+//         fontSize: '14px',
+//         cursor: 'pointer'
+//       }}
+//     >
+//       Check Current Schedule
+//     </button>
+//   </div>
   
-  <div style={{ 
-    fontSize: '12px', 
-    color: '#6b7280', 
-    marginTop: '12px',
-    fontStyle: 'italic'
-  }}>
-    Use these tools to debug why scheduled posting isn't working. Check browser console for detailed logs.
-  </div>
-</div>
+//   <div style={{ 
+//     fontSize: '12px', 
+//     color: '#6b7280', 
+//     marginTop: '12px',
+//     fontStyle: 'italic'
+//   }}>
+//     Use these tools to debug why scheduled posting isn't working. Check browser console for detailed logs.
+//   </div>
+// </div>
 
 
 
@@ -1227,18 +1276,58 @@ const addTestTime = async () => {
                 <div style={{ marginBottom: '24px' }}>
                   <h4 style={{ marginBottom: '16px' }}>Posting Times</h4>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input
-                      type="time"
-                      onChange={(e) => {
-                        if (e.target.value && !autoPostConfig.postingTimes.includes(e.target.value)) {
-                          setAutoPostConfig(prev => ({
-                            ...prev,
-                            postingTimes: [...prev.postingTimes, e.target.value].sort()
-                          }));
-                        }
-                      }}
-                      style={{ padding: '8px 12px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '6px', fontSize: '14px' }}
-                    />
+
+
+
+<input
+  type="time"
+  onChange={(e) => {
+    if (e.target.value && !autoPostConfig.postingTimes.includes(e.target.value)) {
+      setAutoPostConfig(prev => ({
+        ...prev,
+        postingTimes: [...prev.postingTimes, e.target.value].sort()
+      }));
+      showNotification(`Added posting time: ${e.target.value}`, 'success');
+      
+      // Debug log
+      console.log('Time added to config:', e.target.value);
+      console.log('Current posting times:', [...autoPostConfig.postingTimes, e.target.value]);
+    }
+  }}
+  style={{ padding: '12px 16px', border: '2px solid rgba(0, 0, 0, 0.1)', borderRadius: '10px', fontSize: '14px' }}
+/>
+
+{/* Quick time buttons */}
+<div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '16px 0' }}>
+  {['09:00', '12:00', '15:00', '18:00', '21:00'].map(time => (
+    <button
+      key={time}
+      onClick={() => {
+        if (!autoPostConfig.postingTimes.includes(time)) {
+          setAutoPostConfig(prev => ({
+            ...prev,
+            postingTimes: [...prev.postingTimes, time].sort()
+          }));
+          showNotification(`Added ${time}`, 'success');
+        }
+      }}
+      style={{
+        padding: '8px 16px',
+        backgroundColor: autoPostConfig.postingTimes.includes(time) ? '#22c55e' : '#f3f4f6',
+        color: autoPostConfig.postingTimes.includes(time) ? 'white' : '#374151',
+        border: 'none',
+        borderRadius: '20px',
+        fontSize: '14px',
+        cursor: 'pointer'
+      }}
+    >
+      {time}
+    </button>
+  ))}
+</div>
+
+
+
                     <button
                       onClick={addTestTime}
                       type="button"
@@ -1253,8 +1342,28 @@ const addTestTime = async () => {
                       }}
                     >
                       Add Test Time (+2min)
+                      <button
+  onClick={() => {
+    console.log('autoPostConfig.postingTimes:', autoPostConfig.postingTimes);
+    showNotification(`Times: ${autoPostConfig.postingTimes.join(', ') || 'None'}`, 'info');
+  }}
+  style={{
+    padding: '8px 12px',
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    fontSize: '12px',
+    cursor: 'pointer',
+    marginLeft: '12px'
+  }}
+>
+  Debug Times
+</button>
                     </button>
                   </div>
+
+
 
                   {autoPostConfig.postingTimes.length > 0 && (
                     <div>

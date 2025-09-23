@@ -1685,23 +1685,39 @@ async def setup_auto_posting(
         user_id = current_user["id"]
         logger.info(f"🚀 AUTOMATION SETUP: Starting for user {user_id} ({current_user.get('email')})")
         
-        # CRITICAL FIX: Preserve existing test times
-        existing_config = automation_configs.get(user_id, {}).get("auto_posting", {}).get("config", {})
-        existing_times = existing_config.get("posting_times", []) if existing_config else []
-        
-        # Merge frontend times with existing test times
+        # USE ONLY FRONTEND TIMES - no merging, no defaults
         frontend_times = config_data.posting_times or []
-        all_times = list(set(existing_times + frontend_times))  # Remove duplicates
-        all_times.sort()  # Sort chronologically
         
-        logger.info(f"TIME MERGE: Frontend times: {frontend_times}")
-        logger.info(f"TIME MERGE: Existing times: {existing_times}")
-        logger.info(f"TIME MERGE: Final merged times: {all_times}")
+        logger.info(f"FRONTEND TIMES RECEIVED: {frontend_times}")
         
-        # Update config_data with merged times
-        config_data.posting_times = all_times
+        if not frontend_times:
+            return {
+                "success": False,
+                "error": "No posting times provided",
+                "message": "Please set at least one posting time in the Schedule tab"
+            }
         
-        # Rest of your existing setup code...
+        # Validate time format
+        validated_times = []
+        for time_str in frontend_times:
+            try:
+                datetime.strptime(time_str, "%H:%M")
+                validated_times.append(time_str)
+            except ValueError:
+                logger.warning(f"Invalid time format from frontend: {time_str}")
+                
+        if not validated_times:
+            return {
+                "success": False,
+                "error": "No valid posting times provided",
+                "message": "Please provide times in HH:MM format"
+            }
+        
+        # Update config_data with validated frontend times only
+        config_data.posting_times = validated_times
+        logger.info(f"USING FRONTEND TIMES ONLY: {validated_times}")
+        
+        # Reddit connection check
         reddit_token_found = False
         reddit_username = "Unknown"
         
@@ -1710,7 +1726,6 @@ async def setup_auto_posting(
             reddit_username = user_reddit_tokens[user_id].get("reddit_username", "Unknown")
             logger.info(f"✅ Reddit token found directly for user {user_id}: {reddit_username}")
         
-        # ... continue with rest of your existing code ...
         # Fallback 1: Check database
         elif database_manager and hasattr(database_manager, 'check_reddit_connection'):
             try:
@@ -1747,15 +1762,10 @@ async def setup_auto_posting(
             return {
                 "success": False,
                 "error": "Reddit account not connected",
-                "message": "Please connect your Reddit account first",
-                "debug_info": {
-                    "user_id": user_id,
-                    "available_reddit_users": list(user_reddit_tokens.keys()),
-                    "reddit_usernames": [v.get("reddit_username") for v in user_reddit_tokens.values()]
-                }
+                "message": "Please connect your Reddit account first"
             }
         
-        # Less strict service checks - log warnings instead of blocking
+        # Service checks
         service_warnings = []
         
         if isinstance(reddit_oauth_connector, MockRedditConnector):
@@ -1766,7 +1776,7 @@ async def setup_auto_posting(
             service_warnings.append("AI service is in mock mode")
             logger.warning("AI service is MockAIService")
         
-        # Test AI service with better error handling
+        # Test AI service
         ai_service_name = "unknown"
         ai_test_success = False
         
@@ -1779,8 +1789,6 @@ async def setup_auto_posting(
                 target_audience=config_data.target_audience,
                 test_mode=False
             )
-            
-            logger.info(f"AI test result: {test_content}")
             
             if test_content.get("success", True) and test_content.get("ai_service") != "mock":
                 ai_test_success = True
@@ -1823,9 +1831,9 @@ async def setup_auto_posting(
             }
         }
         
-        logger.info(f"✅ Auto-posting config stored for user {user_id} ({reddit_username})")
+        logger.info(f"✅ Auto-posting config stored for user {user_id} ({reddit_username}) with times: {validated_times}")
         
-        # Setup with automation scheduler
+        # Setup with automation scheduler using FRONTEND TIMES ONLY
         if automation_scheduler and AUTOMATION_AVAILABLE:
             try:
                 logger.info("🚀 Setting up automation scheduler...")
@@ -1839,7 +1847,7 @@ async def setup_auto_posting(
                     language=config_data.language,
                     subreddits=config_data.subreddits,
                     posts_per_day=config_data.posts_per_day,
-                    posting_times=config_data.posting_times,
+                    posting_times=validated_times,  # FRONTEND TIMES ONLY
                     content_style=config_data.content_style,
                     manual_time_entry=config_data.manual_time_entry,
                     custom_post_count=config_data.custom_post_count
@@ -1848,12 +1856,13 @@ async def setup_auto_posting(
                 result = await automation_scheduler.setup_auto_posting(auto_config)
                 result["user_id"] = user_id
                 result["reddit_username"] = reddit_username
+                result["posting_times_used"] = validated_times  # Show which times were used
                 result["real_posting"] = not isinstance(automation_scheduler, MockAutomationScheduler)
                 result["real_ai"] = ai_test_success
                 result["ai_service"] = ai_service_name
                 result["service_warnings"] = service_warnings
                 
-                logger.info(f"✅ AUTOMATION SETUP SUCCESSFUL for user {user_id} with {ai_service_name}")
+                logger.info(f"✅ AUTOMATION SETUP SUCCESSFUL for user {user_id} with frontend times: {validated_times}")
                 return result
                 
             except Exception as e:
@@ -1874,6 +1883,7 @@ async def setup_auto_posting(
             "message": "Configuration saved successfully",
             "user_id": user_id,
             "reddit_username": reddit_username,
+            "posting_times_used": validated_times,
             "real_ai": ai_test_success,
             "ai_service": ai_service_name,
             "service_warnings": service_warnings,
@@ -1889,6 +1899,13 @@ async def setup_auto_posting(
             "message": "Automation setup failed - check server logs",
             "timestamp": datetime.now().isoformat()
         }
+    
+
+
+
+
+
+
 
 
 @app.get("/api/debug/automation-status")

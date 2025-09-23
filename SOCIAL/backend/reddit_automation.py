@@ -202,7 +202,8 @@ class RedditAutomationScheduler:
                 config.subreddits = self._get_default_subreddits(config.domain)
             
             if not config.posting_times:
-                config.posting_times = ["09:00", "14:00", "19:00"]
+                # config.posting_times = ["09:00", "14:00", "19:00"]
+                raise ValueError("No posting times provided from frontend")
             
             # Validate posting times
             validated_times = []
