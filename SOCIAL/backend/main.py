@@ -2614,7 +2614,6 @@ async def check_existing_connection_fallback(session_id: str = Header(None, alia
         }
     }
 
-
 @app.get("/api/debug/scheduler-active-configs")
 async def debug_scheduler_active_configs(current_user: dict = Depends(get_current_user)):
     """Debug what the scheduler actually has in active_configs"""
@@ -2625,13 +2624,22 @@ async def debug_scheduler_active_configs(current_user: dict = Depends(get_curren
             user_scheduler_config = automation_scheduler.active_configs.get(user_id)
             
             if user_scheduler_config:
+                auto_posting = user_scheduler_config.get("auto_posting", {})
+                config = auto_posting.get("config")
+                
+                posting_times = []
+                if hasattr(config, 'posting_times'):
+                    posting_times = config.posting_times
+                elif isinstance(config, dict):
+                    posting_times = config.get('posting_times', [])
+                
                 return {
                     "success": True,
                     "user_id": user_id,
                     "scheduler_has_user": True,
-                    "posting_times": getattr(user_scheduler_config, 'posting_times', []),
-                    "domain": getattr(user_scheduler_config, 'domain', 'unknown'),
-                    "posts_per_day": getattr(user_scheduler_config, 'posts_per_day', 0),
+                    "posting_times": posting_times,
+                    "config_type": str(type(config)),
+                    "auto_posting_enabled": auto_posting.get("enabled", False),
                     "current_time": datetime.now().strftime("%H:%M"),
                     "next_minute": (datetime.now() + timedelta(minutes=1)).strftime("%H:%M")
                 }
@@ -2644,10 +2652,7 @@ async def debug_scheduler_active_configs(current_user: dict = Depends(get_curren
                     "memory_config": automation_configs.get(user_id, {}).get("auto_posting", {}).get("config", {}).get("posting_times", [])
                 }
         
-        return {
-            "success": False,
-            "error": "Automation scheduler not available"
-        }
+        return {"success": False, "error": "Automation scheduler not available"}
         
     except Exception as e:
         return {"success": False, "error": str(e)}

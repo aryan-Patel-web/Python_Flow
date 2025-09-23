@@ -1,7 +1,8 @@
 """
-Fixed Reddit Automation System - DEPLOYMENT READY
+Fixed Reddit Automation System - DEPLOYMENT READY with Enhanced Debugging
 Fixes asyncio issues in server environment for scheduled auto-posting
 Manual posting works, scheduled posting now also works in deployment
+ENHANCED DEBUG VERSION - Shows exactly why posts trigger or don't trigger
 """
 
 import asyncio
@@ -61,7 +62,7 @@ class AutoReplyConfig:
     response_delay_minutes: int = 15
 
 class RedditAutomationScheduler:
-    """FIXED Automation scheduler for deployment environment"""
+    """FIXED Automation scheduler for deployment environment with ENHANCED DEBUGGING"""
     
     def __init__(self, reddit_oauth_connector, ai_service, database_manager, user_tokens):
         self.reddit_oauth = reddit_oauth_connector
@@ -79,7 +80,7 @@ class RedditAutomationScheduler:
         # CRITICAL FIX: Use ThreadPoolExecutor for async operations in deployment
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="reddit_auto")
         
-        logger.info("Reddit Automation Scheduler initialized for DEPLOYMENT")
+        logger.info("Reddit Automation Scheduler initialized for DEPLOYMENT with ENHANCED DEBUG")
         
     def start_scheduler(self):
         """Start the automation scheduler - FIXED for deployment"""
@@ -214,10 +215,10 @@ class RedditAutomationScheduler:
             
             config.posting_times = validated_times
             
-            # Store comprehensive configuration
+            # CRITICAL: Store configuration in the scheduler's active_configs
             self.active_configs[config.user_id] = {
                 "auto_posting": {
-                    "config": config,
+                    "config": config,  # Store the AutoPostConfig object
                     "enabled": True,
                     "created_at": datetime.now(),
                     "last_post_time": None,
@@ -243,6 +244,14 @@ class RedditAutomationScheduler:
                     "replies": [],
                     "daily_stats": {}
                 }
+            
+            # ENHANCED DEBUG: Log the exact configuration stored
+            logger.info(f"SCHEDULER CONFIG STORED for user {config.user_id}:")
+            logger.info(f"  - Domain: {config.domain}")
+            logger.info(f"  - Posting times: {config.posting_times}")
+            logger.info(f"  - Posts per day: {config.posts_per_day}")
+            logger.info(f"  - Subreddits: {config.subreddits}")
+            logger.info(f"  - Config type: {type(config)}")
             
             # Test AI service connection
             try:
@@ -286,7 +295,12 @@ class RedditAutomationScheduler:
                 "ai_service_status": ai_status,
                 "scheduler_status": "Active - DEPLOYMENT READY",
                 "persistent": True,
-                "real_posting": True
+                "real_posting": True,
+                "debug_info": {
+                    "stored_in_scheduler": True,
+                    "config_type": str(type(config)),
+                    "user_in_active_configs": config.user_id in self.active_configs
+                }
             }
             
         except Exception as e:
@@ -453,7 +467,7 @@ class RedditAutomationScheduler:
             }
     
     async def _async_posting_check(self):
-        """CRITICAL: Enhanced async posting check - DEPLOYMENT OPTIMIZED"""
+        """CRITICAL: Enhanced async posting check - DEPLOYMENT OPTIMIZED with FULL DEBUG"""
         try:
             current_time = datetime.now().strftime("%H:%M")
             current_date = datetime.now().date().isoformat()
@@ -466,37 +480,76 @@ class RedditAutomationScheduler:
             
             logger.info(f"DEPLOYMENT: Checking for scheduled posts at {current_time}")
             
+            # ENHANCED DEBUG: Log all active configs
+            logger.info(f"DEBUG: Active configs count: {len(self.active_configs)}")
+            logger.info(f"DEBUG: Active config user IDs: {list(self.active_configs.keys())}")
+            logger.info(f"DEBUG: User tokens count: {len(self.user_tokens)}")
+            logger.info(f"DEBUG: User token IDs: {list(self.user_tokens.keys())}")
+            
             # Get active configs safely
             active_configs_copy = dict(self.active_configs)
             
+            posts_found = 0
+            users_checked = 0
+            
             for user_id, config_data in active_configs_copy.items():
                 try:
+                    users_checked += 1
+                    logger.info(f"DEBUG: Checking user {user_id}")
+                    
                     auto_posting = config_data.get("auto_posting")
-                    if not auto_posting or not auto_posting.get("enabled", False):
+                    if not auto_posting:
+                        logger.info(f"DEBUG: User {user_id} - No auto_posting config")
+                        continue
+                        
+                    if not auto_posting.get("enabled", False):
+                        logger.info(f"DEBUG: User {user_id} - Auto-posting not enabled")
                         continue
                     
                     config = auto_posting.get("config")
                     if not config:
+                        logger.info(f"DEBUG: User {user_id} - No config object")
                         continue
                     
-                    # Handle both dataclass and dict config
+                    # ENHANCED DEBUG: Log config details
+                    logger.info(f"DEBUG: User {user_id} - Config type: {type(config)}")
+                    
+                    # FIXED: Handle both dataclass and dict config properly
+                    posting_times = []
+                    posts_per_day = 3
+                    
                     if hasattr(config, 'posting_times'):
+                        # It's an AutoPostConfig object
                         posting_times = config.posting_times
                         posts_per_day = config.posts_per_day
+                        logger.info(f"DEBUG: User {user_id} - Got config from object - times: {posting_times}")
                     elif isinstance(config, dict):
+                        # It's a dictionary
                         posting_times = config.get('posting_times', [])
                         posts_per_day = config.get('posts_per_day', 3)
+                        logger.info(f"DEBUG: User {user_id} - Got config from dict - times: {posting_times}")
                     else:
+                        logger.warning(f"DEBUG: User {user_id} - Invalid config type: {type(config)}")
                         continue
+                    
+                    # ENHANCED DEBUG: Check time matching
+                    logger.info(f"DEBUG: User {user_id} - Current time: {current_time}, Posting times: {posting_times}")
                     
                     # Check if this is a scheduled posting time
                     if current_time not in posting_times:
+                        logger.info(f"DEBUG: User {user_id} - Current time {current_time} NOT in posting times {posting_times}")
                         continue
+                    
+                    posts_found += 1
+                    logger.info(f"FOUND SCHEDULED POST: User {user_id} at {current_time}")
                     
                     # Check if user has Reddit tokens
                     if user_id not in self.user_tokens:
-                        logger.warning(f"No Reddit tokens for user {user_id}")
+                        logger.warning(f"DEBUG: User {user_id} - No Reddit tokens found")
                         continue
+                    
+                    reddit_username = self.user_tokens[user_id].get("reddit_username", "Unknown")
+                    logger.info(f"DEBUG: User {user_id} - Reddit username: {reddit_username}")
                     
                     # Check daily posting limit
                     daily_count = self.daily_post_counts.get(user_id, {"date": current_date, "count": 0})
@@ -506,17 +559,19 @@ class RedditAutomationScheduler:
                         daily_count = {"date": current_date, "count": 0}
                         self.daily_post_counts[user_id] = daily_count
                     
+                    logger.info(f"DEBUG: User {user_id} - Daily count: {daily_count.get('count', 0)}/{posts_per_day}")
+                    
                     if daily_count.get("count", 0) >= posts_per_day:
-                        logger.info(f"Daily posting limit reached for user {user_id}: {daily_count.get('count')}/{posts_per_day}")
+                        logger.info(f"DEBUG: User {user_id} - Daily posting limit reached: {daily_count.get('count')}/{posts_per_day}")
                         continue
                     
                     # Check if we already posted at this time today (prevent duplicates)
                     last_post_key = f"{current_date}_{current_time}"
                     if auto_posting.get("last_post_key") == last_post_key:
-                        logger.info(f"Already posted at {current_time} today for user {user_id}")
+                        logger.info(f"DEBUG: User {user_id} - Already posted at {current_time} today (last_post_key: {last_post_key})")
                         continue
                     
-                    logger.info(f"DEPLOYMENT SCHEDULED POST: {current_time} for user {user_id}")
+                    logger.info(f"EXECUTING SCHEDULED POST: {current_time} for user {user_id} (u/{reddit_username})")
                     
                     # Generate and post content - REAL POSTING
                     success = await self._generate_and_post_content(user_id, config, current_time)
@@ -526,18 +581,26 @@ class RedditAutomationScheduler:
                         daily_count["count"] += 1
                         self.daily_post_counts[user_id] = daily_count
                         auto_posting["last_post_key"] = last_post_key
-                        auto_posting["successful_posts"] += 1
+                        auto_posting["successful_posts"] = auto_posting.get("successful_posts", 0) + 1
                         auto_posting["last_post_time"] = datetime.now().isoformat()
                         logger.info(f"DEPLOYMENT: Automated post SUCCESS for user {user_id}")
                     else:
-                        auto_posting["failed_posts"] += 1
+                        auto_posting["failed_posts"] = auto_posting.get("failed_posts", 0) + 1
                         logger.error(f"DEPLOYMENT: Automated post FAILED for user {user_id}")
                     
-                    auto_posting["total_posts"] += 1
+                    auto_posting["total_posts"] = auto_posting.get("total_posts", 0) + 1
                     
                 except Exception as user_error:
                     logger.error(f"Error processing user {user_id}: {user_error}")
                     continue
+            
+            # ENHANCED SUMMARY LOGGING
+            if posts_found > 0:
+                logger.info(f"DEPLOYMENT SUMMARY: Found {posts_found} scheduled posts from {users_checked} users at {current_time}")
+            else:
+                logger.info(f"DEPLOYMENT SUMMARY: No scheduled posts found from {users_checked} users at {current_time}")
+                if users_checked > 0:
+                    logger.info("DEBUG: Check the posting times in your active configs")
                 
         except Exception as e:
             logger.error(f"DEPLOYMENT: Posting check failed: {e}")
