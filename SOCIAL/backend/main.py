@@ -2331,6 +2331,9 @@ async def debug_current_schedule(current_user: dict = Depends(get_current_user))
 
 
 
+
+
+
 @app.post("/api/debug/add-test-time")
 async def add_test_time(current_user: dict = Depends(get_current_user)):
     """Add a test posting time 2 minutes from now"""
@@ -2339,38 +2342,131 @@ async def add_test_time(current_user: dict = Depends(get_current_user)):
         
         # Calculate time 2 minutes from now
         test_time = (datetime.now() + timedelta(minutes=2)).strftime("%H:%M")
+        logger.info(f"🕐 Adding test time {test_time} for user {user_id}")
         
-        # Update automation config
+        # Update automation config in memory
         if user_id in automation_configs and "auto_posting" in automation_configs[user_id]:
             current_times = automation_configs[user_id]["auto_posting"]["config"].get("posting_times", [])
             if test_time not in current_times:
                 current_times.append(test_time)
                 automation_configs[user_id]["auto_posting"]["config"]["posting_times"] = current_times
                 
-                # Update scheduler if available
+                # CRITICAL: Update the scheduler's active config
                 if automation_scheduler and hasattr(automation_scheduler, 'active_configs'):
                     if user_id in automation_scheduler.active_configs:
                         automation_scheduler.active_configs[user_id].posting_times = current_times
+                        logger.info(f"✅ Updated scheduler active_configs for user {user_id}")
+                    else:
+                        logger.warning(f"⚠️ User {user_id} not found in scheduler active_configs")
+                        # If user not in active_configs, try to recreate the automation
+                        try:
+                            config = automation_configs[user_id]["auto_posting"]["config"]
+                            auto_config = AutoPostConfig(
+                                user_id=user_id,
+                                domain=config.get("domain", "tech"),
+                                business_type=config.get("business_type", "AI automation platform"),
+                                business_description=config.get("business_description", ""),
+                                target_audience=config.get("target_audience", "tech_professionals"),
+                                language=config.get("language", "en"),
+                                subreddits=config.get("subreddits", ["test"]),
+                                posts_per_day=config.get("posts_per_day", 3),
+                                posting_times=current_times,
+                                content_style=config.get("content_style", "engaging"),
+                                manual_time_entry=config.get("manual_time_entry", False),
+                                custom_post_count=config.get("custom_post_count", False)
+                            )
+                            await automation_scheduler.setup_auto_posting(auto_config)
+                            logger.info(f"✅ Recreated automation config for user {user_id}")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to recreate automation: {e}")
+                else:
+                    logger.warning("⚠️ Automation scheduler not available")
                 
-                logger.info(f"Added test posting time {test_time} for user {user_id}")
+                # Update database
+                try:
+                    if database_manager and hasattr(database_manager, 'store_automation_config'):
+                        config_dict = automation_configs[user_id]["auto_posting"]["config"]
+                        await database_manager.store_automation_config(
+                            user_id=user_id,
+                            config_type='auto_posting',
+                            config_data=config_dict
+                        )
+                        logger.info(f"✅ Updated database config for user {user_id}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Database update failed: {e}")
+                
+                logger.info(f"✅ Test posting time {test_time} added for user {user_id}")
+                logger.info(f"📅 All posting times: {current_times}")
                 
                 return {
                     "success": True,
                     "message": f"Test posting time added: {test_time}",
                     "test_time": test_time,
                     "all_times": current_times,
-                    "note": "Post should trigger in ~2 minutes"
+                    "note": f"Post should trigger at {test_time}",
+                    "scheduler_updated": True
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Time {test_time} already exists",
+                    "all_times": current_times
                 }
         
         return {
             "success": False,
             "error": "No automation config found",
-            "user_id": user_id
+            "user_id": user_id,
+            "available_configs": list(automation_configs.keys())
         }
         
     except Exception as e:
-        logger.error(f"Add test time failed: {e}")
+        logger.error(f"❌ Add test time failed: {e}")
         return {"success": False, "error": str(e)}
+
+
+
+
+
+
+
+@app.get("/api/debug/scheduler-status")
+async def debug_scheduler_status(current_user: dict = Depends(get_current_user)):
+    """Debug scheduler active configurations"""
+    try:
+        user_id = current_user["id"]
+        
+        memory_config = automation_configs.get(user_id, {}).get("auto_posting", {}).get("config", {})
+        
+        scheduler_config = None
+        if automation_scheduler and hasattr(automation_scheduler, 'active_configs'):
+            if user_id in automation_scheduler.active_configs:
+                scheduler_config = {
+                    "posting_times": automation_scheduler.active_configs[user_id].posting_times,
+                    "domain": automation_scheduler.active_configs[user_id].domain,
+                    "posts_per_day": automation_scheduler.active_configs[user_id].posts_per_day
+                }
+        
+        return {
+            "success": True,
+            "current_time": datetime.now().strftime("%H:%M"),
+            "user_id": user_id,
+            "memory_config": {
+                "posting_times": memory_config.get("posting_times", []),
+                "enabled": automation_configs.get(user_id, {}).get("auto_posting", {}).get("enabled", False)
+            },
+            "scheduler_config": scheduler_config,
+            "scheduler_has_user": user_id in (automation_scheduler.active_configs if automation_scheduler and hasattr(automation_scheduler, 'active_configs') else {}),
+            "all_scheduler_users": list(automation_scheduler.active_configs.keys()) if automation_scheduler and hasattr(automation_scheduler, 'active_configs') else []
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+
+
 
 
 
