@@ -504,6 +504,128 @@ const addTestTime = async () => {
 
 
 
+{/* Add this section after the existing "Add Test Time" button */}
+<div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#f8f9fa', borderRadius: '12px' }}>
+  <h5 style={{ marginBottom: '16px', color: '#374151' }}>Debug Tools</h5>
+  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+    
+    {/* Check Scheduler Status Button */}
+    <button
+      onClick={async () => {
+        try {
+          const response = await makeAuthenticatedRequest('/api/debug/scheduler-active-configs');
+          const result = await response.json();
+          console.log('Scheduler Status:', result);
+          if (result.success) {
+            showNotification(
+              `Scheduler has ${result.scheduler_has_user ? result.posting_times.length : 0} times for you`, 
+              'info'
+            );
+          } else {
+            showNotification(result.error, 'error');
+          }
+        } catch (error) {
+          showNotification('Failed to check scheduler: ' + error.message, 'error');
+        }
+      }}
+      style={{
+        padding: '10px 16px',
+        backgroundColor: '#3b82f6',
+        color: 'white',
+        border: 'none',
+        borderRadius: '8px',
+        fontSize: '14px',
+        cursor: 'pointer'
+      }}
+    >
+      Check Scheduler Status
+    </button>
+
+    {/* Trigger Immediate Post Button */}
+    <button
+      onClick={async () => {
+        if (!redditConnected) {
+          showNotification('Reddit not connected', 'error');
+          return;
+        }
+        try {
+          setLoading(true);
+          showNotification('Triggering immediate test post...', 'info');
+          const response = await makeAuthenticatedRequest('/api/debug/trigger-immediate-post', {
+            method: 'POST'
+          });
+          const result = await response.json();
+          
+          if (result.success) {
+            showNotification('Test post successful!', 'success');
+            console.log('Post result:', result);
+          } else {
+            showNotification(result.error || 'Test post failed', 'error');
+          }
+        } catch (error) {
+          showNotification('Test post failed: ' + error.message, 'error');
+        } finally {
+          setLoading(false);
+        }
+      }}
+      disabled={loading || !redditConnected}
+      style={{
+        padding: '10px 16px',
+        backgroundColor: loading || !redditConnected ? '#9ca3af' : '#10b981',
+        color: 'white',
+        border: 'none',
+        borderRadius: '8px',
+        fontSize: '14px',
+        cursor: loading || !redditConnected ? 'not-allowed' : 'pointer'
+      }}
+    >
+      {loading ? 'Posting...' : 'Test Post Now'}
+    </button>
+
+    {/* Current Schedule Button */}
+    <button
+      onClick={async () => {
+        try {
+          const response = await makeAuthenticatedRequest('/api/debug/current-schedule');
+          const result = await response.json();
+          console.log('Current Schedule:', result);
+          if (result.success) {
+            const times = result.debug_info.configured_posting_times;
+            showNotification(
+              `Current time: ${result.debug_info.current_time}. Configured times: ${times.length}`, 
+              'info'
+            );
+          }
+        } catch (error) {
+          showNotification('Failed to check schedule: ' + error.message, 'error');
+        }
+      }}
+      style={{
+        padding: '10px 16px',
+        backgroundColor: '#f59e0b',
+        color: 'white',
+        border: 'none',
+        borderRadius: '8px',
+        fontSize: '14px',
+        cursor: 'pointer'
+      }}
+    >
+      Check Current Schedule
+    </button>
+  </div>
+  
+  <div style={{ 
+    fontSize: '12px', 
+    color: '#6b7280', 
+    marginTop: '12px',
+    fontStyle: 'italic'
+  }}>
+    Use these tools to debug why scheduled posting isn't working. Check browser console for detailed logs.
+  </div>
+</div>
+
+
+
 
 
 

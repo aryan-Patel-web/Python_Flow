@@ -2614,6 +2614,44 @@ async def check_existing_connection_fallback(session_id: str = Header(None, alia
         }
     }
 
+
+@app.get("/api/debug/scheduler-active-configs")
+async def debug_scheduler_active_configs(current_user: dict = Depends(get_current_user)):
+    """Debug what the scheduler actually has in active_configs"""
+    try:
+        user_id = current_user["id"]
+        
+        if automation_scheduler and hasattr(automation_scheduler, 'active_configs'):
+            user_scheduler_config = automation_scheduler.active_configs.get(user_id)
+            
+            if user_scheduler_config:
+                return {
+                    "success": True,
+                    "user_id": user_id,
+                    "scheduler_has_user": True,
+                    "posting_times": getattr(user_scheduler_config, 'posting_times', []),
+                    "domain": getattr(user_scheduler_config, 'domain', 'unknown'),
+                    "posts_per_day": getattr(user_scheduler_config, 'posts_per_day', 0),
+                    "current_time": datetime.now().strftime("%H:%M"),
+                    "next_minute": (datetime.now() + timedelta(minutes=1)).strftime("%H:%M")
+                }
+            else:
+                return {
+                    "success": True,
+                    "user_id": user_id,
+                    "scheduler_has_user": False,
+                    "all_scheduler_users": list(automation_scheduler.active_configs.keys()),
+                    "memory_config": automation_configs.get(user_id, {}).get("auto_posting", {}).get("config", {}).get("posting_times", [])
+                }
+        
+        return {
+            "success": False,
+            "error": "Automation scheduler not available"
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 # System information endpoint
 @app.get("/api/system/info")
 async def get_system_info():
@@ -2655,6 +2693,64 @@ async def get_system_info():
         },
         "timestamp": datetime.now().isoformat()
     }
+
+
+@app.post("/api/debug/trigger-immediate-post")
+async def trigger_immediate_post(current_user: dict = Depends(get_current_user)):
+    """Trigger an immediate test post"""
+    try:
+        user_id = current_user["id"]
+        
+        if user_id not in user_reddit_tokens:
+            return {"success": False, "error": "Reddit not connected"}
+        
+        if isinstance(ai_service, MockAIService):
+            return {"success": False, "error": "AI service not configured"}
+        
+        # Get user config
+        user_config = automation_configs.get(user_id, {}).get("auto_posting", {}).get("config", {})
+        if not user_config:
+            return {"success": False, "error": "No automation config found"}
+        
+        # Generate content
+        content_result = await ai_service.generate_reddit_domain_content(
+            domain=user_config.get("domain", "tech"),
+            business_type=user_config.get("business_type", "AI automation platform"),
+            business_description=user_config.get("business_description", ""),
+            target_audience=user_config.get("target_audience", "tech_professionals"),
+            content_style=user_config.get("content_style", "engaging"),
+            test_mode=False
+        )
+        
+        if not content_result.get("success", True):
+            return {"success": False, "error": "AI content generation failed"}
+        
+        # Post to Reddit
+        reddit_tokens = user_reddit_tokens[user_id]
+        subreddits = user_config.get("subreddits", ["test"])
+        
+        post_result = await reddit_oauth_connector.post_content_with_token(
+            access_token=reddit_tokens["access_token"],
+            subreddit_name=subreddits[0],
+            title=content_result.get("title", "Test Post"),
+            content=content_result.get("content", "Test content"),
+            content_type="text"
+        )
+        
+        return {
+            "success": post_result.get("success", False),
+            "message": "Immediate test post triggered",
+            "post_result": post_result,
+            "ai_service": content_result.get("ai_service"),
+            "subreddit": subreddits[0],
+            "user_id": user_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Immediate post trigger failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
 
 # Application startup
 PORT = int(os.getenv("PORT", 10000))
