@@ -2345,8 +2345,6 @@ async def debug_current_schedule(current_user: dict = Depends(get_current_user))
 
 
 
-
-
 @app.post("/api/debug/add-test-time")
 async def add_test_time(current_user: dict = Depends(get_current_user)):
     """Add a test posting time 2 minutes from now"""
@@ -2367,8 +2365,15 @@ async def add_test_time(current_user: dict = Depends(get_current_user)):
                 # CRITICAL: Update the scheduler's active config
                 if automation_scheduler and hasattr(automation_scheduler, 'active_configs'):
                     if user_id in automation_scheduler.active_configs:
-                        automation_scheduler.active_configs[user_id].posting_times = current_times
+                        # FORCE UPDATE: Update both memory config and scheduler config
+                        automation_scheduler.active_configs[user_id]["auto_posting"]["config"].posting_times = current_times
                         logger.info(f"✅ Updated scheduler active_configs for user {user_id}")
+                        
+                        # ADDITIONAL FORCE UPDATE: Directly update the scheduler's config object
+                        scheduler_config = automation_scheduler.active_configs[user_id]["auto_posting"]["config"]
+                        scheduler_config.posting_times = current_times
+                        logger.info(f"FORCE UPDATED scheduler config with test time: {current_times}")
+                        
                     else:
                         logger.warning(f"⚠️ User {user_id} not found in scheduler active_configs")
                         # If user not in active_configs, try to recreate the automation
@@ -2417,7 +2422,8 @@ async def add_test_time(current_user: dict = Depends(get_current_user)):
                     "test_time": test_time,
                     "all_times": current_times,
                     "note": f"Post should trigger at {test_time}",
-                    "scheduler_updated": True
+                    "scheduler_updated": True,
+                    "force_updated": True
                 }
             else:
                 return {
