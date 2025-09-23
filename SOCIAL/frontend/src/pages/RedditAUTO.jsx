@@ -167,18 +167,20 @@ useEffect(() => {
       return;
     }
 
-    // TEMPORARILY CLEAR INIT FLAG TO FORCE CONNECTION CHECK
+    // Prevent multiple initializations with timestamp
     const initKey = `reddit_init_${user.email}`;
-    localStorage.removeItem(initKey); // ADD THIS LINE TO FORCE REFRESH
+    const lastInit = localStorage.getItem(initKey);
+    const now = Date.now();
     
-    if (localStorage.getItem(initKey)) {
-      console.log('Already initialized for', user.email);
+    // Only allow re-init if more than 30 seconds have passed
+    if (lastInit && (now - parseInt(lastInit)) < 30000) {
+      console.log('Skipping init - too recent:', new Date(parseInt(lastInit)));
       return;
     }
 
     try {
       console.log('🚀 Initializing Reddit Auto component for user:', user.email);
-      localStorage.setItem(initKey, 'true');
+      localStorage.setItem(initKey, now.toString());
 
       // Handle OAuth callback first
       const urlParams = new URLSearchParams(window.location.search);
@@ -203,23 +205,6 @@ useEffect(() => {
         });
         showNotification(`Reddit connected! Welcome u/${usernameParam}!`, 'success');
         window.history.replaceState({}, '', window.location.pathname);
-        
-        // Force check connection status after OAuth
-        setTimeout(async () => {
-          try {
-            console.log('Making OAuth verification request...');
-            const response = await makeAuthenticatedRequest('/api/reddit/connection-status');
-            const result = await response.json();
-            console.log('OAuth verification result:', result);
-            if (result.success && result.connected) {
-              setRedditConnected(true);
-              setRedditUsername(result.reddit_username);
-              console.log('✅ OAuth connection confirmed via API');
-            }
-          } catch (error) {
-            console.error('Failed to verify OAuth connection:', error);
-          }
-        }, 1000);
         return;
       }
 
@@ -242,7 +227,7 @@ useEffect(() => {
         } else {
           setRedditConnected(false);
           setRedditUsername('');
-          console.log('❌ No Reddit connection found', result);
+          console.log('❌ No Reddit connection found');
         }
       } catch (error) {
         console.error('Failed to check Reddit connection:', error);
@@ -251,36 +236,7 @@ useEffect(() => {
       }
 
       // Load saved profile
-
-
-
-
-
-
-
-      // Load saved profile
-      try {
-        const savedProfile = localStorage.getItem('redditUserProfile');
-        if (savedProfile) {
-          const profile = JSON.parse(savedProfile);
-          setUserProfile(profile);
-        }
-      } catch (error) {
-        console.error('Error loading profile:', error);
-      }
-
-      // Test backend connection
-      try {
-        const healthResponse = await makeAuthenticatedRequest('/health');
-        const healthData = await healthResponse.json();
-        if (healthData.success || healthData.status === 'healthy') {
-          setBackendConnected(true);
-          console.log('✅ Backend connection verified');
-        }
-      } catch (error) {
-        console.error('Backend connection failed:', error);
-        setBackendConnected(false);
-      }
+      // ... rest of your profile loading code
       
     } catch (error) {
       console.error('App initialization failed:', error);
@@ -288,11 +244,19 @@ useEffect(() => {
     }
   };
 
-  // Only initialize when user changes and is authenticated
+  // Only initialize when user email is available and hasn't been initialized recently
   if (user?.email && !user.email.includes('mock')) {
     initApp();
   }
-}, [user?.email, makeAuthenticatedRequest, updateUser, showNotification]);
+}, [user?.email]); // ONLY depend on user.email
+
+
+
+
+
+
+
+
 
   const saveUserProfile = useCallback(() => {
     try {
@@ -337,6 +301,12 @@ useEffect(() => {
       setLoading(false);
     }
   }, [makeAuthenticatedRequest, user, showNotification]);
+
+
+
+
+
+
 
   const testConnection = useCallback(async () => {
     try {
