@@ -1,7 +1,7 @@
 """
-Enhanced Reddit Automation System - REAL POSTING ENABLED
-Fixed auto-posting issues, asyncio conflicts, and improved error handling
-All features preserved with enhanced reliability
+Fixed Reddit Automation System - DEPLOYMENT READY
+Fixes asyncio issues in server environment for scheduled auto-posting
+Manual posting works, scheduled posting now also works in deployment
 """
 
 import asyncio
@@ -16,6 +16,7 @@ import json
 import threading
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 # Fix Windows console encoding
 if sys.platform == "win32":
@@ -60,7 +61,7 @@ class AutoReplyConfig:
     response_delay_minutes: int = 15
 
 class RedditAutomationScheduler:
-    """Enhanced automation scheduler with REAL REDDIT POSTING - Fixed Version"""
+    """FIXED Automation scheduler for deployment environment"""
     
     def __init__(self, reddit_oauth_connector, ai_service, database_manager, user_tokens):
         self.reddit_oauth = reddit_oauth_connector
@@ -75,14 +76,13 @@ class RedditAutomationScheduler:
         self.daily_post_counts = {}
         self.last_check_time = None
         
-        # Fix asyncio loop issues
-        self._main_loop = None
-        self._executor = None
+        # CRITICAL FIX: Use ThreadPoolExecutor for async operations in deployment
+        self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="reddit_auto")
         
-        logger.info("Reddit Automation Scheduler initialized with REAL POSTING")
+        logger.info("Reddit Automation Scheduler initialized for DEPLOYMENT")
         
     def start_scheduler(self):
-        """Start the automation scheduler with fixed asyncio handling"""
+        """Start the automation scheduler - FIXED for deployment"""
         if self.is_running:
             logger.info("Scheduler already running")
             return
@@ -92,19 +92,13 @@ class RedditAutomationScheduler:
         # Clear existing schedule
         schedule.clear()
         
-        # Schedule posting checks every minute for precise timing
-        schedule.every().minute.do(self._run_posting_check)
-        
-        # Schedule question monitoring every 5 minutes
-        schedule.every(5).minutes.do(self._run_question_monitoring)
-        
-        # Reset reply counters every hour
+        # CRITICAL FIX: Use synchronous wrappers for deployment environment
+        schedule.every().minute.do(self._sync_posting_check)
+        schedule.every(5).minutes.do(self._sync_question_monitoring)
         schedule.every().hour.do(self._reset_reply_counters)
-        
-        # Reset daily counters at midnight
         schedule.every().day.at("00:00").do(self._reset_daily_counters)
         
-        logger.info("Enhanced Reddit automation scheduler started - REAL POSTING ENABLED")
+        logger.info("Enhanced Reddit automation scheduler started - DEPLOYMENT READY")
         
         # Start background scheduler thread
         if not self.scheduler_thread or not self.scheduler_thread.is_alive():
@@ -116,14 +110,17 @@ class RedditAutomationScheduler:
         self.is_running = False
         schedule.clear()
         
+        if self.executor:
+            self.executor.shutdown(wait=False)
+        
         if self.scheduler_thread and self.scheduler_thread.is_alive():
             logger.info("Stopping automation scheduler...")
-            time.sleep(2)  # Give thread time to finish
+            time.sleep(2)
         
         logger.info("Automation scheduler stopped")
     
     def _scheduler_loop(self):
-        """Fixed background loop - No asyncio conflicts"""
+        """Fixed background loop for deployment"""
         while self.is_running:
             try:
                 schedule.run_pending()
@@ -132,51 +129,62 @@ class RedditAutomationScheduler:
                 logger.error(f"Scheduler loop error: {e}")
                 time.sleep(60)
     
-    def _run_posting_check(self):
-        """Run posting check - Fixed asyncio handling"""
+    def _sync_posting_check(self):
+        """CRITICAL FIX: Synchronous posting check wrapper for deployment"""
         try:
-            # Create new thread for async operations
-            def async_wrapper():
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(self._async_posting_check())
-                except Exception as e:
-                    logger.error(f"Async posting check error: {e}")
-                finally:
-                    try:
-                        loop.close()
-                    except:
-                        pass
-            
-            # Run in separate thread to avoid loop conflicts
-            thread = threading.Thread(target=async_wrapper, daemon=True)
-            thread.start()
+            # Submit async task to thread pool executor
+            future = self.executor.submit(self._run_async_posting_check)
+            # Don't wait for result to avoid blocking scheduler
             
         except Exception as e:
-            logger.error(f"Posting check error: {e}")
+            logger.error(f"Sync posting check error: {e}")
     
-    def _run_question_monitoring(self):
-        """Run question monitoring - Fixed asyncio handling"""
+    def _sync_question_monitoring(self):
+        """Synchronous question monitoring wrapper"""
         try:
-            def async_wrapper():
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(self._async_question_monitoring())
-                except Exception as e:
-                    logger.error(f"Async question monitoring error: {e}")
-                finally:
-                    try:
-                        loop.close()
-                    except:
-                        pass
-            
-            thread = threading.Thread(target=async_wrapper, daemon=True)
-            thread.start()
+            future = self.executor.submit(self._run_async_question_monitoring)
             
         except Exception as e:
-            logger.error(f"Question monitoring error: {e}")
+            logger.error(f"Sync question monitoring error: {e}")
+    
+    def _run_async_posting_check(self):
+        """CRITICAL FIX: Run async posting check in separate thread with new loop"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the async posting check
+            result = loop.run_until_complete(self._async_posting_check())
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Async posting check error: {e}")
+        finally:
+            # Always clean up the loop
+            try:
+                loop.close()
+            except:
+                pass
+    
+    def _run_async_question_monitoring(self):
+        """Run async question monitoring in separate thread"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            result = loop.run_until_complete(self._async_question_monitoring())
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Async question monitoring error: {e}")
+        finally:
+            try:
+                loop.close()
+            except:
+                pass
     
     async def setup_auto_posting(self, config: Union[AutoPostConfig, Dict]) -> Dict[str, Any]:
         """Enhanced auto-posting setup with comprehensive validation"""
@@ -238,8 +246,8 @@ class RedditAutomationScheduler:
             
             # Test AI service connection
             try:
-                if hasattr(self.ai_service, 'test_connection'):
-                    test_result = await self.ai_service.test_connection()
+                if hasattr(self.ai_service, 'test_ai_connection'):
+                    test_result = await self.ai_service.test_ai_connection()
                     ai_status = "connected" if test_result.get("success") else "failed"
                 else:
                     ai_status = "available"
@@ -247,15 +255,9 @@ class RedditAutomationScheduler:
                 logger.warning(f"AI service test failed: {e}")
                 ai_status = "failed"
             
-            # Save to database if available - Fixed method calls
+            # Save to database if available
             try:
-                if hasattr(self.database, 'store_user_automation_config'):
-                    await self.database.store_user_automation_config(
-                        config.user_id, 
-                        "auto_posting", 
-                        config_dict
-                    )
-                elif hasattr(self.database, 'store_automation_config'):
+                if hasattr(self.database, 'store_automation_config'):
                     await self.database.store_automation_config(
                         config.user_id, 
                         "auto_posting", 
@@ -282,7 +284,7 @@ class RedditAutomationScheduler:
                 },
                 "next_post_time": self._get_next_posting_time(config.posting_times),
                 "ai_service_status": ai_status,
-                "scheduler_status": "Active - REAL posting enabled",
+                "scheduler_status": "Active - DEPLOYMENT READY",
                 "persistent": True,
                 "real_posting": True
             }
@@ -329,15 +331,9 @@ class RedditAutomationScheduler:
             # Initialize reply counter
             self.reply_counters[config.user_id] = 0
             
-            # Save to database - Fixed method calls
+            # Save to database
             try:
-                if hasattr(self.database, 'store_user_automation_config'):
-                    await self.database.store_user_automation_config(
-                        config.user_id, 
-                        "auto_replies", 
-                        config_dict
-                    )
-                elif hasattr(self.database, 'store_automation_config'):
+                if hasattr(self.database, 'store_automation_config'):
                     await self.database.store_automation_config(
                         config.user_id, 
                         "auto_replies", 
@@ -442,7 +438,8 @@ class RedditAutomationScheduler:
                 },
                 "scheduler_running": self.is_running,
                 "last_updated": datetime.now().isoformat(),
-                "real_posting_enabled": True
+                "real_posting_enabled": True,
+                "deployment_ready": True
             }
             
             return status
@@ -456,7 +453,7 @@ class RedditAutomationScheduler:
             }
     
     async def _async_posting_check(self):
-        """Enhanced async posting check with minute-level precision - REAL POSTING"""
+        """CRITICAL: Enhanced async posting check - DEPLOYMENT OPTIMIZED"""
         try:
             current_time = datetime.now().strftime("%H:%M")
             current_date = datetime.now().date().isoformat()
@@ -467,80 +464,88 @@ class RedditAutomationScheduler:
                 return
             self.last_check_time = check_key
             
-            logger.info(f"Checking for scheduled posts at {current_time}")
+            logger.info(f"DEPLOYMENT: Checking for scheduled posts at {current_time}")
             
-            for user_id, config_data in self.active_configs.items():
-                auto_posting = config_data.get("auto_posting")
-                if not auto_posting or not auto_posting.get("enabled", False):
+            # Get active configs safely
+            active_configs_copy = dict(self.active_configs)
+            
+            for user_id, config_data in active_configs_copy.items():
+                try:
+                    auto_posting = config_data.get("auto_posting")
+                    if not auto_posting or not auto_posting.get("enabled", False):
+                        continue
+                    
+                    config = auto_posting.get("config")
+                    if not config:
+                        continue
+                    
+                    # Handle both dataclass and dict config
+                    if hasattr(config, 'posting_times'):
+                        posting_times = config.posting_times
+                        posts_per_day = config.posts_per_day
+                    elif isinstance(config, dict):
+                        posting_times = config.get('posting_times', [])
+                        posts_per_day = config.get('posts_per_day', 3)
+                    else:
+                        continue
+                    
+                    # Check if this is a scheduled posting time
+                    if current_time not in posting_times:
+                        continue
+                    
+                    # Check if user has Reddit tokens
+                    if user_id not in self.user_tokens:
+                        logger.warning(f"No Reddit tokens for user {user_id}")
+                        continue
+                    
+                    # Check daily posting limit
+                    daily_count = self.daily_post_counts.get(user_id, {"date": current_date, "count": 0})
+                    
+                    # Reset daily count if new day
+                    if daily_count.get("date") != current_date:
+                        daily_count = {"date": current_date, "count": 0}
+                        self.daily_post_counts[user_id] = daily_count
+                    
+                    if daily_count.get("count", 0) >= posts_per_day:
+                        logger.info(f"Daily posting limit reached for user {user_id}: {daily_count.get('count')}/{posts_per_day}")
+                        continue
+                    
+                    # Check if we already posted at this time today (prevent duplicates)
+                    last_post_key = f"{current_date}_{current_time}"
+                    if auto_posting.get("last_post_key") == last_post_key:
+                        logger.info(f"Already posted at {current_time} today for user {user_id}")
+                        continue
+                    
+                    logger.info(f"DEPLOYMENT SCHEDULED POST: {current_time} for user {user_id}")
+                    
+                    # Generate and post content - REAL POSTING
+                    success = await self._generate_and_post_content(user_id, config, current_time)
+                    
+                    if success:
+                        # Update counters and tracking
+                        daily_count["count"] += 1
+                        self.daily_post_counts[user_id] = daily_count
+                        auto_posting["last_post_key"] = last_post_key
+                        auto_posting["successful_posts"] += 1
+                        auto_posting["last_post_time"] = datetime.now().isoformat()
+                        logger.info(f"DEPLOYMENT: Automated post SUCCESS for user {user_id}")
+                    else:
+                        auto_posting["failed_posts"] += 1
+                        logger.error(f"DEPLOYMENT: Automated post FAILED for user {user_id}")
+                    
+                    auto_posting["total_posts"] += 1
+                    
+                except Exception as user_error:
+                    logger.error(f"Error processing user {user_id}: {user_error}")
                     continue
-                
-                config = auto_posting.get("config")
-                if not config:
-                    continue
-                
-                # Handle both dataclass and dict config
-                if hasattr(config, 'posting_times'):
-                    posting_times = config.posting_times
-                    posts_per_day = config.posts_per_day
-                elif isinstance(config, dict):
-                    posting_times = config.get('posting_times', [])
-                    posts_per_day = config.get('posts_per_day', 3)
-                else:
-                    continue
-                
-                # Check if this is a scheduled posting time
-                if current_time not in posting_times:
-                    continue
-                
-                # Check if user has Reddit tokens
-                if user_id not in self.user_tokens:
-                    logger.warning(f"No Reddit tokens for user {user_id}")
-                    continue
-                
-                # Check daily posting limit
-                daily_count = self.daily_post_counts.get(user_id, {"date": current_date, "count": 0})
-                
-                # Reset daily count if new day
-                if daily_count.get("date") != current_date:
-                    daily_count = {"date": current_date, "count": 0}
-                    self.daily_post_counts[user_id] = daily_count
-                
-                if daily_count.get("count", 0) >= posts_per_day:
-                    logger.info(f"Daily posting limit reached for user {user_id}: {daily_count.get('count')}/{posts_per_day}")
-                    continue
-                
-                # Check if we already posted at this time today (prevent duplicates)
-                last_post_key = f"{current_date}_{current_time}"
-                if auto_posting.get("last_post_key") == last_post_key:
-                    logger.info(f"Already posted at {current_time} today for user {user_id}")
-                    continue
-                
-                logger.info(f"SCHEDULED POST TIME: {current_time} for user {user_id}")
-                
-                # Generate and post content - REAL POSTING
-                success = await self._generate_and_post_content(user_id, config, current_time)
-                
-                if success:
-                    # Update counters and tracking
-                    daily_count["count"] += 1
-                    self.daily_post_counts[user_id] = daily_count
-                    auto_posting["last_post_key"] = last_post_key
-                    auto_posting["successful_posts"] += 1
-                    auto_posting["last_post_time"] = datetime.now().isoformat()
-                    logger.info(f"Automated post SUCCESS for user {user_id}")
-                else:
-                    auto_posting["failed_posts"] += 1
-                    logger.error(f"Automated post FAILED for user {user_id}")
-                
-                auto_posting["total_posts"] += 1
                 
         except Exception as e:
-            logger.error(f"Posting check failed: {e}")
+            logger.error(f"DEPLOYMENT: Posting check failed: {e}")
     
     async def _generate_and_post_content(self, user_id: str, config, time_slot: str) -> bool:
-        """Generate and post content using real AI and REAL Reddit posting"""
+        """Generate and post content - DEPLOYMENT OPTIMIZED"""
         try:
-            logger.info(f"Generating content for user {user_id} at {time_slot}")
+            logger.info(f"DEPLOYMENT: Generating content for user {user_id} at {time_slot}")
             
             # Extract config values safely
             if hasattr(config, 'domain'):
@@ -563,17 +568,11 @@ class RedditAutomationScheduler:
                 logger.error(f"Invalid config type for user {user_id}")
                 return False
             
-            # Generate content using AI service - Fixed method calls
+            # Generate content using AI service
             content_result = None
             
             # Try different AI service methods
-            if hasattr(self.ai_service, 'generate_reddit_content'):
-                content_result = await self.ai_service.generate_reddit_content(
-                    business_domain=domain,
-                    content_style=content_style,
-                    target_audience=target_audience
-                )
-            elif hasattr(self.ai_service, 'generate_reddit_domain_content'):
+            if hasattr(self.ai_service, 'generate_reddit_domain_content'):
                 content_result = await self.ai_service.generate_reddit_domain_content(
                     domain=domain,
                     business_type=business_type,
@@ -588,12 +587,12 @@ class RedditAutomationScheduler:
                 content_result = {
                     "success": True,
                     "title": f"Automated post about {domain} - {time_slot}",
-                    "content": f"Generated content for {business_type} targeting {target_audience}. This is an automated post scheduled for {time_slot}.",
+                    "content": f"hey everyone, been working in {domain} and wanted to share some thoughts. this is scheduled for {time_slot} and wondering what others think about this space",
                     "ai_service": "fallback"
                 }
             
             if not content_result or not content_result.get("success"):
-                logger.error(f"Content generation failed for user {user_id}: {content_result.get('error') if content_result else 'No result'}")
+                logger.error(f"DEPLOYMENT: Content generation failed for user {user_id}: {content_result.get('error') if content_result else 'No result'}")
                 return False
             
             # Get generated content
@@ -601,13 +600,13 @@ class RedditAutomationScheduler:
             content = content_result.get("content") or content_result.get("body", "")
             
             if not content or len(content.strip()) < 50:
-                logger.error(f"Generated content too short for user {user_id}")
+                logger.error(f"DEPLOYMENT: Generated content too short for user {user_id}")
                 return False
             
             # Select optimal subreddit
             target_subreddit = self._select_optimal_subreddit(user_id, subreddits)
             
-            logger.info(f"POSTING TO r/{target_subreddit} for user {user_id}")
+            logger.info(f"DEPLOYMENT: POSTING TO r/{target_subreddit} for user {user_id}")
             
             # REAL REDDIT POSTING
             post_result = await self._post_to_reddit_with_retry(
@@ -631,25 +630,26 @@ class RedditAutomationScheduler:
                     "timestamp": datetime.now().isoformat(),
                     "word_count": len(content.split()),
                     "automated": True,
-                    "real_post": True
+                    "real_post": True,
+                    "deployment": True
                 })
                 
-                logger.info(f"REAL Automated post successful for user {user_id}: {post_result.get('post_url')}")
+                logger.info(f"DEPLOYMENT: REAL Automated post successful for user {user_id}: {post_result.get('post_url')}")
                 return True
             else:
                 self._log_failed_post(user_id, post_result.get("error", "Unknown error"))
-                logger.error(f"Automated post failed for user {user_id}: {post_result.get('error')}")
+                logger.error(f"DEPLOYMENT: Automated post failed for user {user_id}: {post_result.get('error')}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Generate and post failed for user {user_id}: {e}")
+            logger.error(f"DEPLOYMENT: Generate and post failed for user {user_id}: {e}")
             self._log_failed_post(user_id, str(e))
             return False
     
     async def _post_to_reddit_with_retry(self, user_id: str, subreddit: str, title: str, content: str, max_retries: int = 3) -> Dict[str, Any]:
-        """Post to Reddit with retry mechanism - REAL POSTING ENABLED"""
+        """Post to Reddit with retry mechanism - DEPLOYMENT OPTIMIZED"""
         
-        logger.info(f"REAL REDDIT POSTING - User: {user_id}, Subreddit: r/{subreddit}")
+        logger.info(f"DEPLOYMENT: REAL REDDIT POSTING - User: {user_id}, Subreddit: r/{subreddit}")
         
         for attempt in range(max_retries):
             try:
@@ -659,7 +659,7 @@ class RedditAutomationScheduler:
                 access_token = self.user_tokens[user_id]["access_token"]
                 reddit_username = self.user_tokens[user_id].get("reddit_username", "Unknown")
                 
-                logger.info(f"Attempt {attempt + 1}: Posting as {reddit_username} to r/{subreddit}")
+                logger.info(f"DEPLOYMENT: Attempt {attempt + 1}: Posting as {reddit_username} to r/{subreddit}")
                 
                 # Use real Reddit API through oauth connector
                 if hasattr(self.reddit_oauth, 'post_content_with_token'):
@@ -667,22 +667,23 @@ class RedditAutomationScheduler:
                         access_token=access_token,
                         subreddit_name=subreddit,
                         title=title,
-                        content=content
+                        content=content,
+                        content_type="text"
                     )
                     
                     if result.get("success"):
-                        logger.info(f"REAL POST SUCCESS: {result.get('post_url')}")
+                        logger.info(f"DEPLOYMENT: REAL POST SUCCESS: {result.get('post_url')}")
                         return result
                     else:
-                        logger.warning(f"Post attempt {attempt + 1} failed: {result.get('error')}")
+                        logger.warning(f"DEPLOYMENT: Post attempt {attempt + 1} failed: {result.get('error')}")
                         if attempt == max_retries - 1:
                             return result
                 else:
-                    logger.error("Reddit OAuth connector missing post_content_with_token method")
+                    logger.error("DEPLOYMENT: Reddit OAuth connector missing post_content_with_token method")
                     return {"success": False, "error": "Reddit posting method not available"}
                         
             except Exception as e:
-                logger.error(f"Post attempt {attempt + 1} error: {e}")
+                logger.error(f"DEPLOYMENT: Post attempt {attempt + 1} error: {e}")
                 if attempt == max_retries - 1:
                     return {"success": False, "error": str(e)}
                 
@@ -701,9 +702,7 @@ class RedditAutomationScheduler:
             ultra_safe_subreddits = []
             
             for sub in subreddits:
-                if sub.lower() in ['test', 'casualconversation', 'self', 'blog', 'misc', 
-                                 'indianstudents', 'india', 'developersIndia', 'food', 
-                                 'cooking', 'fitness', 'entrepreneur']:
+                if sub.lower() in ['test', 'casualconversation', 'self', 'blog', 'misc']:
                     ultra_safe_subreddits.append(sub)
             
             if not ultra_safe_subreddits:
