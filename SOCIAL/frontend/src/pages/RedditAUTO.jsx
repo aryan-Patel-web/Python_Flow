@@ -475,18 +475,37 @@ useEffect(() => {
     }
   }, [userProfile, redditConnected, autoPostConfig, makeAuthenticatedRequest, redditUsername, showNotification]);
 
-  const addTestTime = () => {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() + 2);
-    const testTime = now.toTimeString().slice(0, 5);
-    if (!autoPostConfig.postingTimes.includes(testTime)) {
+
+
+
+
+
+
+const addTestTime = async () => {
+  try {
+    const response = await makeAuthenticatedRequest('/api/debug/add-test-time', {
+      method: 'POST'
+    });
+    const result = await response.json();
+    
+    if (result.success) {
       setAutoPostConfig(prev => ({
         ...prev,
-        postingTimes: [...prev.postingTimes, testTime].sort()
+        postingTimes: result.all_times || [...prev.postingTimes, result.test_time].sort()
       }));
-      showNotification('Test time added (+2 minutes)', 'info');
+      showNotification(result.message || 'Test time added (+2 minutes)', 'success');
+    } else {
+      showNotification(result.error || 'Failed to add test time', 'error');
     }
-  };
+  } catch (error) {
+    showNotification('Failed to add test time: ' + error.message, 'error');
+  }
+};
+
+
+
+
+
 
   return (
     <div style={{ 

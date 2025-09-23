@@ -2282,6 +2282,99 @@ async def get_user_analytics(
         logger.error(f"Get user analytics failed: {e}")
         return {"success": False, "error": str(e)}
 
+
+
+
+
+
+
+
+@app.get("/api/debug/current-schedule")
+async def debug_current_schedule(current_user: dict = Depends(get_current_user)):
+    """Debug current automation schedule"""
+    try:
+        user_id = current_user["id"]
+        
+        # Get current time info
+        now = datetime.now()
+        current_time_str = now.strftime("%H:%M")
+        
+        # Get user's automation config
+        user_config = automation_configs.get(user_id, {})
+        auto_posting_config = user_config.get("auto_posting", {})
+        
+        if automation_scheduler and hasattr(automation_scheduler, 'active_configs'):
+            scheduler_config = automation_scheduler.active_configs.get(user_id)
+        else:
+            scheduler_config = None
+        
+        return {
+            "success": True,
+            "debug_info": {
+                "current_time": current_time_str,
+                "current_datetime": now.isoformat(),
+                "user_id": user_id,
+                "automation_config_exists": bool(auto_posting_config),
+                "automation_config": auto_posting_config.get("config") if auto_posting_config else None,
+                "scheduler_config_exists": bool(scheduler_config),
+                "scheduler_config": scheduler_config.__dict__ if scheduler_config else None,
+                "configured_posting_times": auto_posting_config.get("config", {}).get("posting_times", []) if auto_posting_config else [],
+                "next_5_minutes": [
+                    (now + timedelta(minutes=i)).strftime("%H:%M") 
+                    for i in range(5)
+                ]
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+
+@app.post("/api/debug/add-test-time")
+async def add_test_time(current_user: dict = Depends(get_current_user)):
+    """Add a test posting time 2 minutes from now"""
+    try:
+        user_id = current_user["id"]
+        
+        # Calculate time 2 minutes from now
+        test_time = (datetime.now() + timedelta(minutes=2)).strftime("%H:%M")
+        
+        # Update automation config
+        if user_id in automation_configs and "auto_posting" in automation_configs[user_id]:
+            current_times = automation_configs[user_id]["auto_posting"]["config"].get("posting_times", [])
+            if test_time not in current_times:
+                current_times.append(test_time)
+                automation_configs[user_id]["auto_posting"]["config"]["posting_times"] = current_times
+                
+                # Update scheduler if available
+                if automation_scheduler and hasattr(automation_scheduler, 'active_configs'):
+                    if user_id in automation_scheduler.active_configs:
+                        automation_scheduler.active_configs[user_id].posting_times = current_times
+                
+                logger.info(f"Added test posting time {test_time} for user {user_id}")
+                
+                return {
+                    "success": True,
+                    "message": f"Test posting time added: {test_time}",
+                    "test_time": test_time,
+                    "all_times": current_times,
+                    "note": "Post should trigger in ~2 minutes"
+                }
+        
+        return {
+            "success": False,
+            "error": "No automation config found",
+            "user_id": user_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Add test time failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+
+
 # Debug endpoints (for development and troubleshooting)
 @app.get("/api/debug/multi-user-sessions")
 async def debug_multi_user_sessions():
