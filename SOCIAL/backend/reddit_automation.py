@@ -837,25 +837,47 @@ class RedditAutomationScheduler:
             return "No times scheduled"
         
         try:
+            now = datetime.now()
             current_time = datetime.now().time()
+            
+            # current_date = datetime.now().date()
             
             # Sort posting times and find next one today
             sorted_times = sorted(posting_times)
+
+            logger.info(f"DEBUG _get_next_posting_time: Current time: {current_time.strftime('%H:%M')}")
+            logger.info(f"DEBUG _get_next_posting_time: Sorted times: {sorted_times}")
             
             for time_str in sorted_times:
                 try:
                     post_time = datetime.strptime(time_str, "%H:%M").time()
+
+                    logger.info(f"DEBUG _get_next_posting_time: Comparing {post_time.strftime('%H:%M')} > {current_time.strftime('%H:%M')}")
+
                     if post_time > current_time:
+
+                        logger.info(f"DEBUG _get_next_posting_time: Found next time today: {time_str}")
+
                         return f"Today at {time_str}"
+                    
                 except ValueError:
+                    logger.warning(f"Invalid time format: {time_str} - {e}")
                     continue
             
             # If no time today, return first time tomorrow
-            return f"Tomorrow at {sorted_times[0]}"
+            # next_time = sorted_times[0] if sorted_times else "Unknown"
+            if sorted_times:
+               next_time = sorted_times[0]
+               logger.info(f"DEBUG _get_next_posting_time: No more times today, next tomorrow: {next_time}")
+               return f"Tomorrow at {next_time}"
+
+            return "No valid times found"
             
         except Exception as e:
             logger.warning(f"Next posting time calculation failed: {e}")
             return "Unknown"
+        
+        
     
     def _get_default_subreddits(self, domain: str) -> List[str]:
         """Get default subreddits - ULTRA-SAFE SUBREDDITS ONLY"""

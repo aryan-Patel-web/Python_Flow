@@ -2774,6 +2774,35 @@ async def trigger_immediate_post(current_user: dict = Depends(get_current_user))
         logger.error(f"Immediate post trigger failed: {e}")
         return {"success": False, "error": str(e)}
 
+@app.get("/api/debug/next-posting-debug")
+async def debug_next_posting(current_user: dict = Depends(get_current_user)):
+    """Debug next posting time calculation"""
+    try:
+        user_id = current_user["id"]
+        current_time = datetime.now().strftime("%H:%M")
+        
+        # Check scheduler config
+        scheduler_times = []
+        if automation_scheduler and hasattr(automation_scheduler, 'active_configs'):
+            if user_id in automation_scheduler.active_configs:
+                config = automation_scheduler.active_configs[user_id]["auto_posting"]["config"]
+                scheduler_times = getattr(config, 'posting_times', [])
+        
+        # Check memory config
+        memory_times = []
+        if user_id in automation_configs:
+            memory_times = automation_configs[user_id].get("auto_posting", {}).get("config", {}).get("posting_times", [])
+        
+        return {
+            "success": True,
+            "current_time": current_time,
+            "scheduler_times": scheduler_times,
+            "memory_times": memory_times,
+            "next_posting_calculation": automation_scheduler._get_next_posting_time(scheduler_times) if automation_scheduler else "No scheduler"
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 # Application startup
