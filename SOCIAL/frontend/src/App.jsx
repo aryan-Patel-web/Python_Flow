@@ -52,16 +52,12 @@ const YouTubeAutomation = lazy(() =>
   }))
 );
 
-
-
-
-// YouTube Route Wrapper to handle OAuth callbacks properly
-// Replace your existing YouTubeRouteWrapper with this:
+// FIXED YouTube Route Wrapper - handles OAuth success/error and normal visits
 const YouTubeRouteWrapper = () => {
   const location = useLocation();
   const { isAuthenticated } = useAuth();
   
-  // Check for success parameters from backend redirect
+  // Parse URL parameters
   const urlParams = new URLSearchParams(location.search);
   const youtubeConnected = urlParams.get('youtube_connected');
   const channelName = urlParams.get('channel');
@@ -75,23 +71,130 @@ const YouTubeRouteWrapper = () => {
     isAuthenticated
   });
   
-  // Handle success message
-  React.useEffect(() => {
-    if (youtubeConnected === 'true' && channelName) {
-      console.log('YouTube connection successful:', channelName);
-      // You can add a success notification here if you have a notification system
-    }
-    
-    if (errorParam) {
-      console.error('YouTube OAuth error:', errorParam);
-      // You can add an error notification here
-    }
-  }, [youtubeConnected, channelName, errorParam]);
+  // Show success page for OAuth callback
+  if (youtubeConnected === 'true') {
+    return (
+      <div style={{ 
+        minHeight: '100vh', 
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'white',
+        textAlign: 'center',
+        padding: '20px'
+      }}>
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.1)',
+          backdropFilter: 'blur(10px)',
+          borderRadius: '20px',
+          padding: '40px',
+          maxWidth: '500px',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '20px' }}>✅</div>
+          <h1 style={{ fontSize: '28px', marginBottom: '16px', fontWeight: '700' }}>YouTube Connected Successfully!</h1>
+          <p style={{ fontSize: '18px', marginBottom: '20px', opacity: 0.9 }}>
+            Channel: {decodeURIComponent(channelName || 'Unknown Channel')}
+          </p>
+          <p style={{ fontSize: '14px', opacity: 0.7, marginBottom: '30px' }}>
+            You can now set up YouTube automation and upload videos.
+          </p>
+          <button 
+            onClick={() => {
+              // Clear URL parameters and show normal YouTube dashboard
+              window.history.replaceState({}, '', '/youtube');
+              window.location.reload();
+            }}
+            style={{
+              padding: '12px 24px',
+              background: 'white',
+              color: '#667eea',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '16px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)'
+            }}
+          >
+            Continue to YouTube Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
   
-  // Always require authentication for YouTube page
+  // Show error page for OAuth failure
+  if (errorParam) {
+    return (
+      <div style={{ 
+        minHeight: '100vh', 
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'white',
+        textAlign: 'center',
+        padding: '20px'
+      }}>
+        <div style={{
+          background: 'rgba(255, 0, 0, 0.1)',
+          borderRadius: '20px',
+          padding: '40px',
+          maxWidth: '500px',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '20px' }}>❌</div>
+          <h1 style={{ fontSize: '28px', marginBottom: '16px', fontWeight: '700' }}>YouTube Connection Failed</h1>
+          <p style={{ fontSize: '18px', marginBottom: '20px', opacity: 0.9 }}>
+            Error: {decodeURIComponent(errorParam)}
+          </p>
+          <button 
+            onClick={() => {
+              // Clear URL parameters and try again
+              window.history.replaceState({}, '', '/youtube');
+              window.location.reload();
+            }}
+            style={{
+              padding: '12px 24px',
+              background: 'white',
+              color: '#667eea',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '16px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)'
+            }}
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+  
+  // For normal visits, require authentication and show YouTube component
   return (
     <ProtectedRoute>
-      <YouTubeAutomation />
+      <Suspense fallback={
+        <div style={{ 
+          minHeight: '100vh', 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          color: 'white'
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ width: '40px', height: '40px', border: '4px solid #f3f3f3', borderTop: '4px solid #667eea', borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite' }}></div>
+            <div style={{ fontSize: '18px', fontWeight: '600' }}>Loading YouTube Dashboard...</div>
+          </div>
+        </div>
+      }>
+        <YouTubeAutomation />
+      </Suspense>
     </ProtectedRoute>
   );
 };
