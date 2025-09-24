@@ -52,28 +52,43 @@ const YouTubeAutomation = lazy(() =>
   }))
 );
 
+
+
+
 // YouTube Route Wrapper to handle OAuth callbacks properly
+// Replace your existing YouTubeRouteWrapper with this:
 const YouTubeRouteWrapper = () => {
   const location = useLocation();
   const { isAuthenticated } = useAuth();
   
-  // Check if this is an OAuth callback
-  const isOAuthCallback = location.search.includes('code=') && 
-                          location.search.includes('state=youtube_oauth');
+  // Check for success parameters from backend redirect
+  const urlParams = new URLSearchParams(location.search);
+  const youtubeConnected = urlParams.get('youtube_connected');
+  const channelName = urlParams.get('channel');
+  const errorParam = urlParams.get('error');
   
   console.log('YouTube Route Wrapper:', {
-    isOAuthCallback,
+    youtubeConnected,
+    channelName,
+    errorParam,
     search: location.search,
     isAuthenticated
   });
   
-  // If it's an OAuth callback, render YouTube component directly
-  // (user must be logged in to have initiated OAuth)
-  if (isOAuthCallback) {
-    return <YouTubeAutomation />;
-  }
+  // Handle success message
+  React.useEffect(() => {
+    if (youtubeConnected === 'true' && channelName) {
+      console.log('YouTube connection successful:', channelName);
+      // You can add a success notification here if you have a notification system
+    }
+    
+    if (errorParam) {
+      console.error('YouTube OAuth error:', errorParam);
+      // You can add an error notification here
+    }
+  }, [youtubeConnected, channelName, errorParam]);
   
-  // For normal visits, require authentication
+  // Always require authentication for YouTube page
   return (
     <ProtectedRoute>
       <YouTubeAutomation />
