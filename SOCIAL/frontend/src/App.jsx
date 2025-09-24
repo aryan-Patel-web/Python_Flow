@@ -52,6 +52,12 @@ const YouTubeAutomation = lazy(() =>
   }))
 );
 
+
+
+
+
+
+// FIXED YouTube Route Wrapper - handles OAuth success/error and normal visits
 // FIXED YouTube Route Wrapper - handles OAuth success/error and normal visits
 const YouTubeRouteWrapper = () => {
   const location = useLocation();
@@ -102,7 +108,6 @@ const YouTubeRouteWrapper = () => {
           </p>
           <button 
             onClick={() => {
-              // Clear URL parameters and show normal YouTube dashboard
               window.history.replaceState({}, '', '/youtube');
               window.location.reload();
             }}
@@ -152,7 +157,6 @@ const YouTubeRouteWrapper = () => {
           </p>
           <button 
             onClick={() => {
-              // Clear URL parameters and try again
               window.history.replaceState({}, '', '/youtube');
               window.location.reload();
             }}
@@ -188,7 +192,6 @@ const YouTubeRouteWrapper = () => {
           color: 'white'
         }}>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ width: '40px', height: '40px', border: '4px solid #f3f3f3', borderTop: '4px solid #667eea', borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite' }}></div>
             <div style={{ fontSize: '18px', fontWeight: '600' }}>Loading YouTube Dashboard...</div>
           </div>
         </div>
@@ -199,6 +202,15 @@ const YouTubeRouteWrapper = () => {
   );
 };
 
+
+
+
+
+
+
+
+
+
 const LoadingSpinner = () => (
   <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
     <div style={{ textAlign: 'center', color: 'white' }}>
@@ -208,6 +220,8 @@ const LoadingSpinner = () => (
     </div>
   </div>
 );
+
+
 
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
