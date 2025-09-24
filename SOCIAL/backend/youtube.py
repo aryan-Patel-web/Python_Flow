@@ -756,7 +756,7 @@ class YouTubeAutomationScheduler:
     async def _download_video_temporarily(self, video_url: str) -> Optional[str]:
         """Download video to temporary file for uploading"""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0,follow_redirects=True) as client:
                 response = await client.get(video_url)
                 
                 if response.status_code == 200:
@@ -771,6 +771,9 @@ class YouTubeAutomationScheduler:
                     
                     logger.info(f"Video downloaded temporarily: {temp_file.name}")
                     return temp_file.name
+                else:
+                    logger.error(f"Download failed with status: {response.status_code}")
+
                     
         except Exception as e:
             logger.error(f"Video download failed: {e}")
