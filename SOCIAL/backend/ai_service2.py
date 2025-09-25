@@ -165,6 +165,142 @@ class AIService2:
             logger.error(f"YouTube content generation failed: {e}")
             return {"success": False, "error": str(e)}
     
+    # ➜ NEW METHOD: Community Post Generation
+    async def generate_community_post(
+        self,
+        post_type: str = "text",
+        topic: str = "general",
+        target_audience: str = "general"
+    ) -> Dict[str, Any]:
+        """Generate community post content"""
+        try:
+            if self.is_mock:
+                return self._generate_mock_community_post(post_type, topic, target_audience)
+            
+            prompt = f"""Create a {post_type} community post about {topic} for {target_audience}.
+            
+            Requirements:
+            - Engaging and relevant to {target_audience}
+            - Include emojis and call-to-action
+            - For polls/quizzes: provide 4 options
+            - Keep content under 300 characters for posts
+            
+            Topic: {topic}
+            Post Type: {post_type}
+            Target Audience: {target_audience}
+            
+            Format response as:
+            CONTENT: [main post content]
+            OPTION1: [first option if poll/quiz]
+            OPTION2: [second option if poll/quiz]
+            OPTION3: [third option if poll/quiz]
+            OPTION4: [fourth option if poll/quiz]
+            """
+            
+            result = await self._generate_with_primary_service(prompt)
+            
+            if result.get("success"):
+                content = result.get("content", "")
+                parsed = self._parse_community_post_content(content, post_type)
+                
+                return {
+                    "success": True,
+                    "content": parsed.get("content"),
+                    "options": parsed.get("options", []),
+                    "post_type": post_type,
+                    "ai_service": self.primary_service
+                }
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Community post generation failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _parse_community_post_content(self, content: str, post_type: str) -> Dict[str, Any]:
+        """Parse AI-generated community post content"""
+        try:
+            lines = content.strip().split('\n')
+            result = {
+                "content": "",
+                "options": []
+            }
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith('CONTENT:'):
+                    result['content'] = line[8:].strip()
+                elif line.startswith('OPTION1:'):
+                    result['options'].append(line[8:].strip())
+                elif line.startswith('OPTION2:'):
+                    result['options'].append(line[8:].strip())
+                elif line.startswith('OPTION3:'):
+                    result['options'].append(line[8:].strip())
+                elif line.startswith('OPTION4:'):
+                    result['options'].append(line[8:].strip())
+            
+            # Fallback if structured format not found
+            if not result['content']:
+                result['content'] = content.strip()
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Community post parsing failed: {e}")
+            return {
+                "content": content.strip() if content else "AI generated community post",
+                "options": []
+            }
+    
+    def _generate_mock_community_post(self, post_type: str, topic: str, target_audience: str) -> Dict[str, Any]:
+        """Generate mock community post content"""
+        mock_templates = {
+            "text": f"Just discovered something amazing about {topic}! 🚀\n\nWhat's your experience with {topic}? Share below! 👇",
+            "text_poll": {
+                "content": f"Quick question for our {target_audience} community! 🤔\n\nWhat's your biggest {topic} challenge?",
+                "options": [
+                    f"Getting started with {topic}",
+                    f"Advanced {topic} techniques",
+                    f"Finding the right {topic} tools",
+                    f"Staying updated with {topic} trends"
+                ]
+            },
+            "image_poll": {
+                "content": f"Visual poll time! 📊\n\nWhich {topic} approach works best for you?",
+                "options": [
+                    f"Traditional {topic} methods",
+                    f"Modern {topic} approaches",
+                    f"Hybrid {topic} strategies",
+                    f"Innovative {topic} solutions"
+                ]
+            },
+            "quiz": {
+                "content": f"Test your {topic} knowledge! 🧠\n\nWhat's the most important factor for {topic} success?",
+                "options": [
+                    "Consistent practice and learning",
+                    "Having the right tools and resources",
+                    "Understanding your target audience", 
+                    "Staying updated with latest trends"
+                ]
+            }
+        }
+        
+        if post_type in ['text_poll', 'image_poll', 'quiz']:
+            template = mock_templates.get(post_type, mock_templates['quiz'])
+            return {
+                "success": True,
+                "content": template["content"],
+                "options": template["options"],
+                "ai_service": "mock"
+            }
+        else:
+            return {
+                "success": True,
+                "content": mock_templates["text"],
+                "options": [],
+                "ai_service": "mock"
+            }
+    
     async def generate_whatsapp_content(
         self,
         message_type: str = "promotional",

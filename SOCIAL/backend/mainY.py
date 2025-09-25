@@ -198,6 +198,39 @@ class BroadcastRequest(BaseModel):
     media_url: str = None
     media_type: str = None
 
+
+
+
+# from typing import Dict, List, Optional, Any
+
+# ➜ ADD THIS ENUM FIRST
+class PostType(str, Enum):
+    text = "text"
+    image = "image"
+    video = "video"
+    text_poll = "text_poll"
+    image_poll = "image_poll"
+    quiz = "quiz"
+
+# ➜ ADD THESE NEW PYDANTIC MODELS AFTER YOUR EXISTING MODELS
+class CommunityPostRequest(BaseModel):
+    user_id: str
+    post_type: PostType = PostType.text
+    content: str
+    image_url: Optional[str] = None
+    options: List[str] = []
+    correct_answer: Optional[int] = None
+    schedule_date: Optional[str] = None
+    schedule_time: Optional[str] = None
+
+class AIPostGenerationRequest(BaseModel):
+    post_type: PostType = PostType.text
+    topic: str = "general"
+    target_audience: str = "general"
+    style: str = "engaging"
+
+
+
 # FIXED AI Service initialization function
 def initialize_ai_service():
     """Initialize AI service with proper error handling"""
@@ -1383,6 +1416,182 @@ async def general_exception_handler(request: Request, exc: Exception):
             "timestamp": datetime.now().isoformat()
         }
     )
+
+
+
+
+# ➜ ADD THESE ROUTES AFTER: return upload_result
+
+# YouTube Community Posts endpoints
+@app.post("/api/ai/generate-community-post")
+async def generate_community_post(request: dict):
+    """Generate community post content using AI"""
+    try:
+        logger.info(f"Generating community post: {request}")
+        
+        post_type = request.get("post_type", "text")
+        topic = request.get("topic", "general")
+        target_audience = request.get("target_audience", "general")
+        
+        # Try AI service first
+        if ai_service and hasattr(ai_service, 'generate_community_post'):
+            try:
+                result = await ai_service.generate_community_post(
+                    post_type=post_type,
+                    topic=topic,
+                    target_audience=target_audience
+                )
+                if result.get("success"):
+                    return result
+            except Exception as ai_error:
+                logger.warning(f"AI service failed: {ai_error}")
+        
+        # Enhanced fallback content
+        mock_content = {
+            "text": {
+                "content": f"Just discovered something amazing about {topic}! 🚀\n\nWhat's your experience with {topic}? Share in the comments below! 👇",
+                "options": []
+            },
+            "text_poll": {
+                "content": f"Quick question about {topic} for our {target_audience} community! 🤔\n\nWhich aspect interests you most?",
+                "options": [
+                    f"Getting started with {topic}",
+                    f"Advanced {topic} techniques", 
+                    f"Best {topic} tools",
+                    f"Future of {topic}"
+                ]
+            },
+            "image_poll": {
+                "content": f"Visual poll time! 📊\n\nWhich {topic} approach resonates with you?",
+                "options": [
+                    f"Traditional {topic} methods",
+                    f"Modern {topic} approaches",
+                    f"Hybrid {topic} strategies",
+                    f"Innovative {topic} solutions"
+                ]
+            },
+            "quiz": {
+                "content": f"Test your {topic} knowledge! 🧠\n\nWhat's the most important factor for {topic} success?",
+                "options": [
+                    "Consistent practice and patience",
+                    "Having the right tools and resources", 
+                    "Learning from experts and mentors",
+                    "Understanding your target audience"
+                ]
+            }
+        }
+        
+        template = mock_content.get(post_type, mock_content["text"])
+        
+        return {
+            "success": True,
+            "content": template["content"],
+            "options": template["options"],
+            "post_type": post_type,
+            "ai_service": "enhanced_mock"
+        }
+        
+    except Exception as e:
+        logger.error(f"Community post generation failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.post("/api/youtube/community-post")
+async def youtube_community_post(request: dict):
+    """Publish or schedule YouTube community post"""
+    try:
+        logger.info(f"YouTube community post request: {request}")
+        
+        user_id = request.get("user_id")
+        post_type = request.get("post_type", "text")
+        content = request.get("content")
+        image_url = request.get("image_url")
+        options = request.get("options", [])
+        correct_answer = request.get("correct_answer")
+        schedule_date = request.get("schedule_date")
+        schedule_time = request.get("schedule_time")
+        
+        if not user_id or not content:
+            raise HTTPException(status_code=400, detail="user_id and content are required")
+        
+        # Check YouTube connection
+        try:
+            credentials = await database_manager.get_youtube_credentials(user_id)
+            if not credentials:
+                raise HTTPException(status_code=400, detail="YouTube not connected")
+        except Exception as db_error:
+            logger.error(f"Database error: {db_error}")
+            return {"success": False, "error": "Database connection error"}
+        
+        # Prepare post data
+        post_data = {
+            "user_id": user_id,
+            "post_type": post_type,
+            "content": content,
+            "image_url": image_url,
+            "options": options,
+            "correct_answer": correct_answer,
+            "created_at": datetime.now(),
+            "status": "scheduled" if schedule_date and schedule_time else "published"
+        }
+        
+        if schedule_date and schedule_time:
+            post_data["scheduled_for"] = f"{schedule_date} {schedule_time}"
+        
+        # Try real YouTube Community Post API if available
+        if youtube_connector and hasattr(youtube_connector, 'create_community_post'):
+            try:
+                post_result = await youtube_connector.create_community_post(
+                    credentials_data=credentials,
+                    post_data=post_data
+                )
+                
+                if post_result.get("success"):
+                    # Log to database
+                    await database_manager.log_community_post(user_id, post_data)
+                    return post_result
+            except Exception as api_error:
+                logger.warning(f"YouTube API post failed: {api_error}")
+        
+        # Mock success response
+        mock_post_id = f"post_{user_id}_{int(datetime.now().timestamp())}"
+        mock_response = {
+            "success": True,
+            "message": f"Community post {'scheduled' if schedule_date else 'published'} successfully!",
+            "post_details": {
+                "post_id": mock_post_id,
+                "post_type": post_type,
+                "content": content[:100] + "..." if len(content) > 100 else content,
+                "status": post_data["status"],
+                "visibility": "public",
+                "scheduled_for": post_data.get("scheduled_for"),
+                "options_count": len(options) if options else 0
+            },
+            "mock_mode": True,
+            "note": "This is a mock response. Real community posts require YouTube API integration."
+        }
+        
+        # Log to database
+        try:
+            await database_manager.log_community_post(user_id, post_data)
+        except Exception as log_error:
+            logger.warning(f"Failed to log community post: {log_error}")
+        
+        return mock_response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Community post failed: {e}")
+        return {"success": False, "error": str(e)}
+
+# ➜ YOUR EXISTING CODE CONTINUES HERE
+
+
+
+
 
 # Main application runner
 if __name__ == "__main__":

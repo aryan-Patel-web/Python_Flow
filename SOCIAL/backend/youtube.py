@@ -530,6 +530,10 @@ class YouTubeOAuthConnector:
             return file_size < 50 * 1024 * 1024  # Less than 50MB
         except:
             return False
+        
+
+
+
     
     async def get_channel_analytics(self, credentials_data: Dict, days: int = 30) -> Dict[str, Any]:
         """Get YouTube channel analytics"""
@@ -598,6 +602,87 @@ class YouTubeOAuthConnector:
         except Exception as e:
             logger.error(f"YouTube analytics failed: {e}")
             return {"success": False, "error": str(e)}
+        
+
+
+        # ➜ ADD THIS METHOD AFTER: return {"success": False, "error": str(e)}
+
+    async def create_community_post(
+        self,
+        credentials_data: Dict,
+        post_data: Dict
+    ) -> Dict[str, Any]:
+        """Create YouTube community post"""
+        try:
+            logger.info(f"Creating community post: {post_data.get('post_type', 'text')}")
+            
+            credentials = Credentials(
+                token=credentials_data.get('access_token'),
+                refresh_token=credentials_data.get('refresh_token'),
+                token_uri=credentials_data.get('token_uri'),
+                client_id=credentials_data.get('client_id'),
+                client_secret=credentials_data.get('client_secret'),
+                scopes=credentials_data.get('scopes')
+            )
+            
+            if credentials.expired:
+                credentials.refresh(Request())
+            
+            youtube = build('youtube', 'v3', credentials=credentials)
+            
+            # Prepare community post body
+            body = {
+                'snippet': {
+                    'text': post_data.get('content', '')
+                }
+            }
+            
+            # Add poll/quiz data if present
+            if post_data.get('options') and len(post_data['options']) >= 2:
+                if post_data.get('post_type') == 'quiz':
+                    body['snippet']['poll'] = {
+                        'question': post_data.get('content', ''),
+                        'choices': [{'text': opt} for opt in post_data['options'][:4]],
+                        'correctAnswer': int(post_data.get('correct_answer', 0))
+                    }
+                else:
+                    body['snippet']['poll'] = {
+                        'question': post_data.get('content', ''),
+                        'choices': [{'text': opt} for opt in post_data['options'][:4]]
+                    }
+            
+            # Add image if present
+            if post_data.get('image_url'):
+                body['snippet']['images'] = [{
+                    'url': post_data['image_url']
+                }]
+            
+            # Create the community post
+            response = youtube.communityPosts().insert(
+                part='snippet',
+                body=body
+            ).execute()
+            
+            if response.get('id'):
+                return {
+                    "success": True,
+                    "post_id": response['id'],
+                    "post_url": f"https://www.youtube.com/post/{response['id']}",
+                    "status": "published"
+                }
+            else:
+                return {"success": False, "error": "Post creation failed"}
+                
+        except Exception as e:
+            logger.error(f"Community post creation failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    # ➜ YOUR EXISTING METHODS CONTINUE HERE
+        
+
+
+
+
 
 class YouTubeAutomationScheduler:
     """YouTube content automation scheduler"""

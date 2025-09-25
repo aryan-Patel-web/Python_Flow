@@ -111,6 +111,19 @@ const YouTubeAutomation = () => {
     }
   }, [token, contentData, API_BASE]);
 
+
+
+
+
+
+
+
+
+
+
+
+
+
   const uploadVideo = useCallback(async () => {
     if (!token) {
       setError('Authentication required');
@@ -171,6 +184,135 @@ const YouTubeAutomation = () => {
       setLoading(false);
     }
   }, [token, contentData, getUserData, API_BASE]);
+
+
+
+
+// Add these functions before your return statement
+
+  const generateCommunityPost = useCallback(async () => {
+    if (!token) {
+      setError('Authentication required');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    
+    try {
+      const response = await fetch(`${API_BASE}/api/ai/generate-community-post`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          post_type: contentData.post_type || 'text',
+          topic: contentData.topic || 'general',
+          target_audience: contentData.target_audience || 'general'
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        setContentData(prev => ({
+          ...prev,
+          post_content: result.content || result.post_content || '',
+          option_0: result.options?.[0] || '',
+          option_1: result.options?.[1] || '',
+          option_2: result.options?.[2] || '',
+          option_3: result.options?.[3] || ''
+        }));
+        setError('');
+      } else {
+        setError(result.error || 'Failed to generate post');
+      }
+    } catch (error) {
+      setError('Post generation failed: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, contentData.post_type, contentData.topic, contentData.target_audience, API_BASE]);
+
+  const publishCommunityPost = useCallback(async () => {
+    if (!token) {
+      setError('Authentication required');
+      return;
+    }
+
+    if (!contentData.post_content) {
+      setError('Please enter post content');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    
+    try {
+      const userData = getUserData();
+      
+      if (!userData?.user_id) {
+        setError('User ID not found. Please log in again.');
+        return;
+      }
+      
+      const postData = {
+        user_id: userData.user_id,
+        post_type: contentData.post_type || 'text',
+        content: contentData.post_content,
+        image_url: contentData.image_url || null,
+        options: [
+          contentData.option_0 || null,
+          contentData.option_1 || null,
+          contentData.option_2 || null,
+          contentData.option_3 || null
+        ].filter(Boolean),
+        correct_answer: contentData.correct_answer || null,
+        schedule_date: contentData.auto_schedule ? contentData.schedule_date : null,
+        schedule_time: contentData.auto_schedule ? contentData.schedule_time : null
+      };
+      
+      const response = await fetch(`${API_BASE}/api/youtube/community-post`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-User-ID': userData.user_id
+        },
+        body: JSON.stringify(postData)
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        alert(`Community post ${contentData.auto_schedule ? 'scheduled' : 'published'} successfully!`);
+        setContentData(prev => ({ 
+          ...prev, 
+          post_content: '',
+          image_url: '',
+          option_0: '',
+          option_1: '',
+          option_2: '',
+          option_3: '',
+          auto_schedule: false,
+          schedule_date: '',
+          schedule_time: ''
+        }));
+        setError('');
+      } else {
+        setError(result.error || 'Failed to publish post');
+      }
+    } catch (error) {
+      setError('Publishing failed: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, contentData, getUserData, API_BASE]);
+
+
+
+
 
   const fetchAnalytics = useCallback(async () => {
     if (!token) return;
@@ -1396,6 +1538,285 @@ useEffect(() => {
                 >
                   {loading ? 'Uploading...' : 'Upload to YouTube'}
                 </button>
+
+
+
+                                <button 
+                  onClick={uploadVideo}
+                  disabled={loading || !contentData.title || !contentData.video_url}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    background: loading || !contentData.title || !contentData.video_url ? '#ccc' : '#FF0000',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: loading || !contentData.title || !contentData.video_url ? 'not-allowed' : 'pointer',
+                    transition: 'background 0.3s ease'
+                  }}
+                >
+                  {loading ? 'Uploading...' : 'Upload to YouTube'}
+                </button>
+
+                {/* ADD THE COMMUNITY POSTS SECTION HERE - AFTER UPLOAD BUTTON */}
+                
+                <div style={{ 
+                  marginTop: '40px', 
+                  paddingTop: '30px', 
+                  borderTop: '2px solid #f0f0f0' 
+                }}>
+                  <h3 style={{ color: '#333', marginBottom: '20px' }}>📱 Community Posts</h3>
+                  
+                  <div style={{ marginBottom: '20px' }}>
+                    <label style={{ 
+                      display: 'block', 
+                      marginBottom: '8px', 
+                      fontWeight: '600', 
+                      color: '#333' 
+                    }}>
+                      Post Type
+                    </label>
+                    <select 
+                      value={contentData.post_type || 'text'} 
+                      onChange={(e) => setContentData(prev => ({...prev, post_type: e.target.value}))}
+                      style={{ 
+                        width: '100%', 
+                        padding: '12px', 
+                        borderRadius: '8px', 
+                        border: '2px solid #ddd', 
+                        fontSize: '14px', 
+                        marginBottom: '16px' 
+                      }}
+                    >
+                      <option value="text">📝 Text Post</option>
+                      <option value="image">🖼️ Image Post</option>
+                      <option value="video">🎥 Video Post</option>
+                      <option value="text_poll">📊 Text Poll</option>
+                      <option value="image_poll">🖼️📊 Image Poll</option>
+                      <option value="quiz">🎯 Quiz</option>
+                    </select>
+                    
+                    <label style={{ 
+                      display: 'block', 
+                      marginBottom: '8px', 
+                      fontWeight: '600', 
+                      color: '#333' 
+                    }}>
+                      What's on your mind?
+                    </label>
+                    <textarea 
+                      value={contentData.post_content || ''} 
+                      onChange={(e) => setContentData(prev => ({...prev, post_content: e.target.value}))}
+                      placeholder={
+                        contentData.post_type === 'quiz' ? "Enter your quiz question..." :
+                        contentData.post_type === 'text_poll' || contentData.post_type === 'image_poll' ? "Enter your poll question..." :
+                        "What's on your mind? Share your thoughts with your community..."
+                      }
+                      rows={3}
+                      style={{ 
+                        width: '100%', 
+                        padding: '12px', 
+                        borderRadius: '8px', 
+                        border: '2px solid #ddd', 
+                        fontSize: '14px', 
+                        resize: 'vertical', 
+                        marginBottom: '16px' 
+                      }}
+                    />
+
+                    {/* Image Upload for Image Posts/Polls */}
+                    {(contentData.post_type === 'image' || contentData.post_type === 'image_poll') && (
+                      <>
+                        <label style={{ 
+                          display: 'block', 
+                          marginBottom: '8px', 
+                          fontWeight: '600', 
+                          color: '#333' 
+                        }}>
+                          Image URL
+                        </label>
+                        <input 
+                          type="url" 
+                          value={contentData.image_url || ''} 
+                          onChange={(e) => setContentData(prev => ({...prev, image_url: e.target.value}))}
+                          placeholder="https://example.com/image.jpg"
+                          style={{ 
+                            width: '100%', 
+                            padding: '12px', 
+                            borderRadius: '8px', 
+                            border: '2px solid #ddd', 
+                            fontSize: '14px', 
+                            marginBottom: '16px' 
+                          }}
+                        />
+                      </>
+                    )}
+
+                    {/* Poll Options */}
+                    {(contentData.post_type === 'text_poll' || contentData.post_type === 'image_poll' || contentData.post_type === 'quiz') && (
+                      <div style={{ marginBottom: '16px' }}>
+                        <label style={{ 
+                          display: 'block', 
+                          marginBottom: '8px', 
+                          fontWeight: '600', 
+                          color: '#333' 
+                        }}>
+                          {contentData.post_type === 'quiz' ? 'Quiz Options' : 'Poll Options'}
+                        </label>
+                        {[0, 1, 2, 3].map(index => (
+                          <input 
+                            key={index}
+                            type="text" 
+                            value={contentData[`option_${index}`] || ''} 
+                            onChange={(e) => setContentData(prev => ({...prev, [`option_${index}`]: e.target.value}))}
+                            placeholder={`Option ${index + 1}${index === 0 || index === 1 ? ' (required)' : ' (optional)'}`}
+                            style={{ 
+                              width: '100%', 
+                              padding: '10px', 
+                              borderRadius: '6px', 
+                              border: '1px solid #ddd', 
+                              fontSize: '14px', 
+                              marginBottom: '8px' 
+                            }}
+                          />
+                        ))}
+                        {contentData.post_type === 'quiz' && (
+                          <>
+                            <label style={{ 
+                              display: 'block', 
+                              marginTop: '12px',
+                              marginBottom: '8px', 
+                              fontWeight: '600', 
+                              color: '#333' 
+                            }}>
+                              Correct Answer
+                            </label>
+                            <select 
+                              value={contentData.correct_answer || '0'} 
+                              onChange={(e) => setContentData(prev => ({...prev, correct_answer: e.target.value}))}
+                              style={{ 
+                                width: '100%', 
+                                padding: '10px', 
+                                borderRadius: '6px', 
+                                border: '1px solid #ddd', 
+                                fontSize: '14px' 
+                              }}
+                            >
+                              <option value="0">Option 1</option>
+                              <option value="1">Option 2</option>
+                              <option value="2">Option 3</option>
+                              <option value="3">Option 4</option>
+                            </select>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Auto-schedule Toggle */}
+                    <div style={{ 
+                      marginBottom: '20px',
+                      padding: '16px',
+                      background: '#f8f9fa',
+                      borderRadius: '8px',
+                      border: '1px solid #ddd'
+                    }}>
+                      <label style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '8px', 
+                        cursor: 'pointer',
+                        marginBottom: '12px'
+                      }}>
+                        <input 
+                          type="checkbox" 
+                          checked={contentData.auto_schedule || false} 
+                          onChange={(e) => setContentData(prev => ({...prev, auto_schedule: e.target.checked}))}
+                          style={{ width: '16px', height: '16px' }}
+                        />
+                        <span style={{ fontSize: '14px', fontWeight: '600', color: '#333' }}>
+                          🕒 Schedule for later
+                        </span>
+                      </label>
+                      
+                      {contentData.auto_schedule && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                          <input 
+                            type="date" 
+                            value={contentData.schedule_date || ''} 
+                            onChange={(e) => setContentData(prev => ({...prev, schedule_date: e.target.value}))}
+                            min={new Date().toISOString().split('T')[0]}
+                            style={{ 
+                              padding: '8px', 
+                              borderRadius: '4px', 
+                              border: '1px solid #ddd', 
+                              fontSize: '12px' 
+                            }}
+                          />
+                          <input 
+                            type="time" 
+                            value={contentData.schedule_time || ''} 
+                            onChange={(e) => setContentData(prev => ({...prev, schedule_time: e.target.value}))}
+                            style={{ 
+                              padding: '8px', 
+                              borderRadius: '4px', 
+                              border: '1px solid #ddd', 
+                              fontSize: '12px' 
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* AI Generate Post Button */}
+                    <button 
+                      onClick={generateCommunityPost}
+                      disabled={loading}
+                      style={{
+                        width: '100%',
+                        padding: '10px',
+                        background: loading ? '#ccc' : '#28a745',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        cursor: loading ? 'not-allowed' : 'pointer',
+                        marginBottom: '12px',
+                        transition: 'background 0.3s ease'
+                      }}
+                    >
+                      {loading ? '🤖 Generating...' : '🤖 AI Generate Post'}
+                    </button>
+
+                    {/* Publish Post Button */}
+                    <button 
+                      onClick={publishCommunityPost}
+                      disabled={loading || !contentData.post_content}
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        background: loading || !contentData.post_content ? '#ccc' : '#FF0000',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: '600',
+                        cursor: loading || !contentData.post_content ? 'not-allowed' : 'pointer',
+                        transition: 'background 0.3s ease'
+                      }}
+                    >
+                      {loading ? '📤 Publishing...' : 
+                       contentData.auto_schedule ? '🕒 Schedule Post' : '📤 Publish Post'}
+                    </button>
+                  </div>
+                </div>
+
+
+                
+
+
 
                 <div style={{ 
                   marginTop: '20px', 

@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any
 from motor.motor_asyncio import AsyncIOMotorClient
 import pymongo
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError, ConnectionFailure
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,79 @@ class YouTubeDatabaseManager:
         if self.client:
             self.client.close()
             logger.info("YouTube database connection closed")
+
+
+            async def log_community_post(self, user_id: str, post_data: Dict) -> bool:
+        """Log community post to database"""
+        try:
+            post_doc = {
+                "user_id": user_id,
+                "platform": "youtube",
+                "post_type": post_data.get("post_type", "text"),
+                "content": post_data.get("content", ""),
+                "image_url": post_data.get("image_url"),
+                "options": post_data.get("options", []),
+                "correct_answer": post_data.get("correct_answer"),
+                "status": post_data.get("status", "published"),
+                "scheduled_for": post_data.get("scheduled_for"),
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            }
+            
+            # Create community posts collection if not exists
+            if not hasattr(self, 'community_posts_collection'):
+                self.community_posts_collection = self.database.community_posts
+                await self.community_posts_collection.create_index("user_id")
+            
+            await self.community_posts_collection.insert_one(post_doc)
+            logger.info(f"Community post logged for user: {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to log community post: {e}")
+            return False
+
+    async def log_video_upload(self, user_id: str, video_data: Dict) -> bool:
+        """Log video upload to database"""
+        try:
+            video_doc = {
+                "user_id": user_id,
+                "platform": "youtube",
+                "video_id": video_data.get("video_id"),
+                "video_url": video_data.get("video_url"),
+                "title": video_data.get("title"),
+                "description": video_data.get("description"),
+                "tags": video_data.get("tags", []),
+                "privacy_status": video_data.get("privacy_status", "public"),
+                "content_type": video_data.get("content_type", "video"),
+                "ai_generated": video_data.get("ai_generated", False),
+                "upload_status": "completed",
+                "created_at": datetime.now(),
+                "updated_at": datetime.now()
+            }
+            
+            if not hasattr(self, 'video_uploads_collection'):
+                self.video_uploads_collection = self.database.video_uploads
+                await self.video_uploads_collection.create_index("user_id")
+            
+            await self.video_uploads_collection.insert_one(video_doc)
+            logger.info(f"Video upload logged for user: {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to log video upload: {e}")
+            return False
+
+
+
+
+
+
+
+
+
+
+
     
     # User Management
     async def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
