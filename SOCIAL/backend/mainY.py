@@ -233,7 +233,7 @@ class VideoScheduleRequest(BaseModel):
     schedule_time: str
     video_data: dict
 
-# NEW: YouTube Background Scheduler Class
+# NEW: YouTube Background Scheduler Class - FIXED DATABASE CHECKS
 class YouTubeBackgroundScheduler:
     """Background scheduler for YouTube posts"""
     
@@ -277,9 +277,10 @@ class YouTubeBackgroundScheduler:
             logger.error(f"Error processing scheduled posts: {e}")
     
     async def get_due_scheduled_posts(self, current_time):
-        """Get posts scheduled to be published now"""
+        """Get posts scheduled to be published now - FIXED DATABASE CHECK"""
         try:
-            if not self.database_manager.db:
+            # FIXED: Check database manager and database connection properly
+            if not self.database_manager or not hasattr(self.database_manager, 'db') or self.database_manager.db is None:
                 return []
             
             collection = self.database_manager.db.scheduled_posts
@@ -408,7 +409,8 @@ class YouTubeBackgroundScheduler:
     async def update_post_status(self, post_id, result):
         """Update scheduled post status after execution"""
         try:
-            if not self.database_manager.db:
+            # FIXED: Check database manager and database connection properly
+            if not self.database_manager or not hasattr(self.database_manager, 'db') or self.database_manager.db is None:
                 return
                 
             collection = self.database_manager.db.scheduled_posts
@@ -430,11 +432,12 @@ class YouTubeBackgroundScheduler:
         except Exception as e:
             logger.error(f"Error updating post status: {e}")
 
-# NEW: Helper function to store scheduled posts
+# NEW: Helper function to store scheduled posts - FIXED DATABASE CHECK
 async def store_scheduled_post(user_id: str, post_type: str, post_data: dict, scheduled_for: datetime):
     """Store a scheduled post in the database"""
     try:
-        if not database_manager.db:
+        # FIXED: Check database manager and database connection properly
+        if not database_manager or not hasattr(database_manager, 'db') or database_manager.db is None:
             return False
             
         collection = database_manager.db.scheduled_posts
@@ -456,6 +459,13 @@ async def store_scheduled_post(user_id: str, post_type: str, post_data: dict, sc
     except Exception as e:
         logger.error(f"Error storing scheduled post: {e}")
         return False
+
+# FIXED AI Service initialization function
+
+
+
+
+
 
 # FIXED AI Service initialization function
 def initialize_ai_service():
@@ -1685,12 +1695,12 @@ TIMING:
 - Execution: Immediate when time matches
 - Retry: Failed posts can be retried manually
 """
-
 @app.get("/api/youtube/scheduled-posts/{user_id}")
 async def get_scheduled_posts(user_id: str):
     """Get scheduled posts for user"""
     try:
-        if not database_manager.db:
+        # FIXED: Check database manager and database connection properly
+        if not database_manager or not hasattr(database_manager, 'db') or database_manager.db is None:
             return {"success": False, "error": "Database not available"}
         
         collection = database_manager.db.scheduled_posts
@@ -1725,7 +1735,6 @@ async def get_scheduled_posts(user_id: str):
     except Exception as e:
         logger.error(f"Get scheduled posts failed: {e}")
         return {"success": False, "error": str(e)}
-
 
 # Debug endpoint for YouTube service endpoints
 @app.get("/api/debug/youtube-endpoints")
