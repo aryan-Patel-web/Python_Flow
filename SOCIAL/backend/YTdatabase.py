@@ -94,8 +94,8 @@ class YouTubeDatabaseManager:
             self.client.close()
             logger.info("YouTube database connection closed")
 
-
-            async def log_community_post(self, user_id: str, post_data: Dict) -> bool:
+    # ➜ FIXED: Community Post Logging (properly indented)
+    async def log_community_post(self, user_id: str, post_data: Dict) -> bool:
         """Log community post to database"""
         try:
             post_doc = {
@@ -114,7 +114,7 @@ class YouTubeDatabaseManager:
             
             # Create community posts collection if not exists
             if not hasattr(self, 'community_posts_collection'):
-                self.community_posts_collection = self.database.community_posts
+                self.community_posts_collection = self.db.community_posts
                 await self.community_posts_collection.create_index("user_id")
             
             await self.community_posts_collection.insert_one(post_doc)
@@ -125,6 +125,7 @@ class YouTubeDatabaseManager:
             logger.error(f"Failed to log community post: {e}")
             return False
 
+    # ➜ FIXED: Video Upload Logging (properly indented and deduplicated)
     async def log_video_upload(self, user_id: str, video_data: Dict) -> bool:
         """Log video upload to database"""
         try:
@@ -145,7 +146,7 @@ class YouTubeDatabaseManager:
             }
             
             if not hasattr(self, 'video_uploads_collection'):
-                self.video_uploads_collection = self.database.video_uploads
+                self.video_uploads_collection = self.db.video_uploads
                 await self.video_uploads_collection.create_index("user_id")
             
             await self.video_uploads_collection.insert_one(video_doc)
@@ -155,17 +156,6 @@ class YouTubeDatabaseManager:
         except Exception as e:
             logger.error(f"Failed to log video upload: {e}")
             return False
-
-
-
-
-
-
-
-
-
-
-
     
     # User Management
     async def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -219,10 +209,6 @@ class YouTubeDatabaseManager:
         except Exception as e:
             logger.error(f"User update failed: {e}")
             return False
-    
-
-
-
 
     # YouTube Credentials Management
     async def store_youtube_credentials(
@@ -404,35 +390,6 @@ class YouTubeDatabaseManager:
             return result.modified_count > 0
         except Exception as e:
             logger.error(f"Disable automation failed: {e}")
-            return False
-    
-    # Upload History Management
-    async def log_video_upload(
-        self,
-        user_id: str,
-        video_data: Dict[str, Any]
-    ) -> bool:
-        """Log video upload to history"""
-        try:
-            upload_record = {
-                "user_id": user_id,
-                "video_id": video_data.get("video_id"),
-                "video_url": video_data.get("video_url"),
-                "title": video_data.get("title"),
-                "description": video_data.get("description"),
-                "tags": video_data.get("tags", []),
-                "privacy_status": video_data.get("privacy_status"),
-                "content_type": video_data.get("content_type", "video"),
-                "upload_date": datetime.now(),
-                "status": "uploaded",
-                "ai_generated": video_data.get("ai_generated", False)
-            }
-            
-            await self.upload_history_collection.insert_one(upload_record)
-            return True
-            
-        except Exception as e:
-            logger.error(f"Log video upload failed: {e}")
             return False
     
     async def get_upload_history(

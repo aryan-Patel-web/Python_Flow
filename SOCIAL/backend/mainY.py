@@ -76,7 +76,7 @@ except ImportError as e:
 
 # AI Service import - FIXED (removed underscore)
 try:
-    from aiservice2 import AIService2
+    from ai_service2 import AIService2
     AI_SERVICE_AVAILABLE = True
     logger.info("AI Service 2 loaded successfully")
 except ImportError as e:
