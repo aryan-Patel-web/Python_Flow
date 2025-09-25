@@ -262,6 +262,18 @@ def initialize_ai_service():
         logger.error(f"AI service initialization failed: {e}")
         ai_service = None
         return False
+    
+
+async def process_scheduled_posts():
+    """Background task to process scheduled posts"""
+    while True:
+        try:
+            # Query database for posts ready to publish
+            current_time = datetime.now()
+            # Implementation needed here
+            await asyncio.sleep(60)  # Check every minute
+        except Exception as e:
+            logger.error(f"Scheduler error: {e}")
 
 # FIXED service initialization with proper order
 async def initialize_services():
@@ -1356,6 +1368,13 @@ async def test_mongodb():
             "error": str(e),
             "type": type(e).__name__
         }
+
+
+
+@app.on_event("startup")
+async def start_scheduler():
+    asyncio.create_task(process_scheduled_posts())
+
 
 # Debug endpoint for YouTube service endpoints
 @app.get("/api/debug/youtube-endpoints")
