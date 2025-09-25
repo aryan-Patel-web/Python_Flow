@@ -29,6 +29,7 @@ import base64
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from enum import Enum
+
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
@@ -118,6 +119,7 @@ youtube_connector = None
 youtube_scheduler = None
 whatsapp_scheduler = None
 webhook_handler = None
+youtube_background_scheduler = None  # NEW: Background scheduler
 
 # Multi-user management
 user_platform_tokens = {}  # user_id -> {platform: tokens}
@@ -198,11 +200,6 @@ class BroadcastRequest(BaseModel):
     media_url: str = None
     media_type: str = None
 
-
-
-
-# from typing import Dict, List, Optional, Any
-
 # ➜ ADD THIS ENUM FIRST
 class PostType(str, Enum):
     text = "text"
@@ -229,7 +226,236 @@ class AIPostGenerationRequest(BaseModel):
     target_audience: str = "general"
     style: str = "engaging"
 
+# NEW: Scheduling classes
+class VideoScheduleRequest(BaseModel):
+    user_id: str
+    schedule_date: str
+    schedule_time: str
+    video_data: dict
 
+# NEW: YouTube Background Scheduler Class
+class YouTubeBackgroundScheduler:
+    """Background scheduler for YouTube posts"""
+    
+    def __init__(self, database_manager, youtube_scheduler):
+        self.database_manager = database_manager
+        self.youtube_scheduler = youtube_scheduler
+        self.running = False
+        self.check_interval = 60  # Check every 60 seconds
+        
+    async def start(self):
+        """Start the background scheduler"""
+        self.running = True
+        logger.info("YouTube background scheduler started")
+        
+        while self.running:
+            try:
+                await self.process_scheduled_posts()
+                await asyncio.sleep(self.check_interval)
+            except Exception as e:
+                logger.error(f"Background scheduler error: {e}")
+                await asyncio.sleep(30)  # Wait 30s on error
+    
+    async def stop(self):
+        """Stop the background scheduler"""
+        self.running = False
+        logger.info("YouTube background scheduler stopped")
+    
+    async def process_scheduled_posts(self):
+        """Process all posts scheduled for current time"""
+        try:
+            current_time = datetime.now()
+            logger.debug(f"Checking for scheduled posts at {current_time}")
+            
+            # Get all scheduled posts that are due
+            scheduled_posts = await self.get_due_scheduled_posts(current_time)
+            
+            for post in scheduled_posts:
+                await self.execute_scheduled_post(post)
+                
+        except Exception as e:
+            logger.error(f"Error processing scheduled posts: {e}")
+    
+    async def get_due_scheduled_posts(self, current_time):
+        """Get posts scheduled to be published now"""
+        try:
+            if not self.database_manager.db:
+                return []
+            
+            collection = self.database_manager.db.scheduled_posts
+            
+            # Find posts scheduled for current time (within 2 minute window)
+            time_window_start = current_time - timedelta(minutes=1)
+            time_window_end = current_time + timedelta(minutes=1)
+            
+            cursor = collection.find({
+                "status": "scheduled",
+                "scheduled_for": {
+                    "$gte": time_window_start,
+                    "$lte": time_window_end
+                }
+            })
+            
+            posts = []
+            async for post in cursor:
+                posts.append(post)
+            
+            if posts:
+                logger.info(f"Found {len(posts)} posts ready for publishing")
+            return posts
+            
+        except Exception as e:
+            logger.error(f"Error querying scheduled posts: {e}")
+            return []
+    
+    async def execute_scheduled_post(self, post):
+        """Execute a scheduled post"""
+        try:
+            post_id = post.get("_id")
+            user_id = post.get("user_id")
+            post_type = post.get("post_type", "video")
+            
+            logger.info(f"Executing scheduled {post_type} for user {user_id}")
+            
+            if post_type == "video":
+                result = await self.execute_scheduled_video(post)
+            elif post_type in ["community_post", "text", "poll", "quiz"]:
+                result = await self.execute_scheduled_community_post(post)
+            else:
+                logger.error(f"Unknown post type: {post_type}")
+                result = {"success": False, "error": f"Unknown post type: {post_type}"}
+            
+            # Update post status based on result
+            await self.update_post_status(post_id, result)
+            
+            return result.get("success", False)
+            
+        except Exception as e:
+            logger.error(f"Error executing scheduled post: {e}")
+            await self.update_post_status(post.get("_id"), {
+                "success": False, 
+                "error": str(e)
+            })
+            return False
+    
+    async def execute_scheduled_video(self, post):
+        """Execute scheduled video upload"""
+        try:
+            user_id = post.get("user_id")
+            video_data = post.get("video_data", {})
+            
+            # Get user credentials
+            credentials = await self.database_manager.get_youtube_credentials(user_id)
+            if not credentials:
+                return {"success": False, "error": "No YouTube credentials found"}
+            
+            # Upload video using existing scheduler
+            result = await self.youtube_scheduler.generate_and_upload_content(
+                user_id=user_id,
+                credentials_data=credentials,
+                content_type=video_data.get("content_type", "video"),
+                title=video_data.get("title"),
+                description=video_data.get("description"),
+                video_url=video_data.get("video_url")
+            )
+            
+            logger.info(f"Scheduled video upload result: {result.get('success', False)}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Scheduled video upload failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def execute_scheduled_community_post(self, post):
+        """Execute scheduled community post"""
+        try:
+            user_id = post.get("user_id")
+            post_data = post.get("post_data", {})
+            
+            # Get user credentials
+            credentials = await self.database_manager.get_youtube_credentials(user_id)
+            if not credentials:
+                return {"success": False, "error": "No YouTube credentials found"}
+            
+            # Try to create community post (will fall back to mock)
+            if hasattr(self.youtube_scheduler.youtube_connector, 'create_community_post'):
+                result = await self.youtube_scheduler.youtube_connector.create_community_post(
+                    credentials_data=credentials,
+                    post_data=post_data
+                )
+            else:
+                # Mock community post
+                result = {
+                    "success": True,
+                    "post_id": f"scheduled_mock_{int(datetime.now().timestamp())}",
+                    "message": "Scheduled community post created (mock mode)"
+                }
+            
+            # Log to database
+            await self.database_manager.log_community_post(user_id, {
+                **post_data,
+                "scheduled_execution": True,
+                "executed_at": datetime.now()
+            })
+            
+            logger.info(f"Scheduled community post result: {result.get('success', False)}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Scheduled community post failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def update_post_status(self, post_id, result):
+        """Update scheduled post status after execution"""
+        try:
+            if not self.database_manager.db:
+                return
+                
+            collection = self.database_manager.db.scheduled_posts
+            
+            update_data = {
+                "status": "published" if result.get("success") else "failed",
+                "executed_at": datetime.now(),
+                "execution_result": result,
+                "updated_at": datetime.now()
+            }
+            
+            await collection.update_one(
+                {"_id": post_id},
+                {"$set": update_data}
+            )
+            
+            logger.info(f"Updated scheduled post {post_id} status to {update_data['status']}")
+            
+        except Exception as e:
+            logger.error(f"Error updating post status: {e}")
+
+# NEW: Helper function to store scheduled posts
+async def store_scheduled_post(user_id: str, post_type: str, post_data: dict, scheduled_for: datetime):
+    """Store a scheduled post in the database"""
+    try:
+        if not database_manager.db:
+            return False
+            
+        collection = database_manager.db.scheduled_posts
+        
+        scheduled_post = {
+            "user_id": user_id,
+            "post_type": post_type,
+            "post_data" if post_type == "community_post" else "video_data": post_data,
+            "scheduled_for": scheduled_for,
+            "status": "scheduled",
+            "created_at": datetime.now(),
+            "updated_at": datetime.now()
+        }
+        
+        result = await collection.insert_one(scheduled_post)
+        logger.info(f"Scheduled {post_type} stored with ID: {result.inserted_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error storing scheduled post: {e}")
+        return False
 
 # FIXED AI Service initialization function
 def initialize_ai_service():
@@ -262,23 +488,11 @@ def initialize_ai_service():
         logger.error(f"AI service initialization failed: {e}")
         ai_service = None
         return False
-    
 
-async def process_scheduled_posts():
-    """Background task to process scheduled posts"""
-    while True:
-        try:
-            # Query database for posts ready to publish
-            current_time = datetime.now()
-            # Implementation needed here
-            await asyncio.sleep(60)  # Check every minute
-        except Exception as e:
-            logger.error(f"Scheduler error: {e}")
-
-# FIXED service initialization with proper order
+# FIXED service initialization with proper order AND background scheduler
 async def initialize_services():
     """Initialize all services with robust error handling"""
-    global database_manager, ai_service, youtube_connector, youtube_scheduler
+    global database_manager, ai_service, youtube_connector, youtube_scheduler, youtube_background_scheduler
     
     try:
         logger.info("Starting YouTube automation service initialization...")
@@ -356,7 +570,14 @@ async def initialize_services():
         else:
             logger.error("YouTube module not available - check imports")
             return False
-            
+        
+        # STEP 4: NEW - Initialize background scheduler
+        if database_manager and youtube_scheduler:
+            youtube_background_scheduler = YouTubeBackgroundScheduler(database_manager, youtube_scheduler)
+            # Start scheduler in background
+            asyncio.create_task(youtube_background_scheduler.start())
+            logger.info("Background scheduler initialized and started")
+        
         logger.info("All services initialized successfully")
         return True
         
@@ -369,6 +590,10 @@ async def initialize_services():
 async def cleanup_services():
     """Cleanup services on shutdown"""
     try:
+        # NEW: Stop background scheduler
+        if youtube_background_scheduler:
+            await youtube_background_scheduler.stop()
+        
         if database_manager:
             await database_manager.close()
         logger.info("Services cleaned up successfully")
@@ -1374,6 +1599,132 @@ async def test_mongodb():
 @app.on_event("startup")
 async def start_scheduler():
     asyncio.create_task(process_scheduled_posts())
+
+
+
+
+
+# Example API endpoint modification for scheduling
+@app.post("/api/youtube/schedule-video")
+async def schedule_video_upload(request: dict):
+    """Schedule a video upload for later"""
+    try:
+        user_id = request.get("user_id")
+        schedule_date = request.get("schedule_date")
+        schedule_time = request.get("schedule_time")
+        video_data = request.get("video_data", {})
+        
+        if not all([user_id, schedule_date, schedule_time]):
+            raise HTTPException(status_code=400, detail="Missing required fields")
+        
+        # Parse scheduled time
+        scheduled_datetime = datetime.strptime(
+            f"{schedule_date} {schedule_time}", 
+            "%Y-%m-%d %H:%M"
+        )
+        
+        if scheduled_datetime <= datetime.now():
+            raise HTTPException(status_code=400, detail="Scheduled time must be in the future")
+        
+        # Store scheduled post
+        success = await store_scheduled_post(
+            user_id=user_id,
+            post_type="video",
+            post_data=video_data,
+            scheduled_for=scheduled_datetime
+        )
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"Video scheduled for {scheduled_datetime.strftime('%Y-%m-%d %H:%M')}",
+                "scheduled_for": scheduled_datetime.isoformat()
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to schedule video")
+            
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date/time format: {e}")
+    except Exception as e:
+        logger.error(f"Schedule video failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Example usage and testing
+"""
+HOW TO TEST SCHEDULING:
+
+1. Create a scheduled post:
+   POST /api/youtube/schedule-video
+   {
+     "user_id": "your_user_id",
+     "schedule_date": "2025-09-25",
+     "schedule_time": "14:30",
+     "video_data": {
+       "title": "Scheduled Video Test",
+       "description": "This video was scheduled",
+       "video_url": "https://your-video-url.mp4",
+       "content_type": "shorts"
+     }
+   }
+
+2. Check scheduled posts in database:
+   db.scheduled_posts.find({status: "scheduled"})
+
+3. Wait for scheduled time (background scheduler checks every 60 seconds)
+
+4. Check execution results:
+   db.scheduled_posts.find({status: "published"})
+
+FLOW DIAGRAM:
+User creates scheduled post → Stored in MongoDB → Background scheduler checks every 60s → 
+Time matches? → Execute upload → Update status → Log results
+
+TIMING:
+- Scheduler checks: Every 60 seconds
+- Time window: ±1 minute accuracy  
+- Execution: Immediate when time matches
+- Retry: Failed posts can be retried manually
+"""
+
+@app.get("/api/youtube/scheduled-posts/{user_id}")
+async def get_scheduled_posts(user_id: str):
+    """Get scheduled posts for user"""
+    try:
+        if not database_manager.db:
+            return {"success": False, "error": "Database not available"}
+        
+        collection = database_manager.db.scheduled_posts
+        
+        cursor = collection.find({"user_id": user_id}).sort("scheduled_for", 1)
+        
+        scheduled_posts = []
+        async for post in cursor:
+            post_data = {
+                "id": str(post["_id"]),
+                "post_type": post.get("post_type"),
+                "scheduled_for": post.get("scheduled_for").isoformat() if post.get("scheduled_for") else None,
+                "status": post.get("status"),
+                "created_at": post.get("created_at").isoformat() if post.get("created_at") else None
+            }
+            
+            # Add title based on post type
+            if post.get("post_type") == "video":
+                video_data = post.get("video_data", {})
+                post_data["title"] = video_data.get("title", "Scheduled Video")
+            else:
+                post_data["title"] = "Scheduled Community Post"
+                
+            scheduled_posts.append(post_data)
+        
+        return {
+            "success": True,
+            "scheduled_posts": scheduled_posts,
+            "count": len(scheduled_posts)
+        }
+        
+    except Exception as e:
+        logger.error(f"Get scheduled posts failed: {e}")
+        return {"success": False, "error": str(e)}
 
 
 # Debug endpoint for YouTube service endpoints
