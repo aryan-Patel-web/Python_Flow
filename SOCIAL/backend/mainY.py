@@ -460,7 +460,6 @@ async def store_scheduled_post(user_id: str, post_type: str, post_data: dict, sc
         logger.error(f"Error storing scheduled post: {e}")
         return False
 
-# FIXED AI Service initialization function
 
 
 
