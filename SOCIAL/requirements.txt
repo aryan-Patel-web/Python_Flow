@@ -26,3 +26,13 @@ schedule==1.2.0
 
 # Production
 gunicorn==21.2.0
+
+
+# NEW: YouTube Thumbnail Generation
+Pillow==10.1.0
+
+# NEW: Google APIs (YouTube)
+google-auth==2.23.4
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+google-api-python-client==2.108.0

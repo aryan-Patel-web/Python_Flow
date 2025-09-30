@@ -96,6 +96,23 @@ except ImportError as e:
     get_yt_db = None
     YouTubeDatabaseManager = None
 
+
+
+# YouTube AI Services - NEW
+try:
+    from YT_ai_services import YouTubeAIService
+    from YT_extract_feature import YouTubeFeatureExtractor
+    YOUTUBE_AI_AVAILABLE = True
+    logger.info("YouTube AI services loaded successfully")
+except ImportError as e:
+    logger.warning(f"YouTube AI services not available: {e}")
+    YOUTUBE_AI_AVAILABLE = False
+    YouTubeAIService = None
+    YouTubeFeatureExtractor = None
+
+
+
+
 # FIXED: Add missing DATABASE_AVAILABLE variable
 DATABASE_AVAILABLE = YOUTUBE_DATABASE_AVAILABLE
 
@@ -120,6 +137,10 @@ youtube_scheduler = None
 whatsapp_scheduler = None
 webhook_handler = None
 youtube_background_scheduler = None  # NEW: Background scheduler
+youtube_ai_service = None  # NEW: YouTube AI service
+youtube_feature_extractor = None  # NEW: Feature extractor
+
+
 
 # Multi-user management
 user_platform_tokens = {}  # user_id -> {platform: tokens}
@@ -499,9 +520,11 @@ def initialize_ai_service():
         return False
 
 # FIXED service initialization with proper order AND background scheduler
+
+
 async def initialize_services():
     """Initialize all services with robust error handling"""
-    global database_manager, ai_service, youtube_connector, youtube_scheduler, youtube_background_scheduler
+    global database_manager, ai_service, youtube_connector, youtube_scheduler, youtube_background_scheduler, youtube_ai_service, youtube_feature_extractor
     
     try:
         logger.info("Starting YouTube automation service initialization...")
@@ -586,6 +609,15 @@ async def initialize_services():
             # Start scheduler in background
             asyncio.create_task(youtube_background_scheduler.start())
             logger.info("Background scheduler initialized and started")
+
+            # STEP 5: NEW - Initialize YouTube AI services
+        if YOUTUBE_AI_AVAILABLE:
+            try:
+                youtube_ai_service = YouTubeAIService()
+                youtube_feature_extractor = YouTubeFeatureExtractor(youtube_ai_service)
+                logger.info("YouTube AI services initialized successfully")
+            except Exception as ai_error:
+                logger.warning(f"YouTube AI services initialization failed: {ai_error}")
         
         logger.info("All services initialized successfully")
         return True
@@ -1571,6 +1603,49 @@ async def generate_youtube_content(request: dict):
             "error": str(e),
             "message": "Content generation failed"
         }
+
+
+@app.post("/api/ai/generate-thumbnails")
+async def generate_thumbnails(request: dict):
+    """Generate AI thumbnails for video"""
+    try:
+        logger.info(f"Thumbnail generation request: {request}")
+        
+        video_url = request.get("video_url")
+        video_title = request.get("video_title")
+        style = request.get("style", "indian")
+        
+        if not video_url or not video_title:
+            raise HTTPException(status_code=400, detail="video_url and video_title required")
+        
+        # Check if YouTube AI service is available
+        if not youtube_feature_extractor:
+            return {
+                "success": False,
+                "error": "Thumbnail generation service not available",
+                "fallback": True,
+                "thumbnails": []
+            }
+        
+        # Generate thumbnails
+        result = await youtube_feature_extractor.generate_thumbnails_for_video(
+            video_url=video_url,
+            video_title=video_title,
+            style=style
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Thumbnail generation failed: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 
 # MongoDB debugging endpoint
 @app.get("/debug/mongodb")

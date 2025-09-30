@@ -33,6 +33,10 @@ const YouTubeAutomation = () => {
 
   const [generatedContent, setGeneratedContent] = useState(null);
   const [analytics, setAnalytics] = useState(null);
+  // NEW: Thumbnail states
+  const [thumbnailOptions, setThumbnailOptions] = useState([]);
+  const [selectedThumbnail, setSelectedThumbnail] = useState(null);
+  const [generatingThumbnails, setGeneratingThumbnails] = useState(false);
 
   const API_BASE = process.env.NODE_ENV === 'production' 
     ? (import.meta.env.VITE_API_URL || 'https://agentic-u5lx.onrender.com')
@@ -115,7 +119,44 @@ const YouTubeAutomation = () => {
 
 
 
-
+const generateThumbnails = useCallback(async () => {
+    if (!contentData.video_url || !contentData.title) {
+      setError('Video URL and title required for thumbnail generation');
+      return;
+    }
+    
+    setGeneratingThumbnails(true);
+    setError('');
+    
+    try {
+      const response = await fetch(`${API_BASE}/api/ai/generate-thumbnails`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          video_url: contentData.video_url,
+          video_title: contentData.title,
+          style: 'indian'
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (result.success && result.thumbnails) {
+        setThumbnailOptions(result.thumbnails);
+        setSelectedThumbnail(result.thumbnails[0]); // Auto-select first
+        setError('');
+      } else {
+        setError(result.error || 'Thumbnail generation failed');
+      }
+    } catch (error) {
+      setError('Thumbnail generation failed: ' + error.message);
+    } finally {
+      setGeneratingThumbnails(false);
+    }
+  }, [contentData.video_url, contentData.title, token, API_BASE]);
 
 
 
@@ -158,7 +199,8 @@ const YouTubeAutomation = () => {
           content_type: contentData.content_type,
           title: contentData.title,
           description: contentData.description,
-          video_url: contentData.video_url
+          video_url: contentData.video_url,
+          thumbnail_url: selectedThumbnail?.url || null
         })
       });
       
@@ -1492,6 +1534,9 @@ useEffect(() => {
                     }}
                   />
                   
+
+
+
                   <label style={{ 
                     display: 'block', 
                     marginBottom: '8px', 
@@ -1516,6 +1561,116 @@ useEffect(() => {
                     }}
                   />
                 </div>
+
+
+
+
+                {/* NEW: AI Thumbnail Generator */}
+                <div style={{ marginBottom: '20px' }}>
+                  <button 
+                    onClick={generateThumbnails}
+                    disabled={generatingThumbnails || !contentData.video_url || !contentData.title}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      background: generatingThumbnails ? '#ccc' : '#FF6600',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: generatingThumbnails ? 'not-allowed' : 'pointer',
+                      marginBottom: '16px',
+                      transition: 'background 0.3s ease'
+                    }}
+                  >
+                    {generatingThumbnails ? '🎨 Generating Thumbnails...' : '🎨 Generate AI Thumbnails'}
+                  </button>
+                </div>
+
+                {/* Thumbnail Selection */}
+                {thumbnailOptions.length > 0 && (
+                  <div style={{ marginBottom: '20px' }}>
+                    <h4 style={{ color: '#333', marginBottom: '12px', fontSize: '16px' }}>
+                      Select Thumbnail:
+                    </h4>
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: '1fr 1fr 1fr', 
+                      gap: '12px' 
+                    }}>
+                      {thumbnailOptions.map((thumb, index) => (
+                        <div 
+                          key={index}
+                          onClick={() => setSelectedThumbnail(thumb)}
+                          style={{
+                            border: selectedThumbnail === thumb ? '3px solid #FF0000' : '2px solid #ddd',
+                            borderRadius: '8px',
+                            padding: '8px',
+                            cursor: 'pointer',
+                            position: 'relative',
+                            transition: 'all 0.3s ease'
+                          }}
+                        >
+                          <img 
+                            src={thumb.url} 
+                            alt={`Thumbnail ${index + 1}`}
+                            style={{ 
+                              width: '100%', 
+                              borderRadius: '4px',
+                              display: 'block'
+                            }}
+                          />
+                          <div style={{ 
+                            fontSize: '11px', 
+                            marginTop: '8px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}>
+                            <span style={{ fontWeight: '600' }}>Option {thumb.variation}</span>
+                            <span style={{ 
+                              background: thumb.ctr_score > 70 ? '#28a745' : '#ffc107',
+                              color: 'white',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontSize: '10px',
+                              fontWeight: '600'
+                            }}>
+                              CTR: {thumb.ctr_score.toFixed(0)}%
+                            </span>
+                          </div>
+                          <div style={{ 
+                            fontSize: '10px', 
+                            color: '#666',
+                            marginTop: '4px',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {thumb.text}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{
+                      marginTop: '12px',
+                      padding: '12px',
+                      background: '#f8f9fa',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      color: '#666'
+                    }}>
+                      💡 <strong>Tip:</strong> Higher CTR score = better chance of getting clicks. 
+                      Click a thumbnail to select it for your video.
+                    </div>
+                  </div>
+                )}
+
+
+
+
+
 
 
 
